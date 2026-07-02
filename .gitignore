@@ -10,3 +10,9 @@ supabase/.branches
 
 # TypeScript incremental build info
 tsconfig.tsbuildinfo
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
