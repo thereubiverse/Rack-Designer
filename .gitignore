@@ -3,3 +3,10 @@ node_modules/
 .env*
 .next/
 next-env.d.ts
+
+# Supabase
+supabase/.temp
+supabase/.branches
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
