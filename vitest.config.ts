@@ -4,6 +4,10 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],
+  // Tests don't exercise CSS. Provide an inline empty PostCSS config so Vite
+  // does not load the project postcss.config.mjs (whose string-plugin form is
+  // for Next.js/Turbopack and is rejected by Vite's PostCSS loader).
+  css: { postcss: { plugins: [] } },
   test: {
     environment: "jsdom",
     globals: true,
@@ -12,4 +16,3 @@ export default defineConfig({
     exclude: ["e2e/**", "node_modules/**"],
   },
 });
-
