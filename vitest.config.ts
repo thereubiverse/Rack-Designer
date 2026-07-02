@@ -1,6 +1,11 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { config as loadEnv } from "dotenv";
+
+// Load .env.local so integration tests see the same Supabase env vars the
+// Next.js app uses, without requiring a manual `source .env.local` per run.
+loadEnv({ path: ".env.local", quiet: true });
 
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],
