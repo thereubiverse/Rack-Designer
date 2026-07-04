@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getDefaultOrganization } from "@/features/locations/repository";
+import { emptyFace, type Face } from "@/domain/faceplate";
 
 export interface BrandRow { id: string; organization_id: string; name: string; created_at: string; }
 export interface DeviceTypeRow { id: string; organization_id: string; name: string; created_at: string; }
@@ -70,7 +71,7 @@ export async function listDeviceTemplates(db: SupabaseClient): Promise<DeviceTem
 
 export async function createDeviceTemplate(
   db: SupabaseClient,
-  input: { name: string; deviceTypeId: string; brandId?: string; rackUnits?: number; widthIn?: number; rackMounted?: boolean },
+  input: { name: string; deviceTypeId: string; brandId?: string; rackUnits?: number; widthIn?: number; rackMounted?: boolean; frontFace?: Face; backFace?: Face },
 ): Promise<DeviceTemplateRow> {
   const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("device_templates").insert({
@@ -81,6 +82,8 @@ export async function createDeviceTemplate(
     rack_units: input.rackUnits ?? 1,
     width_in: input.widthIn ?? 19,
     rack_mounted: input.rackMounted ?? true,
+    front_face: input.frontFace ?? emptyFace(),
+    back_face: input.backFace ?? emptyFace(),
   }).select("*").single();
   if (error) throw new Error(`createDeviceTemplate: ${error.message}`);
   return data as DeviceTemplateRow;
@@ -89,4 +92,56 @@ export async function createDeviceTemplate(
 export async function deleteDeviceTemplate(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("device_templates").delete().eq("id", id);
   if (error) throw new Error(`deleteDeviceTemplate: ${error.message}`);
+}
+
+export async function getDeviceTemplate(
+  db: SupabaseClient, id: string,
+): Promise<DeviceTemplateRow | null> {
+  const { data, error } = await db.from("device_templates")
+    .select("*").eq("id", id).maybeSingle();
+  if (error) throw new Error(`getDeviceTemplate: ${error.message}`);
+  return (data as DeviceTemplateRow | null) ?? null;
+}
+
+export async function updateDeviceTemplate(
+  db: SupabaseClient, id: string,
+  input: {
+    name: string; deviceTypeId: string; brandId: string | null;
+    rackUnits: number; widthIn: number; rackMounted: boolean;
+    frontFace: Face; backFace: Face;
+  },
+): Promise<DeviceTemplateRow> {
+  const { data, error } = await db.from("device_templates").update({
+    name: input.name,
+    device_type_id: input.deviceTypeId,
+    brand_id: input.brandId,
+    rack_units: input.rackUnits,
+    width_in: input.widthIn,
+    rack_mounted: input.rackMounted,
+    front_face: input.frontFace,
+    back_face: input.backFace,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id).select("*").single();
+  if (error) throw new Error(`updateDeviceTemplate: ${error.message}`);
+  return data as DeviceTemplateRow;
+}
+
+export interface EditableTemplate {
+  id: string; name: string; brandId: string | null; deviceTypeId: string;
+  rackUnits: number; widthIn: number; rackMounted: boolean;
+  frontFace: Face; backFace: Face;
+}
+
+export function toEditableTemplate(row: DeviceTemplateRow): EditableTemplate {
+  return {
+    id: row.id,
+    name: row.name,
+    brandId: row.brand_id,
+    deviceTypeId: row.device_type_id,
+    rackUnits: row.rack_units,
+    widthIn: row.width_in,
+    rackMounted: row.rack_mounted,
+    frontFace: (row.front_face as Face | null) ?? emptyFace(),
+    backFace: (row.back_face as Face | null) ?? emptyFace(),
+  };
 }

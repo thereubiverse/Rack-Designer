@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RackDeviceTable } from "./RackDeviceTable";
@@ -24,5 +24,15 @@ describe("RackDeviceTable", () => {
   it("shows an em dash when brand is null", () => {
     render(<RackDeviceTable rows={[rows[1]]} />);
     expect(screen.getByText("—")).toBeInTheDocument();
+  });
+});
+
+describe("RackDeviceTable edit action", () => {
+  it("calls onEdit with the row id when Edit is clicked", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    render(<RackDeviceTable rows={rows} onEdit={onEdit} />);
+    await user.click(screen.getByTestId("edit-1"));
+    expect(onEdit).toHaveBeenCalledWith("1");
   });
 });
