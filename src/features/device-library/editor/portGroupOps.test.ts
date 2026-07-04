@@ -34,14 +34,14 @@ describe("wouldOverlap", () => {
 });
 
 describe("findFreePosition", () => {
-  it("snaps the desired position to the 8px grid when free", () => {
+  it("snaps the desired x position to the 8px grid when free; y passes through unchanged", () => {
     const face: Face = { portGroups: [], elements: [] };
-    expect(findFreePosition(face, group(), { x: 11, y: 3 }, bounds)).toEqual({ x: 8, y: 0 });
+    expect(findFreePosition(face, group(), { x: 11, y: 3 }, bounds)).toEqual({ x: 8, y: 3 });
   });
-  it("clamps within the grid bounds", () => {
+  it("clamps x within the grid bounds; y passes through unchanged (horizontal-only)", () => {
     const face: Face = { portGroups: [], elements: [] };
     // desired far right; 1x1 (24 wide) must fit within width 400 → max x = 376
-    expect(findFreePosition(face, group(), { x: 999, y: 999 }, bounds)).toEqual({ x: 376, y: 60 });
+    expect(findFreePosition(face, group(), { x: 999, y: 999 }, bounds)).toEqual({ x: 376, y: 999 });
   });
   it("nudges to the nearest free spot when the target overlaps", () => {
     const face: Face = { portGroups: [group({ id: "a", gridX: 0, gridY: 0 })], elements: [] };
@@ -67,7 +67,8 @@ describe("addPortGroup", () => {
     const next = addPortGroup(face, "sfp", { x: 33, y: 9 }, bounds);
     expect(next.portGroups).toHaveLength(1);
     const g = next.portGroups[0];
-    expect(g).toMatchObject({ media: "sfp", connectorType: "SFP", cols: 1, rows: 1, gridX: 32, gridY: 8 });
+    // x is snapped to the 8px grid; y passes through unchanged (horizontal-only positioning)
+    expect(g).toMatchObject({ media: "sfp", connectorType: "SFP", cols: 1, rows: 1, gridX: 32, gridY: 9 });
     expect(g.id).toBeTruthy();
   });
   it("nudges the new group off an existing one at the same spot", () => {
@@ -85,12 +86,13 @@ describe("addPortGroup", () => {
 });
 
 describe("movePortGroup", () => {
-  it("relocates the group to the snapped target", () => {
+  it("relocates the group's x to the snapped target and leaves gridY untouched (horizontal-only)", () => {
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds);
     const id = face.portGroups[0].id;
-    // 104 and 32 are already on the 8px grid, so they pass through unchanged
+    const gridYBefore = face.portGroups[0].gridY;
+    // 104 is already on the 8px grid, so it passes through unchanged
     const next = movePortGroup(face, id, { x: 104, y: 32 }, bounds);
-    expect(next.portGroups[0]).toMatchObject({ gridX: 104, gridY: 32 });
+    expect(next.portGroups[0]).toMatchObject({ gridX: 104, gridY: gridYBefore });
   });
 });
 
@@ -184,5 +186,46 @@ describe("wouldOverlapAt", () => {
   });
   it("false at a free in-bounds spot", () => {
     expect(wouldOverlapAt(face, b, { x: 40, y: 0 }, { width: 400, height: 84 })).toBe(false);
+  });
+});
+
+describe("horizontal-only collision (3d)", () => {
+  it("two groups overlap when their x-ranges overlap regardless of rows", () => {
+    // a: 1 row at x0 (width 24); b: 2 rows at x10 → x-ranges overlap → collision
+    const face: Face = { portGroups: [group({ id: "a", gridX: 0, rows: 1 })], elements: [] };
+    expect(wouldOverlap(face, group({ id: "b", gridX: 10, rows: 2 }))).toBe(true);
+  });
+  it("no overlap when x-ranges are clear", () => {
+    const face: Face = { portGroups: [group({ id: "a", gridX: 0 })], elements: [] };
+    expect(wouldOverlap(face, group({ id: "b", gridX: 40 }))).toBe(false);
+  });
+});
+
+describe("movePortGroup is horizontal-only (3d)", () => {
+  it("changes gridX and leaves gridY", () => {
+    const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, { width: 400, height: 84 });
+    const id = face.portGroups[0].id;
+    const before = face.portGroups[0].gridY;
+    const next = movePortGroup(face, id, { x: 104, y: 999 }, { width: 400, height: 84 });
+    expect(next.portGroups[0].gridX).toBe(104);
+    expect(next.portGroups[0].gridY).toBe(before);
+  });
+});
+
+describe("maxSpacing.maxRow clamps to device height (3d)", () => {
+  it("2 rows in 84px height: maxRow = (84 - 24 - 48)/1 = 12", () => {
+    const g = group({ id: "g", rows: 2, cols: 1 });
+    expect(maxSpacing({ portGroups: [g], elements: [] }, g, { width: 400, height: 84 }).maxRow).toBeCloseTo(12, 5);
+  });
+  it("single row → maxRow 0", () => {
+    const g = group({ id: "g", rows: 1, cols: 1 });
+    expect(maxSpacing({ portGroups: [g], elements: [] }, g, { width: 400, height: 84 }).maxRow).toBe(0);
+  });
+});
+
+describe("setPortOverride carries labelPos (3d)", () => {
+  it("stores labelPos", () => {
+    const face: Face = { portGroups: [group({ id: "g" })], elements: [] };
+    expect(setPortOverride(face, "g", 0, { labelPos: "bottom" }).portGroups[0].portOverrides[0]).toEqual({ labelPos: "bottom" });
   });
 });

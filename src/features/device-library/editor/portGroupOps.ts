@@ -1,4 +1,4 @@
-import { layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-geometry";
+import { layoutPortGroup, CELL_W, ROW_H, LABEL_H } from "@/domain/faceplate-geometry";
 import type { Face, PortGroup } from "@/domain/faceplate";
 import { CONNECTORS, type Media } from "@/domain/faceplate";
 
@@ -13,60 +13,42 @@ export function groupBounds(group: PortGroup): Rect {
   return { x: group.gridX, y: group.gridY, width: laid.width, height: laid.height };
 }
 
-function rectsOverlap(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.width && a.x + a.width > b.x
-    && a.y < b.y + b.height && a.y + a.height > b.y;
+function groupWidth(g: PortGroup): number {
+  return g.cols * CELL_W + Math.max(0, g.cols - 1) * g.colSpacing;
+}
+
+function xOverlap(ax: number, aw: number, bx: number, bw: number): boolean {
+  return ax < bx + bw && ax + aw > bx;
 }
 
 export function wouldOverlap(face: Face, candidate: PortGroup, excludeId?: string): boolean {
-  const cb = groupBounds(candidate);
-  return face.portGroups.some((g) => g.id !== excludeId && rectsOverlap(cb, groupBounds(g)));
+  const cw = groupWidth(candidate);
+  return face.portGroups.some(
+    (g) => g.id !== excludeId && xOverlap(candidate.gridX, cw, g.gridX, groupWidth(g)),
+  );
 }
 
 function snap(v: number): number {
   return Math.round(v / SNAP) * SNAP;
 }
 
-function clamp(bounds: GridBounds, w: number, h: number, p: Pos): Pos {
-  return {
-    x: Math.max(0, Math.min(p.x, bounds.width - w)),
-    y: Math.max(0, Math.min(p.y, bounds.height - h)),
-  };
-}
-
-/** Nearest free, in-bounds, 8px-snapped position to `desired`; null if the grid is full. */
+/** Nearest free, in-bounds, 8px-snapped x position to `desired`; null if the grid is full. */
 export function findFreePosition(
   face: Face, group: PortGroup, desired: Pos, bounds: GridBounds, excludeId?: string,
 ): Pos | null {
-  const laid = layoutPortGroup(group);
-  const w = laid.width, h = laid.height;
-  const tryAt = (p: Pos): Pos | null => {
-    const c = clamp(bounds, w, h, { x: snap(p.x), y: snap(p.y) });
-    const candidate: PortGroup = { ...group, gridX: c.x, gridY: c.y };
-    return wouldOverlap(face, candidate, excludeId) ? null : c;
+  const w = groupWidth(group);
+  const tryAt = (x: number): number | null => {
+    const cx = Math.max(0, Math.min(snap(x), bounds.width - w));
+    const candidate: PortGroup = { ...group, gridX: cx };
+    return wouldOverlap(face, candidate, excludeId) ? null : cx;
   };
-  const direct = tryAt(desired);
-  if (direct) return direct;
-
-  const maxR = Math.ceil(Math.max(bounds.width, bounds.height) / SNAP) + 1;
-  const seen = new Set<string>();
+  const direct = tryAt(desired.x);
+  if (direct !== null) return { x: direct, y: desired.y };
+  const maxR = Math.ceil(bounds.width / SNAP) + 1;
   for (let r = 1; r <= maxR; r++) {
-    const ring: { p: Pos; d: number }[] = [];
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -r; dy <= r; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const p = { x: snap(desired.x) + dx * SNAP, y: snap(desired.y) + dy * SNAP };
-        ring.push({ p, d: Math.hypot(p.x - desired.x, p.y - desired.y) });
-      }
-    }
-    ring.sort((a, b) => a.d - b.d || a.p.y - b.p.y || a.p.x - b.p.x);
-    for (const { p } of ring) {
-      const ok = tryAt(p);
-      if (!ok) continue;
-      const key = `${ok.x},${ok.y}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      return ok;
+    for (const x of [snap(desired.x) - r * SNAP, snap(desired.x) + r * SNAP]) {
+      const ok = tryAt(x);
+      if (ok !== null) return { x: ok, y: desired.y };
     }
   }
   return null;
@@ -94,10 +76,7 @@ export function movePortGroup(face: Face, id: string, pos: Pos, bounds: GridBoun
   if (!g) return face;
   const free = findFreePosition(face, g, pos, bounds, id);
   if (!free) return face;
-  return {
-    ...face,
-    portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, gridX: free.x, gridY: free.y } : x)),
-  };
+  return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, gridX: free.x } : x)) };
 }
 
 function grow(face: Face, id: string, bounds: GridBounds, delta: { cols?: number; rows?: number }): Face {
@@ -130,7 +109,8 @@ export function deletePortGroup(face: Face, id: string): Face {
 }
 
 export function setPortOverride(
-  face: Face, groupId: string, index: number, patch: { name?: string; flipped?: boolean },
+  face: Face, groupId: string, index: number,
+  patch: { name?: string; flipped?: boolean; labelPos?: "top" | "bottom" },
 ): Face {
   return {
     ...face,
@@ -175,16 +155,7 @@ export function maxSpacing(
   }
   let maxRow = 0;
   if (group.rows > 1) {
-    let limitBottom = bounds.height;
-    for (const other of face.portGroups) {
-      if (other.id === group.id) continue;
-      const ob = groupBounds(other);
-      const horizOverlap = gb.x < ob.x + ob.width && gb.x + gb.width > ob.x;
-      if (horizOverlap && ob.y >= group.gridY + group.rows * ROW_H) {
-        limitBottom = Math.min(limitBottom, ob.y);
-      }
-    }
-    maxRow = Math.max(0, (limitBottom - group.gridY - group.rows * ROW_H) / (group.rows - 1));
+    maxRow = Math.max(0, (bounds.height - 2 * LABEL_H - group.rows * ROW_H) / (group.rows - 1));
   }
   return { maxCol, maxRow };
 }
@@ -192,8 +163,7 @@ export function maxSpacing(
 export function wouldOverlapAt(
   face: Face, group: PortGroup, pos: Pos, bounds: GridBounds,
 ): boolean {
-  const candidate: PortGroup = { ...group, gridX: pos.x, gridY: pos.y };
-  const b = groupBounds(candidate);
-  if (b.x < 0 || b.y < 0 || b.x + b.width > bounds.width || b.y + b.height > bounds.height) return true;
-  return wouldOverlap(face, candidate, group.id);
+  const w = groupWidth(group);
+  if (pos.x < 0 || pos.x + w > bounds.width) return true;
+  return wouldOverlap(face, { ...group, gridX: pos.x }, group.id);
 }
