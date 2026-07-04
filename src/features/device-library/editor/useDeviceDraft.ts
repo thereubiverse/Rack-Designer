@@ -23,7 +23,7 @@ export type DraftErrors = {
 export function emptyDraft(): DeviceDraft {
   return {
     name: "", brandId: null, deviceTypeId: "",
-    rackUnits: 1, widthIn: 19, rackMounted: true,
+    rackUnits: 1, widthIn: 17.5, rackMounted: true,
     activeSide: "front", frontFace: emptyFace(), backFace: emptyFace(),
   };
 }

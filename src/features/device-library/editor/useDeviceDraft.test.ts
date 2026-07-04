@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useDeviceDraft } from "./useDeviceDraft";
+import { useDeviceDraft, emptyDraft } from "./useDeviceDraft";
 import { emptyFace, type Face } from "@/domain/faceplate";
 
 const oneGroupFace: Face = {
@@ -56,5 +56,11 @@ describe("useDeviceDraft", () => {
     act(() => { result.current.setActiveSide("back"); });
     act(() => { result.current.setActiveFace(oneGroupFace); });
     expect(result.current.draft.backFace).toEqual(oneGroupFace);
+  });
+});
+
+describe("emptyDraft defaults (3e)", () => {
+  it("defaults the body width to 17.5in so a new device shows ears", () => {
+    expect(emptyDraft().widthIn).toBe(17.5);
   });
 });
