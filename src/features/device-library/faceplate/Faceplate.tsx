@@ -17,6 +17,20 @@ export interface FaceplateOptions {
 }
 
 const LABEL_GUTTER = 22; // room for the vertical FRONT/BACK label on the right
+const CORNER_R = 6; // frame corner radius
+
+// Ear paths round only their OUTER corners (to sit flush inside the frame's
+// rounded corners); the inner edge against the body stays square so there is
+// no notch or corner poking past the frame at the ear/body seam.
+function leftEarPath(w: number, h: number): string {
+  const r = CORNER_R;
+  return `M ${r},0 L ${w},0 L ${w},${h} L ${r},${h} A ${r},${r} 0 0 1 0,${h - r} L 0,${r} A ${r},${r} 0 0 1 ${r},0 Z`;
+}
+function rightEarPath(x0: number, w: number, h: number): string {
+  const r = CORNER_R;
+  const x1 = x0 + w;
+  return `M ${x0},0 L ${x1 - r},0 A ${r},${r} 0 0 1 ${x1},${r} L ${x1},${h - r} A ${r},${r} 0 0 1 ${x1 - r},${h} L ${x0},${h} Z`;
+}
 
 function PortCell({ cell }: { cell: LaidOutPort }) {
   const spec = PORT_GLYPHS[cell.media];
@@ -64,20 +78,16 @@ export function renderFace(face: Face, opts: FaceplateOptions) {
         y={0}
         width={svgWidth}
         height={svgHeight}
-        rx={6}
+        rx={CORNER_R}
         fill="#f7f8fa"
         stroke="#cfd3da"
       />
-      {/* ears */}
+      {/* ears — outer corners rounded to match the frame, inner seam square */}
       {dims.earWidthPx > 0 && (
         <>
-          <rect x={0} y={0} width={dims.earWidthPx} height={svgHeight} rx={6} fill="#e6e9ee" stroke="#cfd3da" />
-          <rect
-            x={svgWidth - dims.earWidthPx}
-            y={0}
-            width={dims.earWidthPx}
-            height={svgHeight}
-            rx={6}
+          <path d={leftEarPath(dims.earWidthPx, svgHeight)} fill="#e6e9ee" stroke="#cfd3da" />
+          <path
+            d={rightEarPath(svgWidth - dims.earWidthPx, dims.earWidthPx, svgHeight)}
             fill="#e6e9ee"
             stroke="#cfd3da"
           />
