@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./actions";
+import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
 import { emptyFace } from "@/domain/faceplate";
 
 function input(over: Partial<DeviceTemplateInput> = {}): DeviceTemplateInput {

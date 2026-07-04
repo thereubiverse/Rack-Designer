@@ -2,32 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isValidWidthIn, isValidRackUnits, type Face } from "@/domain/faceplate";
 import {
   createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
   toEditableTemplate, deleteDeviceTemplate, createBrand,
   type EditableTemplate, type BrandRow,
 } from "./repository";
-
-export interface DeviceTemplateInput {
-  name: string;
-  brandId: string | null;
-  deviceTypeId: string;
-  rackUnits: number;
-  widthIn: number;
-  rackMounted: boolean;
-  frontFace: Face;
-  backFace: Face;
-}
-
-/** Returns an error message, or null if the input is valid. */
-export function validateDeviceTemplateInput(input: DeviceTemplateInput): string | null {
-  if (!input.name.trim()) return "Name is required";
-  if (!input.deviceTypeId) return "Device type is required";
-  if (!isValidWidthIn(input.widthIn)) return "Width must be greater than 0";
-  if (!isValidRackUnits(input.rackUnits)) return "Rack units must be at least 1";
-  return null;
-}
+import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
 
 export async function saveNewDeviceTemplateAction(
   input: DeviceTemplateInput,
