@@ -16,7 +16,7 @@ function testDb(): SupabaseClient {
 const db = testDb();
 
 async function cleanup() {
-  await db.from("device_templates").delete().neq("name", "");
+  await db.from("device_templates").delete().like("name", "ZZ Test%");
   await db.from("device_types").delete().eq("name", "ZZ Test Type");
   await db.from("brands").delete().eq("name", "ZZ Test Brand");
 }
