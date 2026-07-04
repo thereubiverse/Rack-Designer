@@ -143,7 +143,8 @@ describe("RackDeviceEditor — port-group building", () => {
     render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
     expect(screen.getAllByTestId("port-cell").length).toBe(1);
-    fireEvent.click(screen.getByTestId("chevron-col"));
+    fireEvent.pointerDown(screen.getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
     expect(screen.getAllByTestId("port-cell").length).toBe(2);
   });
 
@@ -209,5 +210,40 @@ describe("RackDeviceEditor — per-port editing", () => {
     expect(screen.getByTestId("port-settings")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /back/i }));
     expect(screen.queryByTestId("port-settings")).toBeNull();
+  });
+});
+
+describe("RackDeviceEditor — 3d refinements", () => {
+  function withGroup() {
+    const face: Face = {
+      portGroups: [{
+        id: "g", media: "copper", connectorType: "RJ45", idPrefix: "",
+        countingDirection: "ltr", rows: 1, cols: 3, gridX: 0, gridY: 0,
+        colSpacing: 0, rowSpacing: 0, portOverrides: {},
+      }],
+      elements: [],
+    };
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+      initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: face }} onSave={noop} onCancel={noop} />);
+  }
+
+  it("selecting a port highlights it in the preview (blue tile, no overlay copy)", () => {
+    withGroup();
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-1"));
+    expect(screen.queryByTestId("port-highlight")).toBeNull();
+    const blued = screen.getAllByTestId("port-cell").filter((c) => c.getAttribute("data-highlighted") === "true");
+    expect(blued).toHaveLength(1);
+  });
+
+  it("toggling label position moves that port's label", async () => {
+    const user = userEvent.setup();
+    withGroup();
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    const before = Number(screen.getAllByTestId("port-cell")[0].querySelector("text")!.getAttribute("y"));
+    await user.click(screen.getByTestId("port-labelpos"));
+    const after = Number(screen.getAllByTestId("port-cell")[0].querySelector("text")!.getAttribute("y"));
+    expect(after).not.toBe(before);
   });
 });

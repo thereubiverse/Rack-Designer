@@ -220,6 +220,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               selectedPortIndex={selectedPortIndex}
               onSelectPort={setSelectedPortIndex}
               onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}
+              highlight={selectedGroupId && selectedPortIndex !== null ? { groupId: selectedGroupId, portIndex: selectedPortIndex } : null}
             />
           </div>
         </div>
@@ -237,13 +238,14 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         )}
 
         {selectedGroup && selectedPortIndex !== null && (() => {
-          const cell = layoutPortGroup(selectedGroup).cells.find((c) => c.index === selectedPortIndex);
+          const cell = layoutPortGroup(selectedGroup, undefined).cells.find((c) => c.index === selectedPortIndex);
           const ov = selectedGroup.portOverrides[selectedPortIndex] ?? {};
           return (
             <PortSettings
               portLabel={cell ? cell.label : String(selectedPortIndex + 1)}
               name={ov.name ?? ""}
               flipped={ov.flipped ?? false}
+              labelPos={cell ? cell.labelPos : "top"}
               onChange={(patch) => setActiveFace(setPortOverride(activeFace, selectedGroup.id, selectedPortIndex, patch))}
             />
           );
