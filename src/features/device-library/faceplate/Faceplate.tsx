@@ -6,6 +6,7 @@ import {
   CELL_W,
   ROW_H,
   GLYPH_W,
+  LABEL_H,
   type LaidOutPort,
 } from "@/domain/faceplate-geometry";
 import { PORT_GLYPHS } from "./portGlyphs";
@@ -32,20 +33,28 @@ function rightEarPath(x0: number, w: number, h: number): string {
   return `M ${x0},0 L ${x1 - r},0 A ${r},${r} 0 0 1 ${x1},${r} L ${x1},${h - r} A ${r},${r} 0 0 1 ${x1 - r},${h} L ${x0},${h} Z`;
 }
 
-function PortCell({ cell }: { cell: LaidOutPort }) {
+export interface HighlightPort {
+  groupId: string;
+  portIndex: number;
+}
+
+function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boolean }) {
   const spec = PORT_GLYPHS[cell.media];
   const gx = cell.x + CELL_W / 2; // glyph horizontal center
   const gy = cell.y + ROW_H / 2; // glyph vertical center
+  const glyphColor = highlighted ? "#2d5bff" : "#111418";
+  const labelFill = highlighted ? "#2d5bff" : "#4b5563";
+  const labelY = cell.labelPos === "top" ? cell.y - 3 : cell.y + ROW_H + LABEL_H - 3;
   return (
-    <g data-testid="port-cell">
+    <g data-testid="port-cell" data-highlighted={highlighted ? "true" : "false"}>
       <text
         x={cell.x + CELL_W / 2}
-        y={cell.y - 3}
+        y={labelY}
         textAnchor="middle"
         fontSize={8}
         fontFamily="Inter, system-ui, sans-serif"
         style={{ fontVariantNumeric: "tabular-nums" }}
-        fill="#4b5563"
+        fill={labelFill}
       >
         {cell.label}
       </text>
@@ -53,7 +62,7 @@ function PortCell({ cell }: { cell: LaidOutPort }) {
         transform={`translate(${gx - GLYPH_W / 2}, ${gy - spec.height / 2})${
           cell.flipped ? ` translate(0, ${spec.height}) scale(1, -1)` : ""
         }`}
-        color="#111418"
+        color={glyphColor}
       >
         <svg width={GLYPH_W} height={spec.height} viewBox={spec.viewBox} overflow="visible">
           {spec.body}
@@ -63,10 +72,10 @@ function PortCell({ cell }: { cell: LaidOutPort }) {
   );
 }
 
-export function renderFace(face: Face, opts: FaceplateOptions) {
+export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | null) {
   const dims = frameDims(opts);
   const holes = screwHoles(dims, opts.rackUnits);
-  const groups = face.portGroups.map(layoutPortGroup);
+  const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
   const svgWidth = dims.frameWidthPx;
   const svgHeight = dims.heightPx;
 
@@ -107,7 +116,15 @@ export function renderFace(face: Face, opts: FaceplateOptions) {
       ))}
       {/* body / grid (centered by the ear offset) */}
       <g data-testid="faceplate-body" transform={`translate(${dims.earWidthPx}, 0)`}>
-        {groups.flatMap((g) => g.cells.map((cell) => <PortCell key={`${g.id}-${cell.index}`} cell={cell} />))}
+        {groups.flatMap((g) =>
+          g.cells.map((cell) => (
+            <PortCell
+              key={`${g.id}-${cell.index}`}
+              cell={cell}
+              highlighted={highlight?.groupId === g.id && highlight?.portIndex === cell.index}
+            />
+          )),
+        )}
       </g>
     </>
   );
@@ -116,8 +133,9 @@ export function renderFace(face: Face, opts: FaceplateOptions) {
 export function Faceplate({
   face,
   side,
+  highlight,
   ...opts
-}: { face: Face; side?: "FRONT" | "BACK" } & FaceplateOptions) {
+}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | null } & FaceplateOptions) {
   const dims = frameDims(opts);
   const width = dims.frameWidthPx + (side ? LABEL_GUTTER : 0);
   const height = dims.heightPx;
@@ -129,7 +147,7 @@ export function Faceplate({
       viewBox={`0 0 ${width} ${height}`}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {renderFace(face, opts)}
+      {renderFace(face, opts, highlight)}
       {side && (
         <text
           x={dims.frameWidthPx + LABEL_GUTTER / 2}

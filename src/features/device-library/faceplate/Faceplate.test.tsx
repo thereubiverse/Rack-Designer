@@ -69,3 +69,45 @@ describe("Faceplate", () => {
     expect(getByText("FRONT")).toBeInTheDocument();
   });
 });
+
+function cg(over: Partial<PortGroup> = {}): PortGroup {
+  return {
+    id: "g1", media: "copper", connectorType: "RJ45", idPrefix: "",
+    countingDirection: "ltr", rows: 1, cols: 2, gridX: 0, gridY: 0,
+    colSpacing: 0, rowSpacing: 0, portOverrides: {}, ...over,
+  };
+}
+
+describe("Faceplate — highlight & label position", () => {
+  it("recolours only the highlighted port's tile blue", () => {
+    const face: Face = { portGroups: [cg()], elements: [] };
+    const { getAllByTestId } = render(
+      <Faceplate face={face} widthIn={19} rackUnits={1} rackMounted highlight={{ groupId: "g1", portIndex: 1 }} />,
+    );
+    const cells = getAllByTestId("port-cell");
+    const highlighted = cells.filter((c) => c.getAttribute("data-highlighted") === "true");
+    expect(highlighted).toHaveLength(1);
+    expect(highlighted[0].innerHTML).toContain("#2d5bff");
+  });
+
+  it("no port is highlighted when highlight is null", () => {
+    const face: Face = { portGroups: [cg()], elements: [] };
+    const { getAllByTestId } = render(
+      <Faceplate face={face} widthIn={19} rackUnits={1} rackMounted highlight={null} />,
+    );
+    expect(getAllByTestId("port-cell").every((c) => c.getAttribute("data-highlighted") === "false")).toBe(true);
+  });
+
+  it("renders a port's label below the glyph when labelPos is bottom", () => {
+    const face: Face = { portGroups: [cg({ portOverrides: { 0: { labelPos: "bottom" } } })], elements: [] };
+    const { getAllByTestId } = render(
+      <Faceplate face={face} widthIn={19} rackUnits={1} rackMounted />,
+    );
+    // the first cell's label <text> y should be below its glyph box (greater y than a top label)
+    const cell0 = getAllByTestId("port-cell")[0];
+    const text = cell0.querySelector("text")!;
+    const cell1 = getAllByTestId("port-cell")[1]; // default top
+    const text1 = cell1.querySelector("text")!;
+    expect(Number(text.getAttribute("y"))).toBeGreaterThan(Number(text1.getAttribute("y")));
+  });
+});
