@@ -154,6 +154,11 @@ export function setSpacing(
 export function maxSpacing(
   face: Face, group: PortGroup, bounds: GridBounds,
 ): { maxCol: number; maxRow: number } {
+  // Neighbour clamp assumes no other group's bounds fall INSIDE this group's tight
+  // (spacing-0) column/row span — guaranteed today because overlaps are always
+  // prevented. If a future layout allows interleaved/gapped groups, the
+  // `ob.x >= gridX + cols*CELL_W` / `ob.y >= gridY + rows*ROW_H` gates below must
+  // also consider neighbours starting within the span.
   const gb = groupBounds(group);
   let maxCol = 0;
   if (group.cols > 1) {
