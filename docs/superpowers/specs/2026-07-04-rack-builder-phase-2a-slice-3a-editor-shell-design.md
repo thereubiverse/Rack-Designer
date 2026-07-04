@@ -51,7 +51,7 @@ The existing `CreateDeviceForm.tsx` is **removed**; the Device Library page moun
 - **Name** * — text, required.
 - **Brand** — optional / clearable **select** populated from the org brand list, with an inline **"+ Add brand"** action (create-your-own) that calls the existing `createBrandAction` and selects the new brand. Full typeahead combobox is deferred.
 - **Device type** * — required **select** from Device Types (existing list). (Managing the type list stays on the Device Types tab.)
-- **Rack units** — select (1 RU, 2 RU, … up to a sensible cap, e.g. 10).
+- **Rack units** — select (1 RU, 2 RU, … 10 RU). Capped at 10 in the UI (the domain `isValidRackUnits` allows up to 60; the select just offers the common range).
 - **Width (in)** — numeric input; the device **body** width in inches, drives the preview grid width.
 
 Rationale for selects over typeahead: keeps 3a focused; the brand/type lists are short for a single org. Typeahead is a later polish if needed.
