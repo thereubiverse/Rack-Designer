@@ -46,3 +46,29 @@ export function frameDims(opts: {
     heightPx: heightIn * PX_PER_IN,
   };
 }
+
+export interface ScrewHole {
+  cx: number;
+  cy: number;
+}
+
+/**
+ * Screw holes pinned near the outer rail edges so they line up on the rack
+ * regardless of body width. 2 holes per U per ear (top & bottom third of each
+ * U). Returns [] when there are no ears.
+ */
+export function screwHoles(dims: FrameDims, rackUnits: number): ScrewHole[] {
+  if (dims.earWidthPx <= 0) return [];
+  const leftX = dims.earWidthPx / 2;
+  const rightX = dims.frameWidthPx - dims.earWidthPx / 2;
+  const uPx = U_HEIGHT_IN * PX_PER_IN;
+  const holes: ScrewHole[] = [];
+  for (const cx of [leftX, rightX]) {
+    for (let u = 0; u < rackUnits; u++) {
+      const top = u * uPx;
+      holes.push({ cx, cy: top + uPx * 0.28 });
+      holes.push({ cx, cy: top + uPx * 0.72 });
+    }
+  }
+  return holes;
+}
