@@ -22,6 +22,8 @@ export interface EditorCanvasProps {
   onSelectPort?: (index: number | null) => void;
   onAddColumn?: (id: string) => void;
   onAddRow?: (id: string) => void;
+  onRemoveColumn?: (id: string) => void;
+  onRemoveRow?: (id: string) => void;
   onMove?: (id: string, pos: Pos) => void;
   onSpacing?: (id: string, spacing: { colSpacing: number; rowSpacing: number }) => void;
 }
@@ -90,12 +92,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
   }, [drag, props]);
 
   const [chevDrag, setChevDrag] = useState<
-    { id: string; axis: "col" | "row"; start: number } | null
+    { id: string; axis: "col" | "row"; start: number; initial: number } | null
   >(null);
-  // How many rows/cols this chevron drag has added so far. A ref (not state) so
-  // the parent add-callbacks fire from event handlers, never inside a state
-  // updater (which would setState-the-parent during render).
-  const chevAddedRef = useRef(0);
+  // Net rows/cols this chevron drag has applied so far (signed: + added, − removed).
+  // A ref (not state) so the parent add/remove callbacks fire from event handlers,
+  // never inside a state updater (which would setState-the-parent during render).
+  const chevNetRef = useRef(0);
+  const chevMovedRef = useRef(false);
 
   useEffect(() => {
     if (!chevDrag) return;
@@ -104,16 +107,24 @@ export function EditorCanvas(props: EditorCanvasProps) {
       const s = scaleRef.current || 1;
       const step = d.axis === "col" ? CELL_W : ROW_H;
       const dist = (d.axis === "col" ? e.clientX - d.start : e.clientY - d.start) / s;
-      const want = Math.max(0, Math.floor(dist / step));
-      for (let i = chevAddedRef.current; i < want; i++) {
+      // signed target delta; can't remove below 1 (the original single row/col)
+      const want = Math.max(Math.round(dist / step), -(d.initial - 1));
+      while (chevNetRef.current < want) {
         if (d.axis === "col") props.onAddColumn?.(d.id);
         else props.onAddRow?.(d.id);
+        chevNetRef.current++;
+        chevMovedRef.current = true;
       }
-      if (want > chevAddedRef.current) chevAddedRef.current = want;
+      while (chevNetRef.current > want) {
+        if (d.axis === "col") props.onRemoveColumn?.(d.id);
+        else props.onRemoveRow?.(d.id);
+        chevNetRef.current--;
+        chevMovedRef.current = true;
+      }
     }
     function onUp() {
       // a plain click (no threshold crossed) still adds one
-      if (chevAddedRef.current === 0) {
+      if (!chevMovedRef.current) {
         if (d.axis === "col") props.onAddColumn?.(d.id);
         else props.onAddRow?.(d.id);
       }
@@ -214,14 +225,14 @@ export function EditorCanvas(props: EditorCanvasProps) {
                       type="button"
                       data-testid="chevron-col"
                       title="Add a column of ports (click, or drag right for more)"
-                      onPointerDown={(e) => { e.stopPropagation(); chevAddedRef.current = 0; setChevDrag({ id: g.id, axis: "col", start: e.clientX }); }}
+                      onPointerDown={(e) => { e.stopPropagation(); chevNetRef.current = 0; chevMovedRef.current = false; setChevDrag({ id: g.id, axis: "col", start: e.clientX, initial: g.cols }); }}
                       style={chevronStyle({ right: -8, top: "50%", translate: "0 -50%" })}
                     >›</button>
                     <button
                       type="button"
                       data-testid="chevron-row"
                       title="Add a row of ports (click, or drag down for more)"
-                      onPointerDown={(e) => { e.stopPropagation(); chevAddedRef.current = 0; setChevDrag({ id: g.id, axis: "row", start: e.clientY }); }}
+                      onPointerDown={(e) => { e.stopPropagation(); chevNetRef.current = 0; chevMovedRef.current = false; setChevDrag({ id: g.id, axis: "row", start: e.clientY, initial: g.rows }); }}
                       style={chevronStyle({ bottom: -8, left: "50%", translate: "-50% 0" })}
                     >⌄</button>
                     {props.onSpacing && (

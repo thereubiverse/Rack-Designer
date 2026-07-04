@@ -10,7 +10,7 @@ import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
 import { PortSettings } from "./PortSettings";
 import {
-  addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup,
+  addPortGroup, movePortGroup, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setSpacing, type GridBounds,
 } from "./portGroupOps";
 
@@ -233,6 +233,8 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               onMove={(id, pos) => setActiveFace(movePortGroup(activeFace, id, pos, bounds))}
               onAddColumn={(id) => setActiveFace((prev) => addColumn(prev, id, bounds))}
               onAddRow={(id) => setActiveFace((prev) => addRow(prev, id, bounds))}
+              onRemoveColumn={(id) => setActiveFace((prev) => removeColumn(prev, id))}
+              onRemoveRow={(id) => setActiveFace((prev) => removeRow(prev, id))}
               selectedPortIndex={selectedPortIndex}
               onSelectPort={setSelectedPortIndex}
               onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}

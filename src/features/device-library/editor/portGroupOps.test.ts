@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setSpacing, maxSpacing, wouldOverlapAt } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -227,5 +227,22 @@ describe("setPortOverride carries labelPos (3d)", () => {
   it("stores labelPos", () => {
     const face: Face = { portGroups: [group({ id: "g" })], elements: [] };
     expect(setPortOverride(face, "g", 0, { labelPos: "bottom" }).portGroups[0].portOverrides[0]).toEqual({ labelPos: "bottom" });
+  });
+});
+
+describe("removeColumn / removeRow (3f)", () => {
+  it("removes a column, floored at 1", () => {
+    const face: Face = { portGroups: [group({ id: "g", cols: 3, rows: 1 })], elements: [] };
+    expect(removeColumn(face, "g").portGroups[0].cols).toBe(2);
+  });
+  it("does not remove below one column", () => {
+    const face: Face = { portGroups: [group({ id: "g", cols: 1, rows: 1 })], elements: [] };
+    expect(removeColumn(face, "g").portGroups[0].cols).toBe(1);
+  });
+  it("removes a row, floored at 1", () => {
+    const face: Face = { portGroups: [group({ id: "g", cols: 1, rows: 3 })], elements: [] };
+    expect(removeRow(face, "g").portGroups[0].rows).toBe(2);
+    const single: Face = { portGroups: [group({ id: "g", cols: 1, rows: 1 })], elements: [] };
+    expect(removeRow(single, "g").portGroups[0].rows).toBe(1);
   });
 });

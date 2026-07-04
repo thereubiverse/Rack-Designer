@@ -97,6 +97,22 @@ export function addRow(face: Face, id: string, bounds: GridBounds): Face {
   return grow(face, id, bounds, { rows: 1 });
 }
 
+/** Remove one column, floored at 1 (the original single column). */
+export function removeColumn(face: Face, id: string): Face {
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) => (g.id === id && g.cols > 1 ? { ...g, cols: g.cols - 1 } : g)),
+  };
+}
+
+/** Remove one row, floored at 1. */
+export function removeRow(face: Face, id: string): Face {
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) => (g.id === id && g.rows > 1 ? { ...g, rows: g.rows - 1 } : g)),
+  };
+}
+
 export function updatePortGroup(
   face: Face, id: string,
   patch: Partial<Pick<PortGroup, "idPrefix" | "countingDirection" | "connectorType">>,

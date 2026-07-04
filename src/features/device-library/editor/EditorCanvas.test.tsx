@@ -281,3 +281,34 @@ describe("EditorCanvas fit wrapper (3e)", () => {
     expect(fit.querySelector('[data-testid="editor-overlay"]')).not.toBeNull();
   });
 });
+
+describe("EditorCanvas chevron drag to remove (3f)", () => {
+  it("dragging the column chevron left removes one column per CELL_W, floored at 1", () => {
+    const onRemoveColumn = vi.fn();
+    // group g1 has cols:3 (grp default)
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onAddColumn={() => {}} onRemoveColumn={onRemoveColumn} />,
+    );
+    const chev = getByTestId("chevron-col");
+    fireEvent.pointerDown(chev, { clientX: 100, clientY: 50 });
+    // drag far left — 3-col group can remove at most 2 (floor of 1)
+    fireEvent.pointerMove(window, { clientX: 100 - 24 * 5, clientY: 50 });
+    fireEvent.pointerUp(window, { clientX: 100 - 24 * 5, clientY: 50 });
+    expect(onRemoveColumn).toHaveBeenCalledTimes(2);
+  });
+
+  it("dragging the row chevron up removes rows down to 1", () => {
+    const onRemoveRow = vi.fn();
+    const twoRow: Face = { portGroups: [grp({ id: "g1", rows: 2, cols: 1 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={twoRow} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onAddRow={() => {}} onRemoveRow={onRemoveRow} />,
+    );
+    const chev = getByTestId("chevron-row");
+    fireEvent.pointerDown(chev, { clientX: 50, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 50, clientY: 100 - 24 * 3 });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: 100 - 24 * 3 });
+    expect(onRemoveRow).toHaveBeenCalledTimes(1); // 2 rows → floor at 1 → one removal
+  });
+});
