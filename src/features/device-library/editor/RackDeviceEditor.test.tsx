@@ -105,4 +105,28 @@ describe("RackDeviceEditor", () => {
     await user.click(screen.getByTestId("editor-cancel"));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("clicking the backdrop calls onCancel", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    await user.click(screen.getByTestId("rack-device-editor")); // the backdrop root itself
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close when clicking inside the dialog panel", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    await user.click(screen.getByLabelText(/name/i));
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("pressing Escape calls onCancel", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    await user.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

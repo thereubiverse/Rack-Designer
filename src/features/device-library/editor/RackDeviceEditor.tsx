@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MEDIA, type Media } from "@/domain/faceplate";
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
@@ -43,12 +43,22 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
 
   const side = draft.activeSide === "front" ? "FRONT" : "BACK";
 
+  // Escape closes the modal (behaves like Cancel), per spec §10.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") props.onCancel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props]);
+
   return (
     <div
       data-testid="rack-device-editor"
       role="dialog"
       aria-label="Rack Device Editor"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) props.onCancel(); }}
     >
       <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
