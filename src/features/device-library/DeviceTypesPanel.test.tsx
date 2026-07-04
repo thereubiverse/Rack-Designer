@@ -1,7 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { DeviceTypesPanel } from "./DeviceTypesPanel";
 import type { DeviceTypeRow } from "./repository";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
 
 const types: DeviceTypeRow[] = [
   { id: "1", organization_id: "o", name: "Switch", created_at: "" },

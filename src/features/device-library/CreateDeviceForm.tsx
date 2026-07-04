@@ -1,15 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { DeviceTypeRow, BrandRow } from "./repository";
 import { createDeviceTemplateAction } from "./actions";
 
 export function CreateDeviceForm({ types, brands }: { types: DeviceTypeRow[]; brands: BrandRow[] }) {
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
   async function action(formData: FormData) {
     setError(null);
     const res = await createDeviceTemplateAction(formData);
     if (!res.ok) setError(res.error ?? "Failed");
+    else router.refresh();
   }
   return (
     <form action={action} className="flex flex-wrap items-end gap-2">

@@ -1,20 +1,24 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { DeviceTypeRow } from "./repository";
 import { createDeviceTypeAction, deleteDeviceTypeAction } from "./typeActions";
 
 export function DeviceTypesPanel({ types }: { types: DeviceTypeRow[] }) {
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
   async function add(formData: FormData) {
     setError(null);
     const res = await createDeviceTypeAction(formData);
     if (!res.ok) setError(res.error ?? "Failed");
+    else router.refresh();
   }
   async function remove(id: string) {
     setError(null);
     try {
       await deleteDeviceTypeAction(id);
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     }
