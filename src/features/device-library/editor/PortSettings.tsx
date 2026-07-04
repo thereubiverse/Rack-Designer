@@ -1,12 +1,13 @@
 "use client";
 
 export function PortSettings({
-  portLabel, name, flipped, onChange,
+  portLabel, name, flipped, labelPos, onChange,
 }: {
   portLabel: string;
   name: string;
   flipped: boolean;
-  onChange: (patch: { name?: string; flipped?: boolean }) => void;
+  labelPos: "top" | "bottom";
+  onChange: (patch: { name?: string; flipped?: boolean; labelPos?: "top" | "bottom" }) => void;
 }) {
   return (
     <div data-testid="port-settings" className="mt-4 rounded-xl border border-neutral-200 p-4">
@@ -29,6 +30,14 @@ export function PortSettings({
         >
           Flip
           <span className={`inline-block h-4 w-8 rounded-full ${flipped ? "bg-blue-600" : "bg-neutral-300"}`} />
+        </button>
+        <button
+          type="button"
+          data-testid="port-labelpos"
+          onClick={() => onChange({ labelPos: labelPos === "top" ? "bottom" : "top" })}
+          className="flex h-9 items-center gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+        >
+          Label: {labelPos === "top" ? "Top" : "Bottom"}
         </button>
       </div>
     </div>
