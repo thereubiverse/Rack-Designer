@@ -191,3 +191,22 @@ describe("EditorCanvas spacing handle", () => {
     fireEvent.pointerUp(window, { clientX: 200, clientY: 200 });
   });
 });
+
+describe("EditorCanvas live move feedback", () => {
+  it("shows a red-invalid marker when dragging a group onto another", () => {
+    const twoGroups: Face = {
+      portGroups: [grp({ id: "g1", gridX: 0, gridY: 0 }), grp({ id: "g2", cols: 1, gridX: 200, gridY: 0 })],
+      elements: [],
+    };
+    const { getByTestId, queryByTestId } = render(
+      <EditorCanvas face={twoGroups} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g2" onSelect={() => {}} onMove={() => {}} />,
+    );
+    const box = getByTestId("group-box-g2");
+    // drag g2 (at gridX 200) left onto g1 (at gridX 0)
+    fireEvent.pointerDown(box, { clientX: 200, clientY: 20 });
+    fireEvent.pointerMove(window, { clientX: 5, clientY: 20 }); // now near gridX 5 → overlaps g1
+    expect(queryByTestId("move-invalid")).not.toBeNull();
+    fireEvent.pointerUp(window, { clientX: 5, clientY: 20 });
+  });
+});

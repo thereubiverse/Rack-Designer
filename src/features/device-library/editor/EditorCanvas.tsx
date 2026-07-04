@@ -5,7 +5,7 @@ import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, GLYPH_W } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
 import { PortGlyph, PORT_GLYPHS } from "@/features/device-library/faceplate/portGlyphs";
-import { maxSpacing, type Pos } from "./portGroupOps";
+import { maxSpacing, wouldOverlapAt, type Pos } from "./portGroupOps";
 
 const SEL_PAD = 6; // visual padding so the selection box wraps the number labels
 
@@ -33,10 +33,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const dims = frameDims({ widthIn, rackUnits, rackMounted });
   const earX = dims.earWidthPx;
 
-  const [drag, setDrag] = useState<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const [drag, setDrag] = useState<
+    { id: string; startX: number; startY: number; origX: number; origY: number; dx: number; dy: number } | null
+  >(null);
 
   useEffect(() => {
     if (!drag) return;
+    function onMove(e: PointerEvent) {
+      setDrag((d) => (d ? { ...d, dx: e.clientX - d.startX, dy: e.clientY - d.startY } : d));
+    }
     function onUp(e: PointerEvent) {
       const dx = e.clientX - drag!.startX;
       const dy = e.clientY - drag!.startY;
@@ -50,9 +55,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
     function onCancel() {
       setDrag(null);
     }
+    window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
     return () => {
+      window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
     };
@@ -109,7 +116,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
           {face.portGroups.map((g) => {
             const laid = layoutPortGroup(g);
             const selected = g.id === props.selectedGroupId;
-            const left = earX + g.gridX;
+            const dragging = drag?.id === g.id;
+            const liveX = dragging ? g.gridX + drag!.dx : g.gridX;
+            const liveY = dragging ? g.gridY + drag!.dy : g.gridY;
+            const invalid = dragging && wouldOverlapAt(face, g, { x: liveX, y: liveY }, bounds);
             return (
               <div
                 key={g.id}
@@ -119,20 +129,21 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 onPointerDown={(e) => {
                   if (!props.onMove) return;
                   e.stopPropagation();
-                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY });
+                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, dx: 0, dy: 0 });
                 }}
                 style={{
                   position: "absolute",
-                  left: left - SEL_PAD,
-                  top: g.gridY - SEL_PAD,
+                  left: (earX + liveX) - SEL_PAD,
+                  top: liveY - SEL_PAD,
                   width: laid.width + SEL_PAD * 2,
                   height: laid.height + SEL_PAD * 2,
                   cursor: props.onMove ? "move" : "pointer",
                   borderRadius: 6,
-                  border: selected ? "1.5px solid #2d5bff" : "1.5px solid transparent",
+                  border: invalid ? "1.5px solid #dc2626" : selected ? "1.5px solid #2d5bff" : "1.5px solid transparent",
                   background: selected ? "rgba(45,91,255,0.06)" : "transparent",
                 }}
               >
+                {invalid && <div data-testid="move-invalid" style={{ display: "none" }} />}
                 {selected && (
                   <>
                     <button
