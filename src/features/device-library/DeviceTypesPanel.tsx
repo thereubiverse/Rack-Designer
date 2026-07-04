@@ -11,6 +11,14 @@ export function DeviceTypesPanel({ types }: { types: DeviceTypeRow[] }) {
     const res = await createDeviceTypeAction(formData);
     if (!res.ok) setError(res.error ?? "Failed");
   }
+  async function remove(id: string) {
+    setError(null);
+    try {
+      await deleteDeviceTypeAction(id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
   return (
     <div className="space-y-4">
       <form action={add} className="flex items-end gap-2">
@@ -23,7 +31,7 @@ export function DeviceTypesPanel({ types }: { types: DeviceTypeRow[] }) {
           <li key={t.id} className="flex items-center justify-between py-2 text-sm">
             <span>{t.name}</span>
             <button
-              onClick={() => deleteDeviceTypeAction(t.id)}
+              onClick={() => remove(t.id)}
               className="text-xs text-red-400"
               title="Delete (blocked if in use)"
             >
