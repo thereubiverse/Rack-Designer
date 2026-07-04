@@ -6,11 +6,12 @@ import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
 import { EditorCanvas } from "./EditorCanvas";
-import { frameDims } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
+import { PortSettings } from "./PortSettings";
 import {
   addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup,
-  type GridBounds,
+  setPortOverride, setSpacing, type GridBounds,
 } from "./portGroupOps";
 
 const MEDIA_LABELS: Record<Media, string> = {
@@ -36,6 +37,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const [newBrand, setNewBrand] = useState("");
   const [brands, setBrands] = useState(props.brands);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedPortIndex, setSelectedPortIndex] = useState<number | null>(null);
   const dims = frameDims({
     widthIn: draft.widthIn > 0 ? draft.widthIn : 1,
     rackUnits: draft.rackUnits >= 1 ? draft.rackUnits : 1,
@@ -44,8 +46,14 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const bounds: GridBounds = { width: dims.bodyWidthPx, height: dims.heightPx };
   const selectedGroup = activeFace.portGroups.find((g) => g.id === selectedGroupId) ?? null;
 
+  function selectGroup(id: string | null) {
+    setSelectedGroupId(id);
+    setSelectedPortIndex(null);
+  }
+
   function switchSide(next: "front" | "back") {
     setSelectedGroupId(null);
+    setSelectedPortIndex(null);
     setActiveSide(next);
   }
 
@@ -199,16 +207,19 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               rackMounted={draft.rackMounted}
               side={side}
               selectedGroupId={selectedGroupId}
-              onSelect={setSelectedGroupId}
+              onSelect={selectGroup}
               onCreate={(media, pos) => {
                 const before = activeFace.portGroups.length;
                 const next = addPortGroup(activeFace, media, pos, bounds);
                 setActiveFace(next);
-                if (next.portGroups.length > before) setSelectedGroupId(next.portGroups[next.portGroups.length - 1].id);
+                if (next.portGroups.length > before) selectGroup(next.portGroups[next.portGroups.length - 1].id);
               }}
               onMove={(id, pos) => setActiveFace(movePortGroup(activeFace, id, pos, bounds))}
               onAddColumn={(id) => setActiveFace(addColumn(activeFace, id, bounds))}
               onAddRow={(id) => setActiveFace(addRow(activeFace, id, bounds))}
+              selectedPortIndex={selectedPortIndex}
+              onSelectPort={setSelectedPortIndex}
+              onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}
             />
           </div>
         </div>
@@ -217,13 +228,26 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           <PortGroupSettings
             group={selectedGroup}
             onChange={(patch) => setActiveFace(updatePortGroup(activeFace, selectedGroup.id, patch))}
-            onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); setSelectedGroupId(null); }}
+            onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); selectGroup(null); }}
           />
         ) : (
           <div className="mt-4 rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400">
             Drag a port type onto the grid to add a group. Select a group to edit it.
           </div>
         )}
+
+        {selectedGroup && selectedPortIndex !== null && (() => {
+          const cell = layoutPortGroup(selectedGroup).cells.find((c) => c.index === selectedPortIndex);
+          const ov = selectedGroup.portOverrides[selectedPortIndex] ?? {};
+          return (
+            <PortSettings
+              portLabel={cell ? cell.label : String(selectedPortIndex + 1)}
+              name={ov.name ?? ""}
+              flipped={ov.flipped ?? false}
+              onChange={(patch) => setActiveFace(setPortOverride(activeFace, selectedGroup.id, selectedPortIndex, patch))}
+            />
+          );
+        })()}
 
         {props.error && <p className="mt-3 text-sm text-red-600">{props.error}</p>}
 
