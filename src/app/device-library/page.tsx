@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { createServiceClient } from "@/lib/supabase/server";
 import { listDeviceTemplates, listDeviceTypes, listBrands } from "@/features/device-library/repository";
-import { RackDeviceTable } from "@/features/device-library/RackDeviceTable";
-import { CreateDeviceForm } from "@/features/device-library/CreateDeviceForm";
+import { EditorLauncher } from "@/features/device-library/editor/EditorLauncher";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +21,7 @@ export default async function DeviceLibraryPage() {
       </header>
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">Custom Rack Devices</h2>
-        <CreateDeviceForm types={types} brands={brands} />
-        <RackDeviceTable rows={rows} />
+        <EditorLauncher rows={rows} types={types} brands={brands} />
       </section>
     </main>
   );
