@@ -1,5 +1,6 @@
 import { layoutPortGroup } from "@/domain/faceplate-geometry";
 import type { Face, PortGroup } from "@/domain/faceplate";
+import { CONNECTORS, type Media } from "@/domain/faceplate";
 
 export interface Pos { x: number; y: number }
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -69,4 +70,61 @@ export function findFreePosition(
     }
   }
   return null;
+}
+
+export function addPortGroup(face: Face, media: Media, pos: Pos, bounds: GridBounds): Face {
+  const base: PortGroup = {
+    id: crypto.randomUUID(),
+    media,
+    connectorType: CONNECTORS[media][0],
+    idPrefix: "",
+    countingDirection: "ltr",
+    rows: 1, cols: 1,
+    gridX: 0, gridY: 0,
+    colSpacing: 0, rowSpacing: 0,
+    portOverrides: {},
+  };
+  const free = findFreePosition(face, base, pos, bounds);
+  if (!free) return face;
+  return { ...face, portGroups: [...face.portGroups, { ...base, gridX: free.x, gridY: free.y }] };
+}
+
+export function movePortGroup(face: Face, id: string, pos: Pos, bounds: GridBounds): Face {
+  const g = face.portGroups.find((x) => x.id === id);
+  if (!g) return face;
+  const free = findFreePosition(face, g, pos, bounds, id);
+  if (!free) return face;
+  return {
+    ...face,
+    portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, gridX: free.x, gridY: free.y } : x)),
+  };
+}
+
+function grow(face: Face, id: string, bounds: GridBounds, delta: { cols?: number; rows?: number }): Face {
+  const g = face.portGroups.find((x) => x.id === id);
+  if (!g) return face;
+  const grown: PortGroup = { ...g, cols: g.cols + (delta.cols ?? 0), rows: g.rows + (delta.rows ?? 0) };
+  const b = groupBounds(grown);
+  if (b.x + b.width > bounds.width || b.y + b.height > bounds.height) return face;
+  if (wouldOverlap(face, grown, id)) return face;
+  return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? grown : x)) };
+}
+
+export function addColumn(face: Face, id: string, bounds: GridBounds): Face {
+  return grow(face, id, bounds, { cols: 1 });
+}
+
+export function addRow(face: Face, id: string, bounds: GridBounds): Face {
+  return grow(face, id, bounds, { rows: 1 });
+}
+
+export function updatePortGroup(
+  face: Face, id: string,
+  patch: Partial<Pick<PortGroup, "idPrefix" | "countingDirection" | "connectorType">>,
+): Face {
+  return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, ...patch } : x)) };
+}
+
+export function deletePortGroup(face: Face, id: string): Face {
+  return { ...face, portGroups: face.portGroups.filter((x) => x.id !== id) };
 }
