@@ -73,8 +73,10 @@ describe("EditorCanvas overlay", () => {
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
         selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} onAddRow={onAddRow} />,
     );
-    fireEvent.click(getByTestId("chevron-col"));
-    fireEvent.click(getByTestId("chevron-row"));
+    fireEvent.pointerDown(getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(getByTestId("chevron-row"), { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
     expect(onAddColumn).toHaveBeenCalledWith("g1");
     expect(onAddRow).toHaveBeenCalledWith("g1");
   });
@@ -209,5 +211,31 @@ describe("EditorCanvas live move feedback", () => {
     fireEvent.pointerMove(window, { clientX: 5, clientY: 20 }); // now near gridX 5 → overlaps g1
     expect(queryByTestId("move-invalid")).not.toBeNull();
     fireEvent.pointerUp(window, { clientX: 5, clientY: 20 });
+  });
+});
+
+describe("EditorCanvas chevron drag (3d)", () => {
+  it("dragging the column chevron right adds one column per CELL_W", () => {
+    const onAddColumn = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} />,
+    );
+    const chev = getByTestId("chevron-col");
+    fireEvent.pointerDown(chev, { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(window, { clientX: 100 + 24 * 2 + 2, clientY: 50 }); // ~2 columns of drag
+    fireEvent.pointerUp(window, { clientX: 100 + 24 * 2 + 2, clientY: 50 });
+    expect(onAddColumn).toHaveBeenCalledTimes(2);
+  });
+
+  it("a plain click still adds one column", () => {
+    const onAddColumn = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} />,
+    );
+    fireEvent.pointerDown(getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
+    expect(onAddColumn).toHaveBeenCalledTimes(1);
   });
 });

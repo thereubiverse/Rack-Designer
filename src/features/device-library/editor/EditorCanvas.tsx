@@ -65,6 +65,43 @@ export function EditorCanvas(props: EditorCanvasProps) {
     };
   }, [drag, props]);
 
+  const [chevDrag, setChevDrag] = useState<
+    { id: string; axis: "col" | "row"; start: number; added: number } | null
+  >(null);
+
+  useEffect(() => {
+    if (!chevDrag) return;
+    function onMove(e: PointerEvent) {
+      setChevDrag((d) => {
+        if (!d) return d;
+        const step = d.axis === "col" ? CELL_W : ROW_H;
+        const dist = d.axis === "col" ? e.clientX - d.start : e.clientY - d.start;
+        const want = Math.max(0, Math.floor(dist / step));
+        for (let i = d.added; i < want; i++) {
+          if (d.axis === "col") props.onAddColumn?.(d.id);
+          else props.onAddRow?.(d.id);
+        }
+        return want > d.added ? { ...d, added: want } : d;
+      });
+    }
+    function onUp() {
+      setChevDrag((d) => {
+        // a plain click (no threshold crossed) still adds one
+        if (d && d.added === 0) {
+          if (d.axis === "col") props.onAddColumn?.(d.id);
+          else props.onAddRow?.(d.id);
+        }
+        return null;
+      });
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [chevDrag, props]);
+
   const bounds = { width: dims.bodyWidthPx, height: dims.heightPx };
   const [spaceDrag, setSpaceDrag] = useState<
     { id: string; startX: number; startY: number; grabCol: number; grabRow: number; maxCol: number; maxRow: number } | null
@@ -149,15 +186,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     <button
                       type="button"
                       data-testid="chevron-col"
-                      title="Add a column of ports"
-                      onClick={(e) => { e.stopPropagation(); props.onAddColumn?.(g.id); }}
+                      title="Add a column of ports (click, or drag right for more)"
+                      onPointerDown={(e) => { e.stopPropagation(); setChevDrag({ id: g.id, axis: "col", start: e.clientX, added: 0 }); }}
                       style={chevronStyle({ right: -8, top: "50%", translate: "0 -50%" })}
                     >›</button>
                     <button
                       type="button"
                       data-testid="chevron-row"
-                      title="Add a row of ports"
-                      onClick={(e) => { e.stopPropagation(); props.onAddRow?.(g.id); }}
+                      title="Add a row of ports (click, or drag down for more)"
+                      onPointerDown={(e) => { e.stopPropagation(); setChevDrag({ id: g.id, axis: "row", start: e.clientY, added: 0 }); }}
                       style={chevronStyle({ bottom: -8, left: "50%", translate: "-50% 0" })}
                     >⌄</button>
                     {props.onSpacing && (
