@@ -134,24 +134,19 @@ export function setSpacing(
 export function maxSpacing(
   face: Face, group: PortGroup, bounds: GridBounds,
 ): { maxCol: number; maxRow: number } {
-  // Neighbour clamp assumes no other group's bounds fall INSIDE this group's tight
-  // (spacing-0) column/row span — guaranteed today because overlaps are always
-  // prevented. If a future layout allows interleaved/gapped groups, the
-  // `ob.x >= gridX + cols*CELL_W` / `ob.y >= gridY + rows*ROW_H` gates below must
-  // also consider neighbours starting within the span.
-  const gb = groupBounds(group);
+  // Horizontal spread is clamped to the grid edge and to the nearest neighbour to
+  // the right. Under the derived-centering model every group shares the vertical
+  // center, so collision is purely horizontal — any group whose tight (spacing-0)
+  // block sits to the right constrains the spread, regardless of row count.
   let maxCol = 0;
   if (group.cols > 1) {
     let limitRight = bounds.width;
+    const tightRight = group.gridX + group.cols * CELL_W;
     for (const other of face.portGroups) {
       if (other.id === group.id) continue;
-      const ob = groupBounds(other);
-      const vertOverlap = gb.y < ob.y + ob.height && gb.y + gb.height > ob.y;
-      if (vertOverlap && ob.x >= group.gridX + group.cols * CELL_W) {
-        limitRight = Math.min(limitRight, ob.x);
-      }
+      if (other.gridX >= tightRight) limitRight = Math.min(limitRight, other.gridX);
     }
-    maxCol = Math.max(0, (limitRight - group.gridX - group.cols * CELL_W) / (group.cols - 1));
+    maxCol = Math.max(0, (limitRight - tightRight) / (group.cols - 1));
   }
   let maxRow = 0;
   if (group.rows > 1) {
