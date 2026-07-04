@@ -33,6 +33,28 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const dims = frameDims({ widthIn, rackUnits, rackMounted });
   const earX = dims.earWidthPx;
 
+  const LABEL_GUTTER = 22; // matches Faceplate's FRONT/BACK gutter (side is always set here)
+  const svgW = dims.frameWidthPx + LABEL_GUTTER;
+  const svgH = dims.heightPx;
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const scaleRef = useRef(1);
+
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const apply = () => {
+      const avail = el.clientWidth;
+      const s = avail > 0 ? Math.min(1, avail / svgW) : 1;
+      scaleRef.current = s;
+      setScale(s);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [svgW]);
+
   const [drag, setDrag] = useState<
     { id: string; startX: number; startY: number; origX: number; origY: number; dx: number; dy: number } | null
   >(null);
@@ -40,11 +62,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
   useEffect(() => {
     if (!drag) return;
     function onMove(e: PointerEvent) {
-      setDrag((d) => (d ? { ...d, dx: e.clientX - d.startX, dy: e.clientY - d.startY } : d));
+      const s = scaleRef.current || 1;
+      setDrag((d) => (d ? { ...d, dx: (e.clientX - d.startX) / s, dy: (e.clientY - d.startY) / s } : d));
     }
     function onUp(e: PointerEvent) {
-      const dx = e.clientX - drag!.startX;
-      const dy = e.clientY - drag!.startY;
+      const s = scaleRef.current || 1;
+      const dx = (e.clientX - drag!.startX) / s;
+      const dy = (e.clientY - drag!.startY) / s;
       // Only commit an actual move — a plain select-click (no movement) must not
       // mutate the face (avoids a redundant re-render and off-grid re-snapping).
       if (dx !== 0 || dy !== 0) {
@@ -77,8 +101,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
     if (!chevDrag) return;
     const d = chevDrag;
     function onMove(e: PointerEvent) {
+      const s = scaleRef.current || 1;
       const step = d.axis === "col" ? CELL_W : ROW_H;
-      const dist = d.axis === "col" ? e.clientX - d.start : e.clientY - d.start;
+      const dist = (d.axis === "col" ? e.clientX - d.start : e.clientY - d.start) / s;
       const want = Math.max(0, Math.floor(dist / step));
       for (let i = chevAddedRef.current; i < want; i++) {
         if (d.axis === "col") props.onAddColumn?.(d.id);
@@ -110,10 +135,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
   useEffect(() => {
     if (!spaceDrag) return;
     function onMove(e: PointerEvent) {
-      const s = spaceDrag!;
-      const colSpacing = Math.max(0, Math.min(s.maxCol, s.grabCol + (e.clientX - s.startX)));
-      const rowSpacing = Math.max(0, Math.min(s.maxRow, s.grabRow + (e.clientY - s.startY)));
-      props.onSpacing?.(s.id, { colSpacing, rowSpacing });
+      const s = scaleRef.current || 1;
+      const sd = spaceDrag!;
+      const colSpacing = Math.max(0, Math.min(sd.maxCol, sd.grabCol + (e.clientX - sd.startX) / s));
+      const rowSpacing = Math.max(0, Math.min(sd.maxRow, sd.grabRow + (e.clientY - sd.startY) / s));
+      props.onSpacing?.(sd.id, { colSpacing, rowSpacing });
     }
     function onUp() { setSpaceDrag(null); }
     window.addEventListener("pointermove", onMove);
@@ -126,16 +152,17 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
-    const left = rect ? rect.left : 0;
-    const top = rect ? rect.top : 0;
-    return { x: e.clientX - left - earX, y: e.clientY - top };
+    return toDevicePos({ x: e.clientX, y: e.clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
   }
 
   return (
-    <div data-testid="editor-canvas" style={{ position: "relative", display: "inline-block" }}>
-      <Faceplate face={face} widthIn={widthIn} rackUnits={rackUnits} rackMounted={rackMounted} side={side} highlight={props.highlight} />
+    <div ref={outerRef} data-testid="editor-canvas-fit" style={{ width: "100%" }}>
+      <div style={{ width: svgW * scale, height: svgH * scale }}>
+        <div style={{ transform: `scale(${scale})`, transformOrigin: "top left" }}>
+          <div data-testid="editor-canvas" style={{ position: "relative", display: "inline-block" }}>
+            <Faceplate face={face} widthIn={widthIn} rackUnits={rackUnits} rackMounted={rackMounted} side={side} highlight={props.highlight} />
 
-      {editing && (
+            {editing && (
         <div
           ref={overlayRef}
           data-testid="editor-overlay"
@@ -235,10 +262,20 @@ export function EditorCanvas(props: EditorCanvasProps) {
               </div>
             );
           })}
+              </div>
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
+}
+
+export function toDevicePos(
+  client: { x: number; y: number }, rect: { left: number; top: number }, scale: number, earX: number,
+): Pos {
+  const s = scale || 1;
+  return { x: (client.x - rect.left) / s - earX, y: (client.y - rect.top) / s };
 }
 
 function chevronStyle(pos: React.CSSProperties & { translate?: string }): React.CSSProperties {

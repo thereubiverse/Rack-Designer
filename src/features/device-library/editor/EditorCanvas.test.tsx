@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { vi } from "vitest";
-import { EditorCanvas } from "./EditorCanvas";
+import { EditorCanvas, toDevicePos } from "./EditorCanvas";
 import { emptyFace } from "@/domain/faceplate";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
@@ -255,5 +255,29 @@ describe("EditorCanvas port tile selection box (3e)", () => {
     expect(box).not.toBeNull();
     expect(box!.getAttribute("style")).toContain("#2d5bff");
     expect(box!.style.pointerEvents).toBe("none");
+  });
+});
+
+describe("toDevicePos (3e scaling)", () => {
+  it("at scale 1, subtracts the rect origin and ear offset", () => {
+    expect(toDevicePos({ x: 150, y: 40 }, { left: 50, top: 10 }, 1, 20)).toEqual({ x: 80, y: 30 });
+  });
+  it("at scale 0.5, divides the in-rect offset by the scale before removing the ear", () => {
+    // in-rect offset (100, 30) / 0.5 = (200, 60); x minus earX 20 = 180
+    expect(toDevicePos({ x: 150, y: 40 }, { left: 50, top: 10 }, 0.5, 20)).toEqual({ x: 180, y: 60 });
+  });
+  it("treats scale 0 as 1 (guard)", () => {
+    expect(toDevicePos({ x: 30, y: 10 }, { left: 0, top: 0 }, 0, 0)).toEqual({ x: 30, y: 10 });
+  });
+});
+
+describe("EditorCanvas fit wrapper (3e)", () => {
+  it("wraps the canvas in a fit container and still renders the faceplate + overlay", () => {
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" onSelect={() => {}} />,
+    );
+    const fit = getByTestId("editor-canvas-fit");
+    expect(fit.querySelector('[data-testid="faceplate-svg"]')).not.toBeNull();
+    expect(fit.querySelector('[data-testid="editor-overlay"]')).not.toBeNull();
   });
 });
