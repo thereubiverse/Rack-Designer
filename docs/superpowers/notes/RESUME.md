@@ -27,23 +27,27 @@ Network documentation platform (rack builder). Next.js 16 + Supabase (local via 
   (select / drop-to-create / edge chevrons / drag-to-move), `PortGroupSettings`, wired into the
   modal — branch `phase-2a-slice-3b` (stacked on 3a), 118 tests, browser-verified, review clean,
   **PR #4 open** (base = phase-2a-slice-3a): https://github.com/thereubiverse/Rack-Designer/pull/4
+- ✅ **Phase 2a · Slice 3c** — spacing handle + per-port editing + live-move outline: `portGroupOps`
+  (setPortOverride/setSpacing/maxSpacing/wouldOverlapAt), `EditorCanvas` per-port targets + BLUE
+  overlay copy (Faceplate stays pure), clamped live spacing spread, `PortSettings` (name/flip),
+  live group-move red would-overlap outline — branch `phase-2a-slice-3c` (stacked on 3b), 139 tests,
+  browser-verified + DB round-trip, review clean, **PR #5 open** (base = phase-2a-slice-3b):
+  https://github.com/thereubiverse/Rack-Designer/pull/5
 
-## Slice 3 decomposition (three sub-slices)
-- **3a** — shell + live preview + persistence (DONE, PR #3).
-- **3b** — port-group building: drag→group, select, edge chevrons, drag-to-move, delete, settings (DONE, PR #4).
-- **3c** — clamped spacing handle + per-port select (name + vertical flip). ALSO fold in 3b's
-  deferred live drag-follow visual + red would-overlap outline (build with the spacing-handle drag).
-- Architecture locked: overlay interactive controls onto the pure read-only `Faceplate` via the
-  `EditorCanvas` (position:relative overlay origin). `Faceplate` stays pure for Phase 2b reuse.
+## Slice 3 (Rack Device Editor) — COMPLETE
+- **3a** shell + preview + persistence (PR #3) · **3b** port-group building (PR #4) · **3c** spacing
+  handle + per-port select/name/flip + live-move outline (PR #5). All browser-verified.
+- Architecture: overlay interactive controls onto the pure read-only `Faceplate` via `EditorCanvas`;
+  `Faceplate` stays pure (reused by Phase 2b). Overlaps disallowed → nudge. Name/flip ride `portOverrides`.
 
 ## Next steps (in order)
-1. **Merge in order:** PR #2 → (#3 auto-retargets to main) → #3 → (#4 auto-retargets) → #4 → sync main.
-2. **Slice 3c** — the clamped bottom-right spacing handle (spread ports; hard-static stop at the grid
-   edge, limit computed once on grab) + per-port select (label+icon turn blue, name field, vertical
-   flip: glyph mirrors, number stays). Brainstorm → spec → plan → subagent. Extends the same
-   `EditorCanvas` overlay + `portGroupOps` seams. See Phase 2a spec §4.5–4.6.
-3. **Slice 4 — Text/Icon elements** (Tabler icon picker) — also renders `Face.elements`,
-   which Slice 2 deferred — then **Phase 2b** (place devices into racks).
+1. **Merge the stack bottom-up:** PR #2 → (#3 auto-retargets to main) → #3 → (#4) → #4 → (#5) → #5 → sync main.
+2. **Slice 4 — Text/Icon elements:** drag Text/Icon onto the grid (per-face `Face.elements`, deferred
+   from Slice 2/3). Text: content, alignment, Highlighted (inverted label), resize expands the BOX not
+   the font. Icon: Tabler picker (~5000, searchable), resize scales the glyph. Both repositionable/
+   deletable on the same `EditorCanvas` overlay. `Faceplate` must render `Face.elements` (currently
+   ignored). Brainstorm → spec → plan → subagent. See Phase 2a spec §4.7.
+3. **Phase 2b** — place devices into racks (reuses the pure `Faceplate`/`renderFace`).
 
 ## Where everything lives
 - **Specs:** `docs/superpowers/specs/` — the Phase 2a spec has ALL editor mechanics + geometry.
