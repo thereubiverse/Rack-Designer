@@ -34,14 +34,24 @@ export function EditorCanvas(props: EditorCanvasProps) {
   useEffect(() => {
     if (!drag) return;
     function onUp(e: PointerEvent) {
-      props.onMove?.(drag!.id, {
-        x: drag!.origX + (e.clientX - drag!.startX),
-        y: drag!.origY + (e.clientY - drag!.startY),
-      });
+      const dx = e.clientX - drag!.startX;
+      const dy = e.clientY - drag!.startY;
+      // Only commit an actual move — a plain select-click (no movement) must not
+      // mutate the face (avoids a redundant re-render and off-grid re-snapping).
+      if (dx !== 0 || dy !== 0) {
+        props.onMove?.(drag!.id, { x: drag!.origX + dx, y: drag!.origY + dy });
+      }
+      setDrag(null);
+    }
+    function onCancel() {
       setDrag(null);
     }
     window.addEventListener("pointerup", onUp);
-    return () => window.removeEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
   }, [drag, props]);
 
   function dropPos(e: React.DragEvent): Pos {

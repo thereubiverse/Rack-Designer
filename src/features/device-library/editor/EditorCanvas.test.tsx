@@ -119,4 +119,16 @@ describe("EditorCanvas drag-to-move", () => {
     // group started at gridX 20, gridY 20; moved +40,+8
     expect(pos).toEqual({ x: 60, y: 28 });
   });
+
+  it("does not commit a move when the pointer did not move (plain click)", () => {
+    const onMove = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onMove={onMove} />,
+    );
+    const box = getByTestId("group-box-g1");
+    fireEvent.pointerDown(box, { clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 100 });
+    expect(onMove).not.toHaveBeenCalled();
+  });
 });
