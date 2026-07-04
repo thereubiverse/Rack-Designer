@@ -34,7 +34,7 @@ export interface PortGroup {
   gridY: number;
   colSpacing: number;
   rowSpacing: number;
-  portOverrides: Record<number, { name?: string; flipped?: boolean }>;
+  portOverrides: Record<number, { name?: string; flipped?: boolean; labelPos?: "top" | "bottom" }>;
 }
 
 export interface TextElement {

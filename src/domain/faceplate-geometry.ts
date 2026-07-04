@@ -7,6 +7,7 @@ export const PX_PER_IN = 48;       // rendering scale (19" -> 912px, 1U -> 84px)
 export const CELL_W = 24;          // uniform port cell width (px)
 export const ROW_H = 24;           // uniform port cell height (px)
 export const GLYPH_W = 20;         // normalized glyph width (px)
+export const LABEL_H = 12;         // vertical strip for a port's number label
 
 /** Ear width (inches) on ONE side: half the gap between body and the rails. */
 export function earWidthIn(bodyWidthIn: number, rackMounted: boolean): number {
@@ -113,6 +114,7 @@ export interface LaidOutPort {
   y: number;
   number: number;
   label: string;
+  labelPos: "top" | "bottom";
   flipped: boolean;
   media: Media;
   connectorType: string;
@@ -123,14 +125,18 @@ export interface LaidOutGroup {
   cells: LaidOutPort[];
   width: number;
   height: number;
+  top: number;
 }
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
-export function layoutPortGroup(group: PortGroup): LaidOutGroup {
+export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGroup {
   const seq = portSequence(group.rows, group.cols, group.countingDirection);
+  const height = group.rows * ROW_H + Math.max(0, group.rows - 1) * group.rowSpacing;
+  // Vertical origin: centered in the device when heightPx is provided, else legacy gridY.
+  const top = heightPx !== undefined ? (heightPx - height) / 2 : group.gridY;
   const cells: LaidOutPort[] = [];
   for (let index = 0; index < group.rows * group.cols; index++) {
     const row = Math.floor(index / group.cols);
@@ -138,20 +144,22 @@ export function layoutPortGroup(group: PortGroup): LaidOutGroup {
     const override = group.portOverrides[index];
     const number = seq[index];
     const label = override?.name ?? `${group.idPrefix}${pad2(number)}`;
+    const labelPos: "top" | "bottom" =
+      override?.labelPos ?? (group.rows > 1 && row === group.rows - 1 ? "bottom" : "top");
     cells.push({
       index,
       row,
       col,
       x: group.gridX + col * (CELL_W + group.colSpacing),
-      y: group.gridY + row * (ROW_H + group.rowSpacing),
+      y: top + row * (ROW_H + group.rowSpacing),
       number,
       label,
+      labelPos,
       flipped: override?.flipped ?? false,
       media: group.media,
       connectorType: group.connectorType,
     });
   }
   const width = group.cols * CELL_W + Math.max(0, group.cols - 1) * group.colSpacing;
-  const height = group.rows * ROW_H + Math.max(0, group.rows - 1) * group.rowSpacing;
-  return { id: group.id, cells, width, height };
+  return { id: group.id, cells, width, height, top };
 }

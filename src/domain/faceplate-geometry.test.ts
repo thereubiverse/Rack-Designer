@@ -157,3 +157,40 @@ describe("faceplate geometry — layoutPortGroup", () => {
     expect(g.cells.map((c) => c.label)).toEqual(["02", "01"]);
   });
 });
+
+describe("layoutPortGroup — vertical centering & labelPos", () => {
+  function g(over: Partial<PortGroup> = {}): PortGroup {
+    return {
+      id: "g", media: "copper", connectorType: "RJ45", idPrefix: "",
+      countingDirection: "ltr", rows: 1, cols: 1, gridX: 0, gridY: 0,
+      colSpacing: 0, rowSpacing: 0, portOverrides: {}, ...over,
+    };
+  }
+  it("centers a single row dead-center in the device height", () => {
+    // heightPx 84 (1U), height = ROW_H 24 → top = (84-24)/2 = 30
+    const laid = layoutPortGroup(g(), 84);
+    expect(laid.top).toBeCloseTo(30, 5);
+    expect(laid.cells[0].y).toBeCloseTo(30, 5);
+  });
+  it("centers a two-row group symmetric about center", () => {
+    // 2 rows, rowSpacing 0 → height 48, top = (84-48)/2 = 18; row1 y = 18, row2 y = 18+24 = 42
+    const laid = layoutPortGroup(g({ rows: 2, cols: 1 }), 84);
+    expect(laid.cells[0].y).toBeCloseTo(18, 5);
+    expect(laid.cells[1].y).toBeCloseTo(42, 5);
+  });
+  it("defaults labelPos: single row → top; bottom row of a multi-row group → bottom", () => {
+    expect(layoutPortGroup(g(), 84).cells[0].labelPos).toBe("top");
+    const two = layoutPortGroup(g({ rows: 2, cols: 1 }), 84);
+    expect(two.cells[0].labelPos).toBe("top");   // row 0
+    expect(two.cells[1].labelPos).toBe("bottom"); // last row
+  });
+  it("a per-port labelPos override wins", () => {
+    const laid = layoutPortGroup(g({ portOverrides: { 0: { labelPos: "bottom" } } }), 84);
+    expect(laid.cells[0].labelPos).toBe("bottom");
+  });
+  it("without heightPx, uses the legacy gridY origin (back-compat)", () => {
+    const laid = layoutPortGroup(g({ gridY: 10 }));
+    expect(laid.cells[0].y).toBe(10);
+    expect(laid.top).toBe(10);
+  });
+});
