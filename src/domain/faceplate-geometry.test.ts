@@ -84,3 +84,76 @@ describe("faceplate geometry — screw holes", () => {
     }
   });
 });
+
+import { portSequence, layoutPortGroup } from "./faceplate-geometry";
+import type { PortGroup } from "./faceplate";
+
+describe("faceplate geometry — port numbering", () => {
+  it("ltr numbers left-to-right then top-to-bottom (row-major)", () => {
+    expect(portSequence(2, 2, "ltr")).toEqual([1, 2, 3, 4]);
+  });
+  it("rtl reverses within each row", () => {
+    expect(portSequence(2, 2, "rtl")).toEqual([2, 1, 4, 3]);
+  });
+  it("ttb numbers column-major top-to-bottom", () => {
+    expect(portSequence(2, 2, "ttb")).toEqual([1, 3, 2, 4]);
+  });
+  it("btt numbers column-major bottom-to-top", () => {
+    expect(portSequence(2, 2, "btt")).toEqual([2, 4, 1, 3]);
+  });
+});
+
+function group(overrides: Partial<PortGroup> = {}): PortGroup {
+  return {
+    id: "g1",
+    media: "copper",
+    connectorType: "RJ45",
+    idPrefix: "",
+    countingDirection: "ltr",
+    rows: 1,
+    cols: 2,
+    gridX: 0,
+    gridY: 0,
+    colSpacing: 0,
+    rowSpacing: 0,
+    portOverrides: {},
+    ...overrides,
+  };
+}
+
+describe("faceplate geometry — layoutPortGroup", () => {
+  it("lays out cells on a uniform grid from gridX/gridY", () => {
+    const g = layoutPortGroup(group({ gridX: 10, gridY: 5 }));
+    expect(g.cells).toHaveLength(2);
+    expect(g.cells[0]).toMatchObject({ index: 0, row: 0, col: 0, x: 10, y: 5 });
+    expect(g.cells[1]).toMatchObject({ index: 1, row: 0, col: 1, x: 34, y: 5 }); // 10 + CELL_W
+  });
+
+  it("applies column and row spacing (px) between cells", () => {
+    const g = layoutPortGroup(group({ rows: 2, cols: 2, colSpacing: 6, rowSpacing: 8 }));
+    expect(g.cells[1].x).toBe(30); // 24 + 6
+    expect(g.cells[2].y).toBe(32); // 24 + 8
+    expect(g.width).toBe(54); // 2*24 + 6
+    expect(g.height).toBe(56); // 2*24 + 8
+  });
+
+  it("builds labels from idPrefix + zero-padded sequence number", () => {
+    const g = layoutPortGroup(group({ idPrefix: "Gi0/", cols: 3 }));
+    expect(g.cells.map((c) => c.label)).toEqual(["Gi0/01", "Gi0/02", "Gi0/03"]);
+  });
+
+  it("honors per-port flip and name overrides", () => {
+    const g = layoutPortGroup(
+      group({ cols: 2, portOverrides: { 1: { flipped: true, name: "UPLINK" } } }),
+    );
+    expect(g.cells[0].flipped).toBe(false);
+    expect(g.cells[1].flipped).toBe(true);
+    expect(g.cells[1].label).toBe("UPLINK");
+  });
+
+  it("numbers cells according to counting direction", () => {
+    const g = layoutPortGroup(group({ cols: 2, countingDirection: "rtl" }));
+    expect(g.cells.map((c) => c.number)).toEqual([2, 1]);
+    expect(g.cells.map((c) => c.label)).toEqual(["02", "01"]);
+  });
+});

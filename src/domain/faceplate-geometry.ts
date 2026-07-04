@@ -72,3 +72,86 @@ export function screwHoles(dims: FrameDims, rackUnits: number): ScrewHole[] {
   }
   return holes;
 }
+
+import type { PortGroup, Media, CountingDirection } from "./faceplate";
+
+/** 1-based sequence number per row-major index for a counting direction. */
+export function portSequence(
+  rows: number,
+  cols: number,
+  direction: CountingDirection,
+): number[] {
+  const seq: number[] = [];
+  for (let index = 0; index < rows * cols; index++) {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    let n: number;
+    switch (direction) {
+      case "ltr":
+        n = row * cols + col + 1;
+        break;
+      case "rtl":
+        n = row * cols + (cols - 1 - col) + 1;
+        break;
+      case "ttb":
+        n = col * rows + row + 1;
+        break;
+      case "btt":
+        n = col * rows + (rows - 1 - row) + 1;
+        break;
+    }
+    seq.push(n);
+  }
+  return seq;
+}
+
+export interface LaidOutPort {
+  index: number;
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+  number: number;
+  label: string;
+  flipped: boolean;
+  media: Media;
+  connectorType: string;
+}
+
+export interface LaidOutGroup {
+  id: string;
+  cells: LaidOutPort[];
+  width: number;
+  height: number;
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+export function layoutPortGroup(group: PortGroup): LaidOutGroup {
+  const seq = portSequence(group.rows, group.cols, group.countingDirection);
+  const cells: LaidOutPort[] = [];
+  for (let index = 0; index < group.rows * group.cols; index++) {
+    const row = Math.floor(index / group.cols);
+    const col = index % group.cols;
+    const override = group.portOverrides[index];
+    const number = seq[index];
+    const label = override?.name ?? `${group.idPrefix}${pad2(number)}`;
+    cells.push({
+      index,
+      row,
+      col,
+      x: group.gridX + col * (CELL_W + group.colSpacing),
+      y: group.gridY + row * (ROW_H + group.rowSpacing),
+      number,
+      label,
+      flipped: override?.flipped ?? false,
+      media: group.media,
+      connectorType: group.connectorType,
+    });
+  }
+  const width = group.cols * CELL_W + Math.max(0, group.cols - 1) * group.colSpacing;
+  const height = group.rows * ROW_H + Math.max(0, group.rows - 1) * group.rowSpacing;
+  return { id: group.id, cells, width, height };
+}
