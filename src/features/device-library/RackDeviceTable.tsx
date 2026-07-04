@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { DeviceTemplateListRow } from "./repository";
 
-export function RackDeviceTable({ rows }: { rows: DeviceTemplateListRow[] }) {
+export function RackDeviceTable({ rows, onEdit }: { rows: DeviceTemplateListRow[]; onEdit?: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(
     () => rows.filter((r) => r.name.toLowerCase().includes(query.toLowerCase())),
@@ -19,7 +19,7 @@ export function RackDeviceTable({ rows }: { rows: DeviceTemplateListRow[] }) {
       />
       <table className="w-full text-left text-sm">
         <thead className="text-neutral-400">
-          <tr><th className="p-2">Name</th><th className="p-2">Brand</th><th className="p-2">Type</th><th className="p-2">Rack units</th></tr>
+          <tr><th className="p-2">Name</th><th className="p-2">Brand</th><th className="p-2">Type</th><th className="p-2">Rack units</th><th className="p-2">Actions</th></tr>
         </thead>
         <tbody>
           {filtered.map((r) => (
@@ -28,6 +28,11 @@ export function RackDeviceTable({ rows }: { rows: DeviceTemplateListRow[] }) {
               <td className="p-2">{r.brandName ?? "—"}</td>
               <td className="p-2">{r.typeName}</td>
               <td className="p-2">{r.rackUnits} RU</td>
+              <td className="p-2">
+                {onEdit && (
+                  <button data-testid={`edit-${r.id}`} onClick={() => onEdit(r.id)} className="text-blue-500 hover:underline">Edit</button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
