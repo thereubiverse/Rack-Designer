@@ -215,8 +215,8 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 if (next.portGroups.length > before) selectGroup(next.portGroups[next.portGroups.length - 1].id);
               }}
               onMove={(id, pos) => setActiveFace(movePortGroup(activeFace, id, pos, bounds))}
-              onAddColumn={(id) => setActiveFace(addColumn(activeFace, id, bounds))}
-              onAddRow={(id) => setActiveFace(addRow(activeFace, id, bounds))}
+              onAddColumn={(id) => setActiveFace((prev) => addColumn(prev, id, bounds))}
+              onAddRow={(id) => setActiveFace((prev) => addRow(prev, id, bounds))}
               selectedPortIndex={selectedPortIndex}
               onSelectPort={setSelectedPortIndex}
               onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}

@@ -51,10 +51,17 @@ export function useDeviceDraft(initial?: Partial<DeviceDraft>) {
     setDraft((d) => ({ ...d, activeSide: side }));
   }, []);
 
-  const setActiveFace = useCallback((face: Face) => {
-    setDraft((d) =>
-      d.activeSide === "front" ? { ...d, frontFace: face } : { ...d, backFace: face },
-    );
+  // Accepts a Face value or an updater `(prev) => Face`. The updater form is
+  // essential when a single event fires several mutations in one tick (e.g. a
+  // chevron drag adding N columns) — a value computed from the render-closure
+  // `activeFace` would be stale across those calls, whereas the updater sees the
+  // freshest active face each time.
+  const setActiveFace = useCallback((faceOrFn: Face | ((prev: Face) => Face)) => {
+    setDraft((d) => {
+      const prev = d.activeSide === "front" ? d.frontFace : d.backFace;
+      const next = typeof faceOrFn === "function" ? (faceOrFn as (p: Face) => Face)(prev) : faceOrFn;
+      return d.activeSide === "front" ? { ...d, frontFace: next } : { ...d, backFace: next };
+    });
   }, []);
 
   const activeFace = draft.activeSide === "front" ? draft.frontFace : draft.backFace;
