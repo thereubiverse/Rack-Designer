@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RackDeviceEditor } from "./RackDeviceEditor";
 import type { DeviceTypeRow, BrandRow } from "../repository";
@@ -128,5 +128,42 @@ describe("RackDeviceEditor", () => {
     render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RackDeviceEditor — port-group building", () => {
+  it("dropping a palette media creates a group and selects it (settings appear)", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 60, clientY: 12 });
+    expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
+    expect(screen.getAllByTestId("port-cell").length).toBe(1);
+  });
+
+  it("chevron adds a column (preview gains a port cell)", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
+    expect(screen.getAllByTestId("port-cell").length).toBe(1);
+    fireEvent.click(screen.getByTestId("chevron-col"));
+    expect(screen.getAllByTestId("port-cell").length).toBe(2);
+  });
+
+  it("deleting the selected group removes it and hides settings", () => {
+    const user = userEvent.setup();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
+    expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
+    return user.click(screen.getByTestId("pg-delete")).then(() => {
+      expect(screen.queryByTestId("pg-settings")).toBeNull();
+      expect(screen.queryAllByTestId("port-cell")).toHaveLength(0);
+    });
+  });
+
+  it("switching Front/Back deselects the group", async () => {
+    const user = userEvent.setup();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
+    expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /back/i }));
+    expect(screen.queryByTestId("pg-settings")).toBeNull();
   });
 });

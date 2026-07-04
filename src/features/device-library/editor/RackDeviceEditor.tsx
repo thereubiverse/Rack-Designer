@@ -6,6 +6,12 @@ import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
 import { EditorCanvas } from "./EditorCanvas";
+import { frameDims } from "@/domain/faceplate-geometry";
+import { PortGroupSettings } from "./PortGroupSettings";
+import {
+  addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup,
+  type GridBounds,
+} from "./portGroupOps";
 
 const MEDIA_LABELS: Record<Media, string> = {
   copper: "Copper", fiber: "Fiber", sfp: "SFP", usb_a: "USB-A", usb_c: "USB-C",
@@ -25,10 +31,23 @@ export interface RackDeviceEditorProps {
 }
 
 export function RackDeviceEditor(props: RackDeviceEditorProps) {
-  const { draft, activeFace, setField, setActiveSide, errors, isValid } = useDeviceDraft(props.initial);
+  const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid } = useDeviceDraft(props.initial);
   const [addingBrand, setAddingBrand] = useState(false);
   const [newBrand, setNewBrand] = useState("");
   const [brands, setBrands] = useState(props.brands);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const dims = frameDims({
+    widthIn: draft.widthIn > 0 ? draft.widthIn : 1,
+    rackUnits: draft.rackUnits >= 1 ? draft.rackUnits : 1,
+    rackMounted: draft.rackMounted,
+  });
+  const bounds: GridBounds = { width: dims.bodyWidthPx, height: dims.heightPx };
+  const selectedGroup = activeFace.portGroups.find((g) => g.id === selectedGroupId) ?? null;
+
+  function switchSide(next: "front" | "back") {
+    setSelectedGroupId(null);
+    setActiveSide(next);
+  }
 
   async function confirmAddBrand() {
     if (!props.onCreateBrand || !newBrand.trim()) return;
@@ -147,7 +166,9 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           <div className="mb-3 flex flex-wrap items-start gap-3">
             <div className="flex flex-wrap gap-2 rounded-lg border border-neutral-200 bg-white p-2">
               {MEDIA.map((m) => (
-                <span key={m} className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-800" title={MEDIA_LABELS[m]}>
+                <span key={m} draggable
+                  onDragStart={(e) => e.dataTransfer.setData("text/plain", m)}
+                  className="flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-800" title={MEDIA_LABELS[m]}>
                   <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
                 </span>
               ))}
@@ -156,10 +177,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               <div className="flex rounded-lg border border-neutral-200 bg-white p-1 text-sm font-semibold">
                 <button type="button"
                   className={`rounded-md px-4 py-1 ${draft.activeSide === "front" ? "bg-neutral-900 text-white" : "text-neutral-500"}`}
-                  onClick={() => setActiveSide("front")}>Front</button>
+                  onClick={() => switchSide("front")}>Front</button>
                 <button type="button"
                   className={`rounded-md px-4 py-1 ${draft.activeSide === "back" ? "bg-neutral-900 text-white" : "text-neutral-500"}`}
-                  onClick={() => setActiveSide("back")}>Back</button>
+                  onClick={() => switchSide("back")}>Back</button>
               </div>
               <button type="button" aria-pressed={draft.rackMounted}
                 className="flex items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium"
@@ -177,14 +198,32 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               rackUnits={draft.rackUnits >= 1 ? draft.rackUnits : 1}
               rackMounted={draft.rackMounted}
               side={side}
+              selectedGroupId={selectedGroupId}
+              onSelect={setSelectedGroupId}
+              onCreate={(media, pos) => {
+                const before = activeFace.portGroups.length;
+                const next = addPortGroup(activeFace, media, pos, bounds);
+                setActiveFace(next);
+                if (next.portGroups.length > before) setSelectedGroupId(next.portGroups[next.portGroups.length - 1].id);
+              }}
+              onMove={(id, pos) => setActiveFace(movePortGroup(activeFace, id, pos, bounds))}
+              onAddColumn={(id) => setActiveFace(addColumn(activeFace, id, bounds))}
+              onAddRow={(id) => setActiveFace(addRow(activeFace, id, bounds))}
             />
           </div>
         </div>
 
-        {/* Settings placeholder (3b/3c fill this in) */}
-        <div className="mt-4 rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400">
-          Select a port to edit its name. (Group building arrives in the next slice.)
-        </div>
+        {selectedGroup ? (
+          <PortGroupSettings
+            group={selectedGroup}
+            onChange={(patch) => setActiveFace(updatePortGroup(activeFace, selectedGroup.id, patch))}
+            onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); setSelectedGroupId(null); }}
+          />
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400">
+            Drag a port type onto the grid to add a group. Select a group to edit it.
+          </div>
+        )}
 
         {props.error && <p className="mt-3 text-sm text-red-600">{props.error}</p>}
 
