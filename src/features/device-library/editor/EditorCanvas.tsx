@@ -2,8 +2,9 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
-import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H, GLYPH_W } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
+import { PortGlyph, PORT_GLYPHS } from "@/features/device-library/faceplate/portGlyphs";
 import type { Pos } from "./portGroupOps";
 
 const SEL_PAD = 6; // visual padding so the selection box wraps the number labels
@@ -15,8 +16,10 @@ export interface EditorCanvasProps {
   rackMounted: boolean;
   side: "FRONT" | "BACK";
   selectedGroupId?: string | null;
+  selectedPortIndex?: number | null;
   onCreate?: (media: Media, pos: Pos) => void;
   onSelect?: (id: string | null) => void;
+  onSelectPort?: (index: number | null) => void;
   onAddColumn?: (id: string) => void;
   onAddRow?: (id: string) => void;
   onMove?: (id: string, pos: Pos) => void;
@@ -123,6 +126,29 @@ export function EditorCanvas(props: EditorCanvasProps) {
                       onClick={(e) => { e.stopPropagation(); props.onAddRow?.(g.id); }}
                       style={chevronStyle({ bottom: -8, left: "50%", translate: "-50% 0" })}
                     >⌄</button>
+                    {laid.cells.map((cell) => {
+                      const localX = cell.x - g.gridX + SEL_PAD;
+                      const localY = cell.y - g.gridY + SEL_PAD;
+                      const isSel = cell.index === props.selectedPortIndex;
+                      const spec = PORT_GLYPHS[cell.media];
+                      return (
+                        <div key={cell.index}>
+                          <div
+                            data-testid={`port-target-${cell.index}`}
+                            onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
+                            style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
+                          />
+                          {isSel && (
+                            <div data-testid="port-highlight" style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, pointerEvents: "none", zIndex: 6, color: "#2d5bff" }}>
+                              <span style={{ position: "absolute", left: 0, top: -12, width: CELL_W, textAlign: "center", fontSize: 8, fontFamily: "Inter, system-ui, sans-serif", fontVariantNumeric: "tabular-nums", color: "#2d5bff" }}>{cell.label}</span>
+                              <div style={{ position: "absolute", left: (CELL_W - GLYPH_W) / 2, top: (ROW_H - spec.height) / 2, transform: cell.flipped ? "scaleY(-1)" : undefined }}>
+                                <PortGlyph media={cell.media} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </>
                 )}
               </div>

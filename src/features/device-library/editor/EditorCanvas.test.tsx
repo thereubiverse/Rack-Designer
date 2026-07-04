@@ -132,3 +132,28 @@ describe("EditorCanvas drag-to-move", () => {
     expect(onMove).not.toHaveBeenCalled();
   });
 });
+
+describe("EditorCanvas per-port selection", () => {
+  it("renders a click target per cell and fires onSelectPort", () => {
+    const onSelectPort = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSelectPort={onSelectPort} />,
+    );
+    fireEvent.click(getByTestId("port-target-1"));
+    expect(onSelectPort).toHaveBeenCalledWith(1);
+  });
+
+  it("draws the blue highlight only for the selected port", () => {
+    const { queryByTestId, rerender } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    expect(queryByTestId("port-highlight")).toBeNull();
+    rerender(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    expect(queryByTestId("port-highlight")).not.toBeNull();
+  });
+});
