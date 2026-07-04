@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
-import { frameDims, layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, type Pos } from "./portGroupOps";
 
@@ -212,13 +212,22 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     {laid.cells.map((cell) => {
                       const localX = cell.x - g.gridX + SEL_PAD;
                       const localY = cell.y - boxTop + SEL_PAD;
+                      const isSelPort = cell.index === props.selectedPortIndex;
+                      const boxTopY = cell.labelPos === "top" ? localY - LABEL_H : localY;
                       return (
-                        <div
-                          key={cell.index}
-                          data-testid={`port-target-${cell.index}`}
-                          onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
-                          style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
-                        />
+                        <div key={cell.index}>
+                          <div
+                            data-testid={`port-target-${cell.index}`}
+                            onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
+                            style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
+                          />
+                          {isSelPort && (
+                            <div
+                              data-testid="port-select-box"
+                              style={{ position: "absolute", left: localX - 2, top: boxTopY - 2, width: CELL_W + 4, height: ROW_H + LABEL_H + 4, outline: "1.5px solid #2d5bff", borderRadius: 4, pointerEvents: "none", zIndex: 6 }}
+                            />
+                          )}
+                        </div>
                       );
                     })}
                   </>

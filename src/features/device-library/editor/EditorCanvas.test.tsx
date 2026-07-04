@@ -239,3 +239,21 @@ describe("EditorCanvas chevron drag (3d)", () => {
     expect(onAddColumn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("EditorCanvas port tile selection box (3e)", () => {
+  it("renders a blue tile box for the selected port only", () => {
+    const { queryByTestId, rerender } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    expect(queryByTestId("port-select-box")).toBeNull();
+    rerender(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    const box = queryByTestId("port-select-box");
+    expect(box).not.toBeNull();
+    expect(box!.getAttribute("style")).toContain("#2d5bff");
+    expect(box!.style.pointerEvents).toBe("none");
+  });
+});
