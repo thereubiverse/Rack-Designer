@@ -116,8 +116,8 @@ describe("EditorCanvas drag-to-move", () => {
     expect(onMove).toHaveBeenCalledTimes(1);
     const [id, pos] = onMove.mock.calls[0];
     expect(id).toBe("g1");
-    // group started at gridX 20, gridY 20; moved +40,+8
-    expect(pos).toEqual({ x: 60, y: 28 });
+    // group started at gridX 20, gridY 20; moved +40 horizontally (vertical is fixed)
+    expect(pos).toEqual({ x: 60, y: 20 });
   });
 
   it("does not commit a move when the pointer did not move (plain click)", () => {
@@ -144,17 +144,18 @@ describe("EditorCanvas per-port selection", () => {
     expect(onSelectPort).toHaveBeenCalledWith(1);
   });
 
-  it("draws the blue highlight only for the selected port", () => {
-    const { queryByTestId, rerender } = render(
+});
+
+describe("EditorCanvas highlight passthrough (3d)", () => {
+  it("forwards highlight to Faceplate (selected port renders blue, no overlay copy)", () => {
+    const { getAllByTestId, queryByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onSelectPort={() => {}} />,
+        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}}
+        highlight={{ groupId: "g1", portIndex: 1 }} />,
     );
-    expect(queryByTestId("port-highlight")).toBeNull();
-    rerender(
-      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
-    );
-    expect(queryByTestId("port-highlight")).not.toBeNull();
+    expect(queryByTestId("port-highlight")).toBeNull(); // overlay copy gone
+    const blued = getAllByTestId("port-cell").filter((c) => c.getAttribute("data-highlighted") === "true");
+    expect(blued).toHaveLength(1);
   });
 });
 

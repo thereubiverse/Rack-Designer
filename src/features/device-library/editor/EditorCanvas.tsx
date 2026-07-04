@@ -1,10 +1,9 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
-import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
-import { frameDims, layoutPortGroup, CELL_W, ROW_H, GLYPH_W } from "@/domain/faceplate-geometry";
+import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
-import { PortGlyph, PORT_GLYPHS } from "@/features/device-library/faceplate/portGlyphs";
 import { maxSpacing, wouldOverlapAt, type Pos } from "./portGroupOps";
 
 const SEL_PAD = 6; // visual padding so the selection box wraps the number labels
@@ -17,6 +16,7 @@ export interface EditorCanvasProps {
   side: "FRONT" | "BACK";
   selectedGroupId?: string | null;
   selectedPortIndex?: number | null;
+  highlight?: HighlightPort | null;
   onCreate?: (media: Media, pos: Pos) => void;
   onSelect?: (id: string | null) => void;
   onSelectPort?: (index: number | null) => void;
@@ -48,7 +48,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
       // Only commit an actual move — a plain select-click (no movement) must not
       // mutate the face (avoids a redundant re-render and off-grid re-snapping).
       if (dx !== 0 || dy !== 0) {
-        props.onMove?.(drag!.id, { x: drag!.origX + dx, y: drag!.origY + dy });
+        props.onMove?.(drag!.id, { x: drag!.origX + dx, y: drag!.origY });
       }
       setDrag(null);
     }
@@ -96,7 +96,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
   return (
     <div data-testid="editor-canvas" style={{ position: "relative", display: "inline-block" }}>
-      <Faceplate face={face} widthIn={widthIn} rackUnits={rackUnits} rackMounted={rackMounted} side={side} />
+      <Faceplate face={face} widthIn={widthIn} rackUnits={rackUnits} rackMounted={rackMounted} side={side} highlight={props.highlight} />
 
       {editing && (
         <div
@@ -114,12 +114,12 @@ export function EditorCanvas(props: EditorCanvasProps) {
           }}
         >
           {face.portGroups.map((g) => {
-            const laid = layoutPortGroup(g);
+            const laid = layoutPortGroup(g, dims.heightPx);
             const selected = g.id === props.selectedGroupId;
+            const boxTop = laid.top;
             const dragging = drag?.id === g.id;
             const liveX = dragging ? g.gridX + drag!.dx : g.gridX;
-            const liveY = dragging ? g.gridY + drag!.dy : g.gridY;
-            const invalid = dragging && wouldOverlapAt(face, g, { x: liveX, y: liveY }, bounds);
+            const invalid = dragging && wouldOverlapAt(face, g, { x: liveX, y: g.gridY }, bounds);
             return (
               <div
                 key={g.id}
@@ -134,7 +134,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 style={{
                   position: "absolute",
                   left: (earX + liveX) - SEL_PAD,
-                  top: liveY - SEL_PAD,
+                  top: boxTop - SEL_PAD,
                   width: laid.width + SEL_PAD * 2,
                   height: laid.height + SEL_PAD * 2,
                   cursor: props.onMove ? "move" : "pointer",
@@ -174,25 +174,14 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     )}
                     {laid.cells.map((cell) => {
                       const localX = cell.x - g.gridX + SEL_PAD;
-                      const localY = cell.y - g.gridY + SEL_PAD;
-                      const isSel = cell.index === props.selectedPortIndex;
-                      const spec = PORT_GLYPHS[cell.media];
+                      const localY = cell.y - boxTop + SEL_PAD;
                       return (
-                        <div key={cell.index}>
-                          <div
-                            data-testid={`port-target-${cell.index}`}
-                            onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
-                            style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
-                          />
-                          {isSel && (
-                            <div data-testid="port-highlight" style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, pointerEvents: "none", zIndex: 6, color: "#2d5bff" }}>
-                              <span style={{ position: "absolute", left: 0, top: -12, width: CELL_W, textAlign: "center", fontSize: 8, fontFamily: "Inter, system-ui, sans-serif", fontVariantNumeric: "tabular-nums", color: "#2d5bff" }}>{cell.label}</span>
-                              <div style={{ position: "absolute", left: (CELL_W - GLYPH_W) / 2, top: (ROW_H - spec.height) / 2, transform: cell.flipped ? "scaleY(-1)" : undefined }}>
-                                <PortGlyph media={cell.media} />
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                        <div
+                          key={cell.index}
+                          data-testid={`port-target-${cell.index}`}
+                          onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
+                          style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
+                        />
                       );
                     })}
                   </>
