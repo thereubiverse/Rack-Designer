@@ -157,3 +157,37 @@ describe("EditorCanvas per-port selection", () => {
     expect(queryByTestId("port-highlight")).not.toBeNull();
   });
 });
+
+describe("EditorCanvas spacing handle", () => {
+  it("drags to increase spacing, clamped to the max", () => {
+    const onSpacing = vi.fn();
+    // group: 3 cols at gridX 0 in a 19in rack-mounted frame (bodyWidthPx 912) → plenty of room
+    const face: Face = { portGroups: [grp({ id: "g1", cols: 3, gridX: 0, gridY: 0 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+    );
+    const handle = getByTestId("spacing-handle");
+    fireEvent.pointerDown(handle, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 130, clientY: 100 }); // +30 horizontal
+    expect(onSpacing).toHaveBeenCalled();
+    const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
+    expect(last.colSpacing).toBeCloseTo(30, 5);
+    fireEvent.pointerUp(window, { clientX: 130, clientY: 100 });
+  });
+
+  it("does not spread a single-column group (maxCol 0)", () => {
+    const onSpacing = vi.fn();
+    const face: Face = { portGroups: [grp({ id: "g1", cols: 1, rows: 1, gridX: 0, gridY: 0 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+    );
+    fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 200 });
+    const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
+    expect(last.colSpacing).toBe(0);
+    expect(last.rowSpacing).toBe(0);
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 200 });
+  });
+});

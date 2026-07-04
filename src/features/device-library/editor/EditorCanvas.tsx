@@ -5,7 +5,7 @@ import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, GLYPH_W } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
 import { PortGlyph, PORT_GLYPHS } from "@/features/device-library/faceplate/portGlyphs";
-import type { Pos } from "./portGroupOps";
+import { maxSpacing, type Pos } from "./portGroupOps";
 
 const SEL_PAD = 6; // visual padding so the selection box wraps the number labels
 
@@ -23,6 +23,7 @@ export interface EditorCanvasProps {
   onAddColumn?: (id: string) => void;
   onAddRow?: (id: string) => void;
   onMove?: (id: string, pos: Pos) => void;
+  onSpacing?: (id: string, spacing: { colSpacing: number; rowSpacing: number }) => void;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
@@ -56,6 +57,28 @@ export function EditorCanvas(props: EditorCanvasProps) {
       window.removeEventListener("pointercancel", onCancel);
     };
   }, [drag, props]);
+
+  const bounds = { width: dims.bodyWidthPx, height: dims.heightPx };
+  const [spaceDrag, setSpaceDrag] = useState<
+    { id: string; startX: number; startY: number; grabCol: number; grabRow: number; maxCol: number; maxRow: number } | null
+  >(null);
+
+  useEffect(() => {
+    if (!spaceDrag) return;
+    function onMove(e: PointerEvent) {
+      const s = spaceDrag!;
+      const colSpacing = Math.max(0, Math.min(s.maxCol, s.grabCol + (e.clientX - s.startX)));
+      const rowSpacing = Math.max(0, Math.min(s.maxRow, s.grabRow + (e.clientY - s.startY)));
+      props.onSpacing?.(s.id, { colSpacing, rowSpacing });
+    }
+    function onUp() { setSpaceDrag(null); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [spaceDrag, props]);
 
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
@@ -126,6 +149,18 @@ export function EditorCanvas(props: EditorCanvasProps) {
                       onClick={(e) => { e.stopPropagation(); props.onAddRow?.(g.id); }}
                       style={chevronStyle({ bottom: -8, left: "50%", translate: "-50% 0" })}
                     >⌄</button>
+                    {props.onSpacing && (
+                      <div
+                        data-testid="spacing-handle"
+                        title="Drag to change spacing"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const { maxCol, maxRow } = maxSpacing(face, g, bounds);
+                          setSpaceDrag({ id: g.id, startX: e.clientX, startY: e.clientY, grabCol: g.colSpacing, grabRow: g.rowSpacing, maxCol, maxRow });
+                        }}
+                        style={{ position: "absolute", right: -7, bottom: -7, width: 14, height: 14, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 7 }}
+                      />
+                    )}
                     {laid.cells.map((cell) => {
                       const localX = cell.x - g.gridX + SEL_PAD;
                       const localY = cell.y - g.gridY + SEL_PAD;
