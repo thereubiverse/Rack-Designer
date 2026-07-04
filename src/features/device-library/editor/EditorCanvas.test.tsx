@@ -132,3 +132,81 @@ describe("EditorCanvas drag-to-move", () => {
     expect(onMove).not.toHaveBeenCalled();
   });
 });
+
+describe("EditorCanvas per-port selection", () => {
+  it("renders a click target per cell and fires onSelectPort", () => {
+    const onSelectPort = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSelectPort={onSelectPort} />,
+    );
+    fireEvent.click(getByTestId("port-target-1"));
+    expect(onSelectPort).toHaveBeenCalledWith(1);
+  });
+
+  it("draws the blue highlight only for the selected port", () => {
+    const { queryByTestId, rerender } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    expect(queryByTestId("port-highlight")).toBeNull();
+    rerender(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
+    );
+    expect(queryByTestId("port-highlight")).not.toBeNull();
+  });
+});
+
+describe("EditorCanvas spacing handle", () => {
+  it("drags to increase spacing, clamped to the max", () => {
+    const onSpacing = vi.fn();
+    // group: 3 cols at gridX 0 in a 19in rack-mounted frame (bodyWidthPx 912) → plenty of room
+    const face: Face = { portGroups: [grp({ id: "g1", cols: 3, gridX: 0, gridY: 0 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+    );
+    const handle = getByTestId("spacing-handle");
+    fireEvent.pointerDown(handle, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 130, clientY: 100 }); // +30 horizontal
+    expect(onSpacing).toHaveBeenCalled();
+    const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
+    expect(last.colSpacing).toBeCloseTo(30, 5);
+    fireEvent.pointerUp(window, { clientX: 130, clientY: 100 });
+  });
+
+  it("does not spread a single-column group (maxCol 0)", () => {
+    const onSpacing = vi.fn();
+    const face: Face = { portGroups: [grp({ id: "g1", cols: 1, rows: 1, gridX: 0, gridY: 0 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+    );
+    fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 200 });
+    const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
+    expect(last.colSpacing).toBe(0);
+    expect(last.rowSpacing).toBe(0);
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 200 });
+  });
+});
+
+describe("EditorCanvas live move feedback", () => {
+  it("shows a red-invalid marker when dragging a group onto another", () => {
+    const twoGroups: Face = {
+      portGroups: [grp({ id: "g1", gridX: 0, gridY: 0 }), grp({ id: "g2", cols: 1, gridX: 200, gridY: 0 })],
+      elements: [],
+    };
+    const { getByTestId, queryByTestId } = render(
+      <EditorCanvas face={twoGroups} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g2" onSelect={() => {}} onMove={() => {}} />,
+    );
+    const box = getByTestId("group-box-g2");
+    // drag g2 (at gridX 200) left onto g1 (at gridX 0)
+    fireEvent.pointerDown(box, { clientX: 200, clientY: 20 });
+    fireEvent.pointerMove(window, { clientX: 5, clientY: 20 }); // now near gridX 5 → overlaps g1
+    expect(queryByTestId("move-invalid")).not.toBeNull();
+    fireEvent.pointerUp(window, { clientX: 5, clientY: 20 });
+  });
+});

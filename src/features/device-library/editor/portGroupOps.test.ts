@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setSpacing, maxSpacing, wouldOverlapAt } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -127,5 +127,62 @@ describe("updatePortGroup / deletePortGroup", () => {
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds);
     const id = face.portGroups[0].id;
     expect(deletePortGroup(face, id).portGroups).toHaveLength(0);
+  });
+});
+
+describe("setPortOverride", () => {
+  it("creates an override for a port index", () => {
+    const face: Face = { portGroups: [group({ id: "g", cols: 2 })], elements: [] };
+    const next = setPortOverride(face, "g", 1, { name: "UPLINK", flipped: true });
+    expect(next.portGroups[0].portOverrides[1]).toEqual({ name: "UPLINK", flipped: true });
+    expect(face.portGroups[0].portOverrides[1]).toBeUndefined(); // immutable
+  });
+  it("merges into an existing override", () => {
+    const face: Face = { portGroups: [group({ id: "g", portOverrides: { 0: { name: "A" } } })], elements: [] };
+    const next = setPortOverride(face, "g", 0, { flipped: true });
+    expect(next.portGroups[0].portOverrides[0]).toEqual({ name: "A", flipped: true });
+  });
+});
+
+describe("setSpacing", () => {
+  it("sets col and row spacing", () => {
+    const face: Face = { portGroups: [group({ id: "g" })], elements: [] };
+    expect(setSpacing(face, "g", { colSpacing: 8, rowSpacing: 4 }).portGroups[0]).toMatchObject({ colSpacing: 8, rowSpacing: 4 });
+  });
+});
+
+describe("maxSpacing", () => {
+  it("clamps to the grid edge", () => {
+    // 3 cols * 24 = 72 tight; grid width 200, gridX 0 → maxCol = (200-0-72)/2 = 64
+    const g = group({ id: "g", cols: 3, gridX: 0, gridY: 0 });
+    const face: Face = { portGroups: [g], elements: [] };
+    expect(maxSpacing(face, g, { width: 200, height: 84 }).maxCol).toBeCloseTo(64, 5);
+  });
+  it("clamps tighter to a neighbour on the right", () => {
+    const g = group({ id: "g", cols: 3, gridX: 0, gridY: 0 });
+    const nb = group({ id: "nb", cols: 1, gridX: 120, gridY: 0 }); // right neighbour, same row
+    const face: Face = { portGroups: [g, nb], elements: [] };
+    // maxCol = (120 - 0 - 72)/2 = 24  (tighter than grid's 64)
+    expect(maxSpacing(face, g, { width: 200, height: 84 }).maxCol).toBeCloseTo(24, 5);
+  });
+  it("a single column has maxCol 0; a single row has maxRow 0", () => {
+    const g = group({ id: "g", cols: 1, rows: 1 });
+    const m = maxSpacing({ portGroups: [g], elements: [] }, g, { width: 200, height: 84 });
+    expect(m.maxCol).toBe(0);
+    expect(m.maxRow).toBe(0);
+  });
+});
+
+describe("wouldOverlapAt", () => {
+  const face: Face = { portGroups: [group({ id: "a", gridX: 0, gridY: 0 })], elements: [] };
+  const b = group({ id: "b", gridX: 0, gridY: 0 });
+  it("true when the position overlaps another group", () => {
+    expect(wouldOverlapAt(face, b, { x: 10, y: 0 }, { width: 400, height: 84 })).toBe(true);
+  });
+  it("true when out of bounds", () => {
+    expect(wouldOverlapAt(face, b, { x: 390, y: 0 }, { width: 400, height: 84 })).toBe(true); // 390+24>400
+  });
+  it("false at a free in-bounds spot", () => {
+    expect(wouldOverlapAt(face, b, { x: 40, y: 0 }, { width: 400, height: 84 })).toBe(false);
   });
 });

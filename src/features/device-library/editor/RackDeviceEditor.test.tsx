@@ -167,3 +167,47 @@ describe("RackDeviceEditor — port-group building", () => {
     expect(screen.queryByTestId("pg-settings")).toBeNull();
   });
 });
+
+describe("RackDeviceEditor — per-port editing", () => {
+  function withGroup() {
+    const face: Face = {
+      portGroups: [{
+        id: "g", media: "copper", connectorType: "RJ45", idPrefix: "",
+        countingDirection: "ltr", rows: 1, cols: 3, gridX: 0, gridY: 0,
+        colSpacing: 0, rowSpacing: 0, portOverrides: {},
+      }],
+      elements: [],
+    };
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+      initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: face }} onSave={noop} onCancel={noop} />);
+  }
+
+  it("selecting a port shows the port panel", () => {
+    withGroup();
+    // select the group first
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-1"));
+    expect(screen.getByTestId("port-settings")).toBeInTheDocument();
+  });
+
+  it("typing a port name updates the rendered label", async () => {
+    const user = userEvent.setup();
+    withGroup();
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    await user.type(screen.getByLabelText(/port name/i), "WAN");
+    // "WAN" renders twice while the port is selected: once in the always-on
+    // faceplate SVG label, once in the blue port-highlight overlay copy.
+    expect(screen.getAllByText("WAN").length).toBeGreaterThan(0);
+  });
+
+  it("switching Front/Back clears the port selection", async () => {
+    const user = userEvent.setup();
+    withGroup();
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    expect(screen.getByTestId("port-settings")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /back/i }));
+    expect(screen.queryByTestId("port-settings")).toBeNull();
+  });
+});

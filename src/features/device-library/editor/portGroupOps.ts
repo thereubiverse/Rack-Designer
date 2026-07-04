@@ -1,4 +1,4 @@
-import { layoutPortGroup } from "@/domain/faceplate-geometry";
+import { layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-geometry";
 import type { Face, PortGroup } from "@/domain/faceplate";
 import { CONNECTORS, type Media } from "@/domain/faceplate";
 
@@ -127,4 +127,73 @@ export function updatePortGroup(
 
 export function deletePortGroup(face: Face, id: string): Face {
   return { ...face, portGroups: face.portGroups.filter((x) => x.id !== id) };
+}
+
+export function setPortOverride(
+  face: Face, groupId: string, index: number, patch: { name?: string; flipped?: boolean },
+): Face {
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) =>
+      g.id === groupId
+        ? { ...g, portOverrides: { ...g.portOverrides, [index]: { ...g.portOverrides[index], ...patch } } }
+        : g,
+    ),
+  };
+}
+
+export function setSpacing(
+  face: Face, groupId: string, spacing: { colSpacing?: number; rowSpacing?: number },
+): Face {
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) => (g.id === groupId ? { ...g, ...spacing } : g)),
+  };
+}
+
+export function maxSpacing(
+  face: Face, group: PortGroup, bounds: GridBounds,
+): { maxCol: number; maxRow: number } {
+  // Neighbour clamp assumes no other group's bounds fall INSIDE this group's tight
+  // (spacing-0) column/row span — guaranteed today because overlaps are always
+  // prevented. If a future layout allows interleaved/gapped groups, the
+  // `ob.x >= gridX + cols*CELL_W` / `ob.y >= gridY + rows*ROW_H` gates below must
+  // also consider neighbours starting within the span.
+  const gb = groupBounds(group);
+  let maxCol = 0;
+  if (group.cols > 1) {
+    let limitRight = bounds.width;
+    for (const other of face.portGroups) {
+      if (other.id === group.id) continue;
+      const ob = groupBounds(other);
+      const vertOverlap = gb.y < ob.y + ob.height && gb.y + gb.height > ob.y;
+      if (vertOverlap && ob.x >= group.gridX + group.cols * CELL_W) {
+        limitRight = Math.min(limitRight, ob.x);
+      }
+    }
+    maxCol = Math.max(0, (limitRight - group.gridX - group.cols * CELL_W) / (group.cols - 1));
+  }
+  let maxRow = 0;
+  if (group.rows > 1) {
+    let limitBottom = bounds.height;
+    for (const other of face.portGroups) {
+      if (other.id === group.id) continue;
+      const ob = groupBounds(other);
+      const horizOverlap = gb.x < ob.x + ob.width && gb.x + gb.width > ob.x;
+      if (horizOverlap && ob.y >= group.gridY + group.rows * ROW_H) {
+        limitBottom = Math.min(limitBottom, ob.y);
+      }
+    }
+    maxRow = Math.max(0, (limitBottom - group.gridY - group.rows * ROW_H) / (group.rows - 1));
+  }
+  return { maxCol, maxRow };
+}
+
+export function wouldOverlapAt(
+  face: Face, group: PortGroup, pos: Pos, bounds: GridBounds,
+): boolean {
+  const candidate: PortGroup = { ...group, gridX: pos.x, gridY: pos.y };
+  const b = groupBounds(candidate);
+  if (b.x < 0 || b.y < 0 || b.x + b.width > bounds.width || b.y + b.height > bounds.height) return true;
+  return wouldOverlap(face, candidate, group.id);
 }
