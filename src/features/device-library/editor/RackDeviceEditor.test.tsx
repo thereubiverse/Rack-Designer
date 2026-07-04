@@ -52,7 +52,16 @@ describe("RackDeviceEditor", () => {
 
   it("Rack Mounted toggle drops the screw holes in the preview", async () => {
     const user = userEvent.setup();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(
+      <RackDeviceEditor
+        mode="create"
+        types={types}
+        brands={brands}
+        initial={{ widthIn: 10.6 }}
+        onSave={noop}
+        onCancel={noop}
+      />,
+    );
     expect(screen.getAllByTestId("screw-hole").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: /rack mounted/i }));
     expect(screen.queryAllByTestId("screw-hole")).toHaveLength(0);
