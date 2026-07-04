@@ -172,14 +172,30 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         {/* Canvas + palette + toggles */}
         <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
           <div className="mb-3 flex flex-wrap items-start gap-3">
-            <div className="flex flex-wrap gap-2 rounded-lg border border-neutral-200 bg-white p-2">
-              {MEDIA.map((m) => (
-                <span key={m} draggable
-                  onDragStart={(e) => e.dataTransfer.setData("text/plain", m)}
-                  className="flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-800" title={MEDIA_LABELS[m]}>
-                  <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
+            <div className="flex items-stretch gap-2">
+              <span className="flex items-center justify-center text-[10px] font-medium text-neutral-400" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Port Types</span>
+              <div className="flex flex-wrap gap-2 rounded-lg border border-neutral-200 bg-white p-2">
+                {MEDIA.map((m) => (
+                  <span key={m} draggable
+                    onDragStart={(e) => e.dataTransfer.setData("text/plain", m)}
+                    className="flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-800" title={MEDIA_LABELS[m]}>
+                    <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-stretch gap-2">
+              <span className="flex items-center justify-center text-[10px] font-medium text-neutral-400" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Elements</span>
+              <div className="flex flex-col gap-2 rounded-lg border border-neutral-200 bg-white p-2" title="Text and Icon elements arrive in a later slice">
+                <span data-testid="element-text" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 20l6 -16l2 0l7 16" /><path d="M4 20l3 0" /><path d="M14 20l7 0" /><path d="M6.9 15l6.9 0" /></svg>
+                  Text
                 </span>
-              ))}
+                <span data-testid="element-icon" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6.5" cy="6.5" r="3.5" /><path d="M2.5 21h8l-4 -7z" /><path d="M14 3l7 7" /><path d="M14 14h7v7h-7z" /></svg>
+                  Icon
+                </span>
+              </div>
             </div>
             <div className="ml-auto flex flex-col gap-2">
               <div className="flex rounded-lg border border-neutral-200 bg-white p-1 text-sm font-semibold">
