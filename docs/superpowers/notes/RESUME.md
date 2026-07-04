@@ -10,25 +10,24 @@ Network documentation platform (rack builder). Next.js 16 + Supabase (local via 
 ## Current state
 - ✅ **Phase 1** — location hierarchy, naming engine, repository, synced rack grid — merged to `main`.
 - ✅ **Phase 2 design** — master spec + Phase 2a spec approved.
-- ✅ **Phase 2a · Slice 1** — Device Library data model + template management — done on
-  branch `phase-2a-slice-1`, 28 tests pass, whole-branch review passed, **PR #1 open**
-  (not yet merged): https://github.com/thereubiverse/Rack-Designer/pull/1
+- ✅ **Phase 2a · Slice 1** — Device Library data model + template management — **PR #1
+  squash-merged to `main`** (2026-07-03).
+- ✅ **Phase 2a · Slice 2** — SVG faceplate renderer + rack-mount geometry (pure
+  `faceplate-geometry.ts`, 10 own-original width-normalized port glyphs, reusable
+  `Faceplate`/`renderFace`, `/device-library/preview` route) — done on branch
+  `phase-2a-slice-2`, 57 tests pass, whole-branch review clean, **PR #2 open**
+  (not yet merged): https://github.com/thereubiverse/Rack-Designer/pull/2
 
 ## Next steps (in order)
-1. **Merge PR #1** — on GitHub click "Merge pull request", or locally:
-   `git checkout main && git merge phase-2a-slice-1`.
-2. **Slice 2 — SVG faceplate renderer + rack-mount geometry.** Render a device face from
-   the `Face` model at true 1U proportion: 19" frame (outer edges = rail width), body =
-   `width_in` centered, ears bridge the gap (wider as body narrows), screw holes pinned at
-   the rails; uniform-width port icons; Rack-Mounted off = drop ears, grid unchanged.
-   (This is the reusable `renderFace(...)` component; the editor and rack builder both use it.)
-3. **Slice 3 — the visual Rack Device Editor** (fully designed in mockups): port-group
+1. **Merge PR #2** — on GitHub, or `gh pr merge 2 --squash --delete-branch`, then sync main.
+2. **Slice 3 — the visual Rack Device Editor** (fully designed in mockups): port-group
    build (drag → group, edge chevrons add col/row), the clamped bottom-right spacing
    handle, per-group settings (ID prefix, counting direction, connector type),
    per-port select (label+icon turn blue) + vertical flip, Width(in) field, Rack Mounted
-   toggle, responsive reflow. See the Phase 2a spec §4–5 for exact mechanics.
-4. **Slice 4 — Text/Icon elements** (Tabler icon picker) + finish, then **Phase 2b** (place
-   devices into racks).
+   toggle, responsive reflow. Builds interactivity on top of Slice 2's read-only
+   `Faceplate`/`renderFace`. See the Phase 2a spec §4–5 for exact mechanics.
+3. **Slice 4 — Text/Icon elements** (Tabler icon picker) — also renders `Face.elements`,
+   which Slice 2 deferred — + finish, then **Phase 2b** (place devices into racks).
 
 ## Where everything lives
 - **Specs:** `docs/superpowers/specs/` — the Phase 2a spec has ALL editor mechanics + geometry.
