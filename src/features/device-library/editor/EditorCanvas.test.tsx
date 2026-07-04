@@ -101,3 +101,22 @@ describe("EditorCanvas overlay", () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 });
+
+describe("EditorCanvas drag-to-move", () => {
+  it("commits onMove with the dragged delta on pointer up", () => {
+    const onMove = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupId="g1" onSelect={() => {}} onMove={onMove} />,
+    );
+    const box = getByTestId("group-box-g1");
+    fireEvent.pointerDown(box, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 140, clientY: 108 });
+    fireEvent.pointerUp(window, { clientX: 140, clientY: 108 });
+    expect(onMove).toHaveBeenCalledTimes(1);
+    const [id, pos] = onMove.mock.calls[0];
+    expect(id).toBe("g1");
+    // group started at gridX 20, gridY 20; moved +40,+8
+    expect(pos).toEqual({ x: 60, y: 28 });
+  });
+});

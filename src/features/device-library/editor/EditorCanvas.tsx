@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media } from "@/domain/faceplate";
@@ -19,6 +19,7 @@ export interface EditorCanvasProps {
   onSelect?: (id: string | null) => void;
   onAddColumn?: (id: string) => void;
   onAddRow?: (id: string) => void;
+  onMove?: (id: string, pos: Pos) => void;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
@@ -27,6 +28,21 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const editing = Boolean(props.onSelect || props.onCreate);
   const dims = frameDims({ widthIn, rackUnits, rackMounted });
   const earX = dims.earWidthPx;
+
+  const [drag, setDrag] = useState<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  useEffect(() => {
+    if (!drag) return;
+    function onUp(e: PointerEvent) {
+      props.onMove?.(drag!.id, {
+        x: drag!.origX + (e.clientX - drag!.startX),
+        y: drag!.origY + (e.clientY - drag!.startY),
+      });
+      setDrag(null);
+    }
+    window.addEventListener("pointerup", onUp);
+    return () => window.removeEventListener("pointerup", onUp);
+  }, [drag, props]);
 
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
@@ -64,13 +80,18 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 data-testid={`group-box-${g.id}`}
                 data-selected={selected ? "true" : "false"}
                 onClick={(e) => { e.stopPropagation(); props.onSelect?.(g.id); }}
+                onPointerDown={(e) => {
+                  if (!props.onMove) return;
+                  e.stopPropagation();
+                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY });
+                }}
                 style={{
                   position: "absolute",
                   left: left - SEL_PAD,
                   top: g.gridY - SEL_PAD,
                   width: laid.width + SEL_PAD * 2,
                   height: laid.height + SEL_PAD * 2,
-                  cursor: "pointer",
+                  cursor: props.onMove ? "move" : "pointer",
                   borderRadius: 6,
                   border: selected ? "1.5px solid #2d5bff" : "1.5px solid transparent",
                   background: selected ? "rgba(45,91,255,0.06)" : "transparent",
