@@ -1,62 +1,73 @@
 # RESUME — where we are & how to continue
 
-_Last updated: 2026-07-02_
+_Last updated: 2026-07-04 (mid Slice 3f)_
 
 ## Project
 Network documentation platform (rack builder). Next.js 16 + Supabase (local via Docker +
-`npx supabase start`). Repo: https://github.com/thereubiverse/Rack-Designer (remote
-`origin`, HTTPS; `gh` authed). Built with the superpowers workflow.
+`npx supabase start`). Repo: https://github.com/thereubiverse/Rack-Designer (remote `origin`,
+HTTPS; `gh` authed). Built with the superpowers workflow (brainstorm → spec → plan →
+subagent-driven execution). ALWAYS browser-verify interactive editor changes — 3d and 3f each
+had bugs only visible in the browser (setState-inside-updater; stale-`activeFace` on multi-add).
 
-## Current state
-- ✅ **Phase 1** — location hierarchy, naming engine, repository, synced rack grid — merged to `main`.
-- ✅ **Phase 2 design** — master spec + Phase 2a spec approved.
-- ✅ **Phase 2a · Slice 1** — Device Library data model + template management — **PR #1
-  squash-merged to `main`** (2026-07-03).
-- ✅ **Phase 2a · Slice 2** — SVG faceplate renderer + rack-mount geometry (pure
-  `faceplate-geometry.ts`, 10 port glyphs, reusable `Faceplate`/`renderFace`,
-  `/device-library/preview`) — 57 tests, review clean, **PR #2 open**:
-  https://github.com/thereubiverse/Rack-Designer/pull/2
-- ✅ **Phase 2a · Slice 3a** — Rack Device Editor SHELL: modal, header fields, Front/Back +
-  Rack-Mounted toggles, live read-only `Faceplate` preview (`EditorCanvas`), draft-in-state
-  atomic Save, Face-typed persistence, structured actions, `EditorLauncher`, table Edit action
-  (removed `CreateDeviceForm`) — branch `phase-2a-slice-3a` (stacked on slice-2), 83 tests,
-  browser-verified, review clean, **PR #3 open** (base = phase-2a-slice-2):
-  https://github.com/thereubiverse/Rack-Designer/pull/3
-- ✅ **Phase 2a · Slice 3b** — port-group building: `portGroupOps.ts` (pure add/move/grow/update/
-  delete + nudge-to-nearest-free 8px ring-search, overlaps disallowed), `EditorCanvas` overlay
-  (select / drop-to-create / edge chevrons / drag-to-move), `PortGroupSettings`, wired into the
-  modal — branch `phase-2a-slice-3b` (stacked on 3a), 118 tests, browser-verified, review clean,
-  **PR #4 open** (base = phase-2a-slice-3a): https://github.com/thereubiverse/Rack-Designer/pull/4
-- ✅ **Phase 2a · Slice 3c** — spacing handle + per-port editing + live-move outline: `portGroupOps`
-  (setPortOverride/setSpacing/maxSpacing/wouldOverlapAt), `EditorCanvas` per-port targets + BLUE
-  overlay copy (Faceplate stays pure), clamped live spacing spread, `PortSettings` (name/flip),
-  live group-move red would-overlap outline — branch `phase-2a-slice-3c` (stacked on 3b), 139 tests,
-  browser-verified + DB round-trip, review clean, **PR #5 open** (base = phase-2a-slice-3b):
-  https://github.com/thereubiverse/Rack-Designer/pull/5
+## Branch stack & PR state
+Everything stacks; each branch is based on the previous:
 
-## Slice 3 (Rack Device Editor) — COMPLETE
-- **3a** shell + preview + persistence (PR #3) · **3b** port-group building (PR #4) · **3c** spacing
-  handle + per-port select/name/flip + live-move outline (PR #5). All browser-verified.
-- Architecture: overlay interactive controls onto the pure read-only `Faceplate` via `EditorCanvas`;
-  `Faceplate` stays pure (reused by Phase 2b). Overlaps disallowed → nudge. Name/flip ride `portOverrides`.
+    main
+     └─ phase-2a-slice-2   → PR #2  (open)
+         └─ phase-2a-slice-3a → PR #3 (open)
+             └─ phase-2a-slice-3b → PR #4 (open)
+                 └─ phase-2a-slice-3c → PR #5 (open)
+                     └─ phase-2a-slice-3d  (NOT PR'd — complete, review clean, 158 tests)
+                         └─ phase-2a-slice-3e  (NOT PR'd — complete, review clean, 165 tests)
+                             └─ phase-2a-slice-3f  (IN PROGRESS — bidirectional chevron done, 170 tests)
+
+- ✅ Phase 1 + Phase 2a Slice 1 — merged to `main` (PR #1).
+- ✅ Slice 2 (SVG faceplate renderer) — PR #2. Slice 3a (editor shell) — PR #3. 3b (port-group
+  building) — PR #4. 3c (spacing + per-port select/name/flip) — PR #5.
+- ✅ Slice 3d (editor refinements) — device-height-aware `layoutPortGroup` auto-centers rows;
+  horizontal-only collision; in-place blue highlight (pure `Faceplate.highlight` prop); per-port
+  `labelPos`; chevron click-or-drag; horizontal-only move; `setActiveFace` accepts `(prev)=>Face`.
+- ✅ Slice 3e (rendering/layout fixes) — fit-to-window scaling (SVG+overlay in one `transform:scale`
+  container, pointer input ÷ scale, `toDevicePos` helper); default body width 17.5″ (ears+holes);
+  palette Port Types + Elements sections (Text/Icon inert); blue tile selection box.
+- 🚧 Slice 3f (IN PROGRESS): **bidirectional chevrons DONE** (commit 6cfa80f, browser-verified) —
+  `removeColumn`/`removeRow` (floor 1); chevron drag signed (round(dist/step), clamp −(initial−1));
+  drag right/down adds, left/up removes, plain click adds one; scale-aware.
+
+## Slice 3f — remaining (approved design, NOT built; no spec/plan doc yet)
+1. **Override propagation + index remap.** Adding a row/column should copy the flip/labelPos/media
+   state so new ports match the existing pattern; and fix `portOverrides` (keyed by `row*cols+col`)
+   scrambling when `cols`/`rows` change — now critical since add/remove shifts indices.
+2. **Per-port type replace.** Select a port + click a palette port type → change JUST that port's
+   media via a per-port override (`portOverrides[i].media` + default connectorType); groups can mix
+   port types (Faceplate already renders per-cell `cell.media`, so mostly a layout/settings change).
+
+Write a 3f spec+plan (the brainstorm is done — decisions above are settled), then subagent-driven.
 
 ## Next steps (in order)
-1. **Merge the stack bottom-up:** PR #2 → (#3 auto-retargets to main) → #3 → (#4) → #4 → (#5) → #5 → sync main.
-2. **Slice 4 — Text/Icon elements:** drag Text/Icon onto the grid (per-face `Face.elements`, deferred
-   from Slice 2/3). Text: content, alignment, Highlighted (inverted label), resize expands the BOX not
-   the font. Icon: Tabler picker (~5000, searchable), resize scales the glyph. Both repositionable/
-   deletable on the same `EditorCanvas` overlay. `Faceplate` must render `Face.elements` (currently
-   ignored). Brainstorm → spec → plan → subagent. See Phase 2a spec §4.7.
-3. **Phase 2b** — place devices into racks (reuses the pure `Faceplate`/`renderFace`).
+1. Finish Slice 3f (the 2 items above).
+2. Open the PR stack: push + PR 3d (base 3c), 3e (base 3d), 3f (base 3e). Then merge bottom-up
+   #2→#3→#4→#5→3d→3e→3f (each auto-retargets to `main` as its base merges).
+3. Slice 4 — Text/Icon ELEMENTS: drag the (currently inert) Text/Icon palette chips onto the grid;
+   render `Face.elements` (Faceplate ignores them today). See Phase 2a spec §4.7.
+4. Phase 2b — place devices into racks (reuses the pure `Faceplate`/`renderFace`).
 
-## Where everything lives
-- **Specs:** `docs/superpowers/specs/` — the Phase 2a spec has ALL editor mechanics + geometry.
-- **Plans:** `docs/superpowers/plans/`.
-- **Backlog:** `docs/superpowers/notes/phase-*-deferred.md`.
-- **SDD progress ledger:** `.superpowers/sdd/progress.md`.
-- **Editor mockups:** `.superpowers/brainstorm/` (final editor = `editor-window-restored.html`; custom-device test = `custom-device-test.html`).
+## Backlog / deferred
+- `Face.elements` not rendered (Slice 4).
+- `LABEL_GUTTER=22` duplicated in `EditorCanvas.tsx` + `Faceplate.tsx` — must stay in sync for the
+  fit-to-window scale math; DRY by exporting it (do in 3f or later).
+- `EditorCanvas` `drag.dy` computed but unused (move is horizontal-only). `portSequence` switch has
+  no `default`. 3a hidden-span errors sink + `onSaveGuard`.
+
+## Key files
+`src/features/device-library/editor/`: `EditorCanvas.tsx` (overlay, fit-scaling, all pointer drags),
+`portGroupOps.ts` (pure ops), `RackDeviceEditor.tsx` (modal/palette/wiring), `PortSettings.tsx`,
+`PortGroupSettings.tsx`, `useDeviceDraft.ts`, `repository.ts`/`actions.ts`/`validation.ts`.
+Pure renderer: `src/features/device-library/faceplate/Faceplate.tsx`, `src/domain/faceplate-geometry.ts`
+(`layoutPortGroup`, `frameDims`), `src/domain/faceplate.ts` (types). Mockup:
+`.superpowers/brainstorm/*/content/editor-window-restored.html`.
 
 ## To resume in a fresh session
-Open the project and say: **"Resume the rack-builder — read docs/superpowers/notes/RESUME.md
-and the Phase 2a spec, then let's continue."** (Claude's memory also carries the current
-state.) Ensure Docker + `npx supabase start` are running for DB work.
+`git checkout phase-2a-slice-3f`, ensure Docker + `npx supabase start` are up, then say:
+**"Resume the rack-builder — read docs/superpowers/notes/RESUME.md, we're mid Slice 3f."**
+(Claude's project memory also carries this state.)
