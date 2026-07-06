@@ -18,3 +18,15 @@ body {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
 }
+
+/* Disable text selection across a UI surface, but keep it in writable fields. */
+.no-select-ui {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.no-select-ui input,
+.no-select-ui textarea,
+.no-select-ui [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}

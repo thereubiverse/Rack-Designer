@@ -15,14 +15,15 @@ const DIRECTIONS: { value: CountingDirection; label: string }[] = [
 ];
 
 export function PortGroupSettings({
-  group, onChange, onDelete,
+  group, onChange, onDelete, embedded,
 }: {
   group: PortGroup;
   onChange: (patch: Partial<Pick<PortGroup, "idPrefix" | "countingDirection" | "connectorType">>) => void;
   onDelete: () => void;
+  embedded?: boolean;
 }) {
   return (
-    <div data-testid="pg-settings" className="mt-4 rounded-xl border border-neutral-200 p-4">
+    <div data-testid="pg-settings" className={embedded ? "" : "mt-4 rounded-xl border border-neutral-200 p-4"}>
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm font-bold">Port Group Settings — {MEDIA_LABELS[group.media]}</span>
         <button type="button" data-testid="pg-delete" onClick={onDelete} className="text-xs text-red-600">

@@ -6,6 +6,7 @@ import {
   earWidthIn,
   frameDims,
   screwHoles,
+  SCREW_EDGE_INSET_PX,
 } from "./faceplate-geometry";
 
 describe("faceplate geometry — frame & ears", () => {
@@ -44,10 +45,10 @@ describe("faceplate geometry — frame & ears", () => {
     expect(d.heightIn).toBeCloseTo(3.5, 5);
   });
 
-  it("frameDims: body wider than rails is clamped to the rail width when mounted", () => {
+  it("frameDims: body wider than the max is clamped to 17.5in when mounted", () => {
     const d = frameDims({ widthIn: 24, rackUnits: 1, rackMounted: true });
-    expect(d.bodyWidthIn).toBe(19);
-    expect(d.earWidthIn).toBe(0);
+    expect(d.bodyWidthIn).toBe(17.5);
+    expect(d.earWidthIn).toBeCloseTo(0.75, 5);
   });
 });
 
@@ -62,18 +63,36 @@ describe("faceplate geometry — screw holes", () => {
     expect(screwHoles(d, 1)).toHaveLength(4);
   });
 
-  it("hole count scales with rack units (2 per U per ear)", () => {
+  it("multi-U still yields only 4 corner holes (not repeated per U)", () => {
     const d = frameDims({ widthIn: 10.6, rackUnits: 2, rackMounted: true });
-    expect(screwHoles(d, 2)).toHaveLength(8);
+    const holes = screwHoles(d, 2);
+    expect(holes).toHaveLength(4);
+    // one near the top edge, one near the bottom edge of the whole frame
+    expect(holes.some((h) => h.cy < d.heightPx * 0.2)).toBe(true);
+    expect(holes.some((h) => h.cy > d.heightPx * 0.8)).toBe(true);
   });
 
   it("left holes sit inside the left ear, right holes inside the right ear", () => {
     const d = frameDims({ widthIn: 10.6, rackUnits: 1, rackMounted: true });
     const holes = screwHoles(d, 1);
-    const leftX = d.earWidthPx / 2;
-    const rightX = d.frameWidthPx - d.earWidthPx / 2;
+    const leftX = SCREW_EDGE_INSET_PX;
+    const rightX = d.frameWidthPx - SCREW_EDGE_INSET_PX;
     expect(holes.filter((h) => Math.abs(h.cx - leftX) < 0.001)).toHaveLength(2);
     expect(holes.filter((h) => Math.abs(h.cx - rightX) < 0.001)).toHaveLength(2);
+    // both sit within their ear
+    for (const h of holes) expect(h.cx < d.earWidthPx || h.cx > d.frameWidthPx - d.earWidthPx).toBe(true);
+  });
+
+  it("holes stay the same distance from the outer edge regardless of body width", () => {
+    const wide = screwHoles(frameDims({ widthIn: 17.5, rackUnits: 1, rackMounted: true }), 1);
+    const narrow = screwHoles(frameDims({ widthIn: 8, rackUnits: 1, rackMounted: true }), 1);
+    const frame = frameDims({ widthIn: 8, rackUnits: 1, rackMounted: true }).frameWidthPx;
+    const leftInset = (hs: { cx: number }[]) => Math.min(...hs.map((h) => h.cx));
+    const rightInset = (hs: { cx: number }[]) => frame - Math.max(...hs.map((h) => h.cx));
+    expect(leftInset(wide)).toBeCloseTo(SCREW_EDGE_INSET_PX);
+    expect(leftInset(narrow)).toBeCloseTo(SCREW_EDGE_INSET_PX);
+    expect(rightInset(wide)).toBeCloseTo(SCREW_EDGE_INSET_PX);
+    expect(rightInset(narrow)).toBeCloseTo(SCREW_EDGE_INSET_PX);
   });
 
   it("holes stay within the frame height", () => {
@@ -187,6 +206,10 @@ describe("layoutPortGroup — vertical centering & labelPos", () => {
   it("a per-port labelPos override wins", () => {
     const laid = layoutPortGroup(g({ portOverrides: { 0: { labelPos: "bottom" } } }), 84);
     expect(laid.cells[0].labelPos).toBe("bottom");
+  });
+  it("a 3+ row group defaults every label to the bottom", () => {
+    const three = layoutPortGroup(g({ rows: 3, cols: 1 }), 168);
+    expect(three.cells.map((c) => c.labelPos)).toEqual(["bottom", "bottom", "bottom"]);
   });
   it("without heightPx, uses the legacy gridY origin (back-compat)", () => {
     const laid = layoutPortGroup(g({ gridY: 10 }));

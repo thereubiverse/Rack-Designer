@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import {
   createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
-  toEditableTemplate, deleteDeviceTemplate, createBrand,
+  toEditableTemplate, deleteDeviceTemplate, createBrand, deleteBrand,
   type EditableTemplate, type BrandRow,
 } from "./repository";
 import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
@@ -72,6 +72,17 @@ export async function createBrandAction(
     const brand = await createBrand(db, { name: trimmed });
     revalidatePath("/device-library");
     return { ok: true, brand };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function deleteBrandAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await deleteBrand(db, id);
+    revalidatePath("/device-library");
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

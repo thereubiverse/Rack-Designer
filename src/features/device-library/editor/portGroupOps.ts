@@ -1,4 +1,4 @@
-import { layoutPortGroup, CELL_W, ROW_H, LABEL_H } from "@/domain/faceplate-geometry";
+import { layoutPortGroup, CELL_W, ROW_H, LABEL_H, U_HEIGHT_IN, PX_PER_IN } from "@/domain/faceplate-geometry";
 import type { Face, PortGroup } from "@/domain/faceplate";
 import { CONNECTORS, type Media } from "@/domain/faceplate";
 
@@ -7,6 +7,10 @@ export interface Rect { x: number; y: number; width: number; height: number }
 export interface GridBounds { width: number; height: number }
 
 export const SNAP = 8;
+// Padding the selection box keeps around the ports; groups are placed/spread so this
+// padding always stays inside the device body (the box never touches the edge/ears
+// and single-column ports stay centered in their box).
+export const SEL_PAD = 6;
 
 export function groupBounds(group: PortGroup): Rect {
   const laid = layoutPortGroup(group);
@@ -37,8 +41,11 @@ export function findFreePosition(
   face: Face, group: PortGroup, desired: Pos, bounds: GridBounds, excludeId?: string,
 ): Pos | null {
   const w = groupWidth(group);
+  const lo = SEL_PAD;
+  const hi = bounds.width - w - SEL_PAD;
   const tryAt = (x: number): number | null => {
-    const cx = Math.max(0, Math.min(snap(x), bounds.width - w));
+    // Keep SEL_PAD of the body free on each side so the box never touches the edge.
+    const cx = hi < lo ? Math.max(0, (bounds.width - w) / 2) : Math.max(lo, Math.min(snap(x), hi));
     const candidate: PortGroup = { ...group, gridX: cx };
     return wouldOverlap(face, candidate, excludeId) ? null : cx;
   };
@@ -79,12 +86,82 @@ export function movePortGroup(face: Face, id: string, pos: Pos, bounds: GridBoun
   return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, gridX: free.x } : x)) };
 }
 
+/** Max rows a group may have — 2 per rack unit. */
+export function maxRows(bounds: GridBounds): number {
+  const rackUnits = Math.max(1, Math.round(bounds.height / (U_HEIGHT_IN * PX_PER_IN)));
+  return 2 * rackUnits;
+}
+
+type PortOverride = PortGroup["portOverrides"][number];
+
+/** The parts of a port override that propagate to newly-added ports: orientation
+ *  (flip + rotation) and label position — but NOT the per-port name. */
+function shapeOf(ov: PortOverride | undefined): PortOverride {
+  const shape: PortOverride = {};
+  if (ov?.flipped !== undefined) shape.flipped = ov.flipped;
+  if (ov?.labelPos !== undefined) shape.labelPos = ov.labelPos;
+  if (ov?.rotation !== undefined) shape.rotation = ov.rotation;
+  return shape;
+}
+const isEmpty = (o: PortOverride): boolean => Object.keys(o).length === 0;
+
+/** Overrides are keyed row-major (row*cols+col). When the grid grows we remap the
+ *  existing ports to their new indices, then copy the orientation/label of the
+ *  adjacent existing column/row onto the new ports so the pattern repeats. */
+function growOverrides(g: PortGroup, dCols: number, dRows: number): PortGroup["portOverrides"] {
+  const C = g.cols, R = g.rows, newC = C + dCols, newR = R + dRows;
+  const ov = g.portOverrides;
+  const next: PortGroup["portOverrides"] = {};
+  for (let row = 0; row < R; row++) {
+    for (let col = 0; col < C; col++) {
+      const o = ov[row * C + col];
+      if (o) next[row * newC + col] = o;
+    }
+  }
+  if (dCols > 0) {
+    for (let row = 0; row < R; row++) {
+      const shape = shapeOf(ov[row * C + (C - 1)]); // last existing column in this row
+      if (!isEmpty(shape)) for (let col = C; col < newC; col++) next[row * newC + col] = { ...shape };
+    }
+  }
+  if (dRows > 0) {
+    for (let col = 0; col < newC; col++) {
+      const shape = shapeOf(next[(R - 1) * newC + col]); // last existing row in this column
+      if (!isEmpty(shape)) for (let row = R; row < newR; row++) next[row * newC + col] = { ...shape };
+    }
+  }
+  return next;
+}
+
+/** Remap overrides when the grid shrinks (drop the removed row/column, reindex). */
+function shrinkOverrides(g: PortGroup, dCols: number, dRows: number): PortGroup["portOverrides"] {
+  const C = g.cols, newC = C - dCols, newR = g.rows - dRows;
+  const next: PortGroup["portOverrides"] = {};
+  for (let row = 0; row < newR; row++) {
+    for (let col = 0; col < newC; col++) {
+      const o = g.portOverrides[row * C + col];
+      if (o) next[row * newC + col] = o;
+    }
+  }
+  return next;
+}
+
 function grow(face: Face, id: string, bounds: GridBounds, delta: { cols?: number; rows?: number }): Face {
   const g = face.portGroups.find((x) => x.id === id);
   if (!g) return face;
-  const grown: PortGroup = { ...g, cols: g.cols + (delta.cols ?? 0), rows: g.rows + (delta.rows ?? 0) };
+  const grown: PortGroup = {
+    ...g,
+    cols: g.cols + (delta.cols ?? 0),
+    rows: g.rows + (delta.rows ?? 0),
+    portOverrides: growOverrides(g, delta.cols ?? 0, delta.rows ?? 0),
+  };
+  if (grown.rows > maxRows(bounds)) return face; // cap at 2 rows per rack unit
   const b = groupBounds(grown);
-  if (b.x + b.width > bounds.width || b.y + b.height > bounds.height) return face;
+  // Horizontal grows from gridX, so guard on the real x-extent. Vertically the stack
+  // is auto-centered (gridY is not used for layout), so only require it to FIT the
+  // device height — never gate on gridY, or a group dropped mid-height couldn't grow.
+  if (b.x + b.width > bounds.width) return face;
+  if (b.height > bounds.height) return face;
   if (wouldOverlap(face, grown, id)) return face;
   return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? grown : x)) };
 }
@@ -94,14 +171,26 @@ export function addColumn(face: Face, id: string, bounds: GridBounds): Face {
 }
 
 export function addRow(face: Face, id: string, bounds: GridBounds): Face {
-  return grow(face, id, bounds, { rows: 1 });
+  const grown = grow(face, id, bounds, { rows: 1 });
+  const g = grown.portGroups.find((x) => x.id === id);
+  // A dense (3+ row) group needs a little row spacing so its (all-bottom) labels have
+  // room to show. Seed a sensible default the first time we cross into 3 rows; the
+  // user can still adjust it with the spacing handle afterwards.
+  if (g && g.rows >= 3 && g.rowSpacing === 0) {
+    const desired = Math.min(LABEL_H, maxSpacing(grown, g, bounds).maxRow);
+    if (desired > 0) {
+      return { ...grown, portGroups: grown.portGroups.map((x) => (x.id === id ? { ...x, rowSpacing: desired } : x)) };
+    }
+  }
+  return grown;
 }
 
 /** Remove one column, floored at 1 (the original single column). */
 export function removeColumn(face: Face, id: string): Face {
   return {
     ...face,
-    portGroups: face.portGroups.map((g) => (g.id === id && g.cols > 1 ? { ...g, cols: g.cols - 1 } : g)),
+    portGroups: face.portGroups.map((g) =>
+      g.id === id && g.cols > 1 ? { ...g, cols: g.cols - 1, portOverrides: shrinkOverrides(g, 1, 0) } : g),
   };
 }
 
@@ -109,7 +198,8 @@ export function removeColumn(face: Face, id: string): Face {
 export function removeRow(face: Face, id: string): Face {
   return {
     ...face,
-    portGroups: face.portGroups.map((g) => (g.id === id && g.rows > 1 ? { ...g, rows: g.rows - 1 } : g)),
+    portGroups: face.portGroups.map((g) =>
+      g.id === id && g.rows > 1 ? { ...g, rows: g.rows - 1, portOverrides: shrinkOverrides(g, 0, 1) } : g),
   };
 }
 
@@ -126,7 +216,7 @@ export function deletePortGroup(face: Face, id: string): Face {
 
 export function setPortOverride(
   face: Face, groupId: string, index: number,
-  patch: { name?: string; flipped?: boolean; labelPos?: "top" | "bottom" },
+  patch: { name?: string; flipped?: boolean; labelPos?: "top" | "bottom"; rotation?: number; media?: Media; connectorType?: string },
 ): Face {
   return {
     ...face,
@@ -136,6 +226,18 @@ export function setPortOverride(
         : g,
     ),
   };
+}
+
+/** Override a single port's media (type). When it matches the group's own media the
+ *  override is cleared; otherwise it also seeds that media's default connector type. */
+export function setPortMedia(face: Face, groupId: string, index: number, media: Media): Face {
+  const group = face.portGroups.find((g) => g.id === groupId);
+  if (!group) return face;
+  if (media === group.media) {
+    // back to the group default → drop the per-port media/connector override
+    return setPortOverride(face, groupId, index, { media: undefined, connectorType: undefined });
+  }
+  return setPortOverride(face, groupId, index, { media, connectorType: CONNECTORS[media][0] });
 }
 
 export function setSpacing(
@@ -156,7 +258,8 @@ export function maxSpacing(
   // block sits to the right constrains the spread, regardless of row count.
   let maxCol = 0;
   if (group.cols > 1) {
-    let limitRight = bounds.width;
+    // Reserve SEL_PAD at the body's right edge so the spread box keeps its margin.
+    let limitRight = bounds.width - SEL_PAD;
     const tightRight = group.gridX + group.cols * CELL_W;
     for (const other of face.portGroups) {
       if (other.id === group.id) continue;
@@ -166,7 +269,8 @@ export function maxSpacing(
   }
   let maxRow = 0;
   if (group.rows > 1) {
-    maxRow = Math.max(0, (bounds.height - 2 * LABEL_H - group.rows * ROW_H) / (group.rows - 1));
+    // Reserve the label strip AND SEL_PAD top & bottom so the box stays inside the device.
+    maxRow = Math.max(0, (bounds.height - 2 * (LABEL_H + SEL_PAD) - group.rows * ROW_H) / (group.rows - 1));
   }
   return { maxCol, maxRow };
 }

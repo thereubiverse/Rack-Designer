@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -40,8 +40,9 @@ describe("findFreePosition", () => {
   });
   it("clamps x within the grid bounds; y passes through unchanged (horizontal-only)", () => {
     const face: Face = { portGroups: [], elements: [] };
-    // desired far right; 1x1 (24 wide) must fit within width 400 → max x = 376
-    expect(findFreePosition(face, group(), { x: 999, y: 999 }, bounds)).toEqual({ x: 376, y: 999 });
+    // desired far right; 1x1 (24 wide) fits within width 400, reserving SEL_PAD(6) each
+    // side for the selection box → max x = 400 - 24 - 6 = 370
+    expect(findFreePosition(face, group(), { x: 999, y: 999 }, bounds)).toEqual({ x: 370, y: 999 });
   });
   it("nudges to the nearest free spot when the target overlaps", () => {
     const face: Face = { portGroups: [group({ id: "a", gridX: 0, gridY: 0 })], elements: [] };
@@ -103,6 +104,37 @@ describe("addColumn / addRow", () => {
     expect(addColumn(face, id, bounds).portGroups[0].cols).toBe(2);
     expect(addRow(face, id, bounds).portGroups[0].rows).toBe(2);
   });
+  it("caps rows at 2 per rack unit (1U → 2 rows max)", () => {
+    let face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds); // height 84 = 1U
+    const id = face.portGroups[0].id;
+    face = addRow(face, id, bounds);
+    expect(face.portGroups[0].rows).toBe(2);
+    face = addRow(face, id, bounds); // third row rejected
+    expect(face.portGroups[0].rows).toBe(2);
+  });
+  it("allows 4 rows in a 2U device (2 per rack unit)", () => {
+    const twoU: GridBounds = { width: 400, height: 168 };
+    let face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, twoU);
+    const id = face.portGroups[0].id;
+    for (let i = 0; i < 5; i++) face = addRow(face, id, twoU);
+    expect(face.portGroups[0].rows).toBe(4);
+  });
+  it("seeds default row spacing when a group reaches 3 rows (so labels have room)", () => {
+    const twoU: GridBounds = { width: 400, height: 168 };
+    let face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, twoU);
+    const id = face.portGroups[0].id;
+    face = addRow(face, id, twoU); // 2 rows — no auto spacing
+    expect(face.portGroups[0].rowSpacing).toBe(0);
+    face = addRow(face, id, twoU); // 3 rows — seeds LABEL_H (12) of spacing
+    expect(face.portGroups[0].rows).toBe(3);
+    expect(face.portGroups[0].rowSpacing).toBe(12);
+  });
+  it("adds a row even when the group sits mid-height (gridY does not gate growth)", () => {
+    let face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 40 }, bounds);
+    const id = face.portGroups[0].id;
+    face = addRow(face, id, bounds);
+    expect(face.portGroups[0].rows).toBe(2);
+  });
   it("is a no-op when growth would exceed the grid width", () => {
     const narrow: GridBounds = { width: 24, height: 84 };
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, narrow);
@@ -115,6 +147,70 @@ describe("addColumn / addRow", () => {
     const id = face.portGroups[0].id;
     face = addPortGroup(face, "copper", { x: 24, y: 0 }, bounds);     // immediately to its right
     expect(addColumn(face, id, bounds).portGroups.find((g) => g.id === id)!.cols).toBe(1);
+  });
+});
+
+describe("add/remove propagate per-port orientation + label (but not name)", () => {
+  const twoU: GridBounds = { width: 400, height: 168 };
+
+  it("adding a column copies a flipped port's orientation onto the new port", () => {
+    const g = group({ cols: 1, rows: 1, portOverrides: { 0: { flipped: true } } });
+    const next = addColumn({ portGroups: [g], elements: [] }, "g", bounds).portGroups[0];
+    expect(next.cols).toBe(2);
+    expect(next.portOverrides[1]?.flipped).toBe(true); // r0c1 (new) inherits r0c0
+  });
+
+  it("copies each row's orientation to the new column when rows differ", () => {
+    // 2 rows, 1 col: idx0=r0 (flipped), idx1=r1 (default)
+    const g = group({ cols: 1, rows: 2, portOverrides: { 0: { flipped: true } } });
+    const next = addColumn({ portGroups: [g], elements: [] }, "g", bounds).portGroups[0];
+    expect(next.cols).toBe(2);
+    // reindexed to cols=2: r0c0=0, r0c1=1, r1c0=2, r1c1=3
+    expect(next.portOverrides[0]?.flipped).toBe(true);        // r0c0 kept
+    expect(next.portOverrides[1]?.flipped).toBe(true);        // r0c1 new → matches row 0
+    expect(next.portOverrides[2]?.flipped).toBeUndefined();   // r1c0 unchanged (not flipped)
+    expect(next.portOverrides[3]?.flipped).toBeUndefined();   // r1c1 new → matches row 1 (not flipped)
+  });
+
+  it("adding a row copies the last row's label position + flip to the new row", () => {
+    const g = group({ cols: 2, rows: 1, portOverrides: { 0: { labelPos: "bottom" }, 1: { flipped: true } } });
+    const next = addRow({ portGroups: [g], elements: [] }, "g", twoU).portGroups[0];
+    expect(next.rows).toBe(2);
+    expect(next.portOverrides[2]?.labelPos).toBe("bottom"); // r1c0 inherits r0c0
+    expect(next.portOverrides[3]?.flipped).toBe(true);      // r1c1 inherits r0c1
+  });
+
+  it("does not copy the per-port name onto added ports", () => {
+    const g = group({ cols: 1, rows: 1, portOverrides: { 0: { name: "WAN", flipped: true } } });
+    const next = addColumn({ portGroups: [g], elements: [] }, "g", bounds).portGroups[0];
+    expect(next.portOverrides[1]?.flipped).toBe(true);
+    expect(next.portOverrides[1]?.name).toBeUndefined();
+  });
+
+  it("removing a column drops that column's overrides and reindexes the rest", () => {
+    // 2 cols, 2 rows; column 0 (idx 0 and 2) flipped
+    const g = group({ cols: 2, rows: 2, portOverrides: { 0: { flipped: true }, 2: { flipped: true } } });
+    const next = removeColumn({ portGroups: [g], elements: [] }, "g").portGroups[0];
+    expect(next.cols).toBe(1);
+    expect(next.portOverrides[0]?.flipped).toBe(true); // r0c0
+    expect(next.portOverrides[1]?.flipped).toBe(true); // r1c0 (reindexed from old idx 2)
+  });
+});
+
+describe("setPortMedia (per-port type override)", () => {
+  it("overrides one port's media and seeds that type's default connector", () => {
+    const g = group({ cols: 2, media: "copper", connectorType: "RJ45" });
+    const next = setPortMedia({ portGroups: [g], elements: [] }, "g", 1, "fiber").portGroups[0];
+    expect(next.media).toBe("copper");             // group media unchanged
+    expect(next.portOverrides[1]?.media).toBe("fiber");
+    expect(next.portOverrides[1]?.connectorType).toBe("LC"); // first fiber connector
+    expect(next.portOverrides[0]).toBeUndefined(); // sibling port untouched
+  });
+  it("clears the override when set back to the group's own media", () => {
+    const g = group({ cols: 2, media: "copper", portOverrides: { 1: { media: "fiber", connectorType: "LC" } } });
+    const next = setPortMedia({ portGroups: [g], elements: [] }, "g", 1, "copper").portGroups[0];
+    expect(next.portOverrides[1]?.media).toBeUndefined();
+    expect(next.portOverrides[1]?.connectorType).toBeUndefined();
   });
 });
 
@@ -155,10 +251,11 @@ describe("setSpacing", () => {
 
 describe("maxSpacing", () => {
   it("clamps to the grid edge", () => {
-    // 3 cols * 24 = 72 tight; grid width 200, gridX 0 → maxCol = (200-0-72)/2 = 64
+    // 3 cols * 24 = 72 tight; width 200 minus SEL_PAD(6) at the edge, gridX 0 →
+    // maxCol = (200 - 6 - 0 - 72)/2 = 61
     const g = group({ id: "g", cols: 3, gridX: 0, gridY: 0 });
     const face: Face = { portGroups: [g], elements: [] };
-    expect(maxSpacing(face, g, { width: 200, height: 84 }).maxCol).toBeCloseTo(64, 5);
+    expect(maxSpacing(face, g, { width: 200, height: 84 }).maxCol).toBeCloseTo(61, 5);
   });
   it("clamps tighter to a neighbour on the right", () => {
     const g = group({ id: "g", cols: 3, gridX: 0, gridY: 0 });
@@ -213,9 +310,13 @@ describe("movePortGroup is horizontal-only (3d)", () => {
 });
 
 describe("maxSpacing.maxRow clamps to device height (3d)", () => {
-  it("2 rows in 84px height: maxRow = (84 - 24 - 48)/1 = 12", () => {
+  it("2 rows in 84px height: labels + SEL_PAD fill the U, so maxRow = (84 - 36 - 48)/1 = 0", () => {
     const g = group({ id: "g", rows: 2, cols: 1 });
-    expect(maxSpacing({ portGroups: [g], elements: [] }, g, { width: 400, height: 84 }).maxRow).toBeCloseTo(12, 5);
+    expect(maxSpacing({ portGroups: [g], elements: [] }, g, { width: 400, height: 84 }).maxRow).toBeCloseTo(0, 5);
+  });
+  it("2 rows in a 2U height (168px) leaves room to spread: maxRow = (168 - 36 - 48)/1 = 84", () => {
+    const g = group({ id: "g", rows: 2, cols: 1 });
+    expect(maxSpacing({ portGroups: [g], elements: [] }, g, { width: 400, height: 168 }).maxRow).toBeCloseTo(84, 5);
   });
   it("single row → maxRow 0", () => {
     const g = group({ id: "g", rows: 1, cols: 1 });

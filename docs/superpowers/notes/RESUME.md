@@ -1,6 +1,6 @@
 # RESUME — where we are & how to continue
 
-_Last updated: 2026-07-04 (mid Slice 3f)_
+_Last updated: 2026-07-05 (Slice 3f functionally complete on its branch; 188 tests green)_
 
 ## Project
 Network documentation platform (rack builder). Next.js 16 + Supabase (local via Docker +
@@ -30,23 +30,52 @@ Everything stacks; each branch is based on the previous:
 - ✅ Slice 3e (rendering/layout fixes) — fit-to-window scaling (SVG+overlay in one `transform:scale`
   container, pointer input ÷ scale, `toDevicePos` helper); default body width 17.5″ (ears+holes);
   palette Port Types + Elements sections (Text/Icon inert); blue tile selection box.
-- 🚧 Slice 3f (IN PROGRESS): **bidirectional chevrons DONE** (commit 6cfa80f, browser-verified) —
-  `removeColumn`/`removeRow` (floor 1); chevron drag signed (round(dist/step), clamp −(initial−1));
-  drag right/down adds, left/up removes, plain click adds one; scale-aware.
+- ✅ Slice 3f (functionally COMPLETE on branch `phase-2a-slice-3f`, NOT PR'd; 188 tests green,
+  typecheck clean, all browser-verified). A long interactive-polish session landed everything below.
 
-## Slice 3f — remaining (approved design, NOT built; no spec/plan doc yet)
-1. **Override propagation + index remap.** Adding a row/column should copy the flip/labelPos/media
-   state so new ports match the existing pattern; and fix `portOverrides` (keyed by `row*cols+col`)
-   scrambling when `cols`/`rows` change — now critical since add/remove shifts indices.
-2. **Per-port type replace.** Select a port + click a palette port type → change JUST that port's
-   media via a per-port override (`portOverrides[i].media` + default connectorType); groups can mix
-   port types (Faceplate already renders per-cell `cell.media`, so mostly a layout/settings change).
+## Slice 3f — everything done this session (all uncommitted work is committed on the branch)
+UI/layout polish (mostly `RackDeviceEditor.tsx` / `EditorCanvas.tsx`):
+- Aligned editor to the approved mockup (`editor-window-restored.html`): modal `max-w-[1000px]`,
+  Port Types 5×2 grid, unified settings box (group left + dashed port panel right).
+- Screw holes: 4 CORNER holes only (`screwHoles` no longer per-U), pinned a constant `SCREW_EDGE_INSET_PX=18`
+  from the outer edge regardless of width.
+- Width capped at `MAX_BODY_WIDTH_IN=17.5` (domain `isValidWidthIn`, frameDims clamp, input `max` + ±0.1 steppers).
+- Device fills canvas width (CANVAS_PAD split X=0/Y=16); scale off a CONSTANT ref width so toggling Rack
+  Mounted doesn't move the device (stays centered, no vertical shift). Modal top-anchored (`items-start py-[6vh]`)
+  so it grows DOWN, not from center.
+- Custom dropdowns: `BrandPicker.tsx` (add/delete brands in-menu; "Generic" default protected via `PROTECTED_BRAND_NAME`)
+  and generic `Select.tsx` (Device type + Rack units). Brand delete stack: `deleteBrand` repo + `deleteBrandAction`.
+  Device type list puts "Other" last.
+- Palette: Elements = Text/Icon/Shapes/Lines (2×2, inert, 18px icons matching Port Types). Snap-to-grid ICON
+  toggle (grey off / blue on, functional state only) + Rotate icon in a column between Elements and the
+  Front/Back + Rack Mounted toggles; row `justify-between` for even spacing; toggles trimmed to `h-9`;
+  Rack Mounted got a sliding white knob; Front/Back got a sliding black indicator.
+- Selection controls (chevrons + spacing handle) only show on hover of the group box (Tailwind `group`/`group-hover`,
+  `opacity-0`+`pointer-events-none`); chevrons use SVG glyphs centered; cursors ew/ns/nwse-resize.
+- Blue selection box CLAMPED to the device BODY (never touches ears) via a separate `selection-box` div +
+  clamped chevron/handle positions; move-drag clamps liveX. **Placement reserves `SEL_PAD`** (moved to
+  portGroupOps, imported by EditorCanvas) so the box keeps full padding — single-col ports stay CENTERED,
+  ports never touch the edge (findFreePosition + maxSpacing now inset by SEL_PAD).
+- Ports+labels move WITH the box during a move (pure Faceplate `movePreview` hint, like `highlight`).
+- Spacing handle FOLLOWS the cursor: col spacing ÷(cols-1), row spacing ×2/(rows-1) (centered growth).
+- `no-select-ui` class (globals.css) disables text selection in the editor except inputs.
 
-Write a 3f spec+plan (the brainstorm is done — decisions above are settled), then subagent-driven.
+Model/behavior (the two original 3f items — NOW DONE):
+- Override propagation + index remap: `growOverrides`/`shrinkOverrides` in portGroupOps remap `portOverrides`
+  (row-major `row*cols+col`) on add/remove col/row, and NEW ports inherit orientation (flip+rotation) + label
+  of the adjacent col/row (NOT name). Port rotation (`portOverrides[i].rotation`, 180° per click via the Rotate
+  button) added + rendered by Faceplate.
+- Per-port TYPE replace: `setPortMedia` (`portOverrides[i].media` + default connectorType). Select a port then
+  click a palette type, OR drag a type onto a port (blue hover highlight via Faceplate `highlight`, hit-test
+  `portAt` in EditorCanvas). PortSettings shows a "Connector (Type)" picker when a port's type is overridden.
+- 3+ row groups: all labels default to BOTTOM + `addRow` seeds `LABEL_H` row spacing so labels don't overlap
+  (2-row keeps top/bottom split).
+
+Spec/plan for 3f: `docs/superpowers/{specs,plans}/2026-07-05-...-slice-3f-override-propagation-and-per-port-type*`.
 
 ## Next steps (in order)
-1. Finish Slice 3f (the 2 items above).
-2. Open the PR stack: push + PR 3d (base 3c), 3e (base 3d), 3f (base 3e). Then merge bottom-up
+1. Slice 3f is done — do a whole-branch review, then open the PR stack: push + PR 3d (base 3c), 3e (base 3d),
+   3f (base 3e). Then merge bottom-up
    #2→#3→#4→#5→3d→3e→3f (each auto-retargets to `main` as its base merges).
 3. Slice 4 — Text/Icon ELEMENTS: drag the (currently inert) Text/Icon palette chips onto the grid;
    render `Face.elements` (Faceplate ignores them today). See Phase 2a spec §4.7.

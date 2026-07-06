@@ -24,7 +24,7 @@ describe("RackDeviceEditor", () => {
     render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
     expect(screen.getByLabelText(/name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/device type/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/width/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/width \(in\)/i)).toBeInTheDocument();
     expect(screen.getByTestId("faceplate-svg")).toBeInTheDocument();
   });
 
@@ -35,7 +35,8 @@ describe("RackDeviceEditor", () => {
     const save = screen.getByTestId("editor-save");
     expect(save).toBeDisabled();
     await user.type(screen.getByLabelText(/name/i), "48-port");
-    await user.selectOptions(screen.getByLabelText(/device type/i), "t1");
+    await user.click(screen.getByTestId("device-type-trigger"));
+    await user.click(screen.getByRole("option", { name: "Switch" }));
     expect(save).toBeEnabled();
     await user.click(save);
     expect(onSave).toHaveBeenCalledTimes(1);
@@ -84,7 +85,7 @@ describe("RackDeviceEditor", () => {
     expect(screen.getAllByTestId("port-cell")).toHaveLength(3);
   });
 
-  it("adds and selects a brand via + Add brand", async () => {
+  it("adds a brand from inside the dropdown", async () => {
     const user = userEvent.setup();
     const onCreateBrand = vi.fn(async (name: string): Promise<BrandRow> => ({
       id: "b2", organization_id: "o", name, created_at: "",
@@ -92,10 +93,40 @@ describe("RackDeviceEditor", () => {
     render(
       <RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} onCreateBrand={onCreateBrand} />,
     );
-    await user.click(screen.getByRole("button", { name: /add brand/i }));
+    await user.click(screen.getByTestId("brand-trigger")); // open dropdown
+    await user.click(screen.getByTestId("brand-add"));      // reveal the inline input
     await user.type(screen.getByTestId("brand-add-input"), "Juniper");
     await user.click(screen.getByTestId("brand-add-confirm"));
     expect(onCreateBrand).toHaveBeenCalledWith("Juniper");
+  });
+
+  it("deletes a brand from a row inside the dropdown", async () => {
+    const user = userEvent.setup();
+    const onDeleteBrand = vi.fn(async () => true);
+    render(
+      <RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} onDeleteBrand={onDeleteBrand} />,
+    );
+    await user.click(screen.getByTestId("brand-trigger")); // open dropdown
+    expect(screen.getByRole("option", { name: "Cisco" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /delete cisco/i }));
+    expect(onDeleteBrand).toHaveBeenCalledWith("b1");
+    // the row disappears from the still-open menu
+    expect(screen.queryByRole("option", { name: "Cisco" })).toBeNull();
+  });
+
+  it("does not offer a delete button for the protected Generic brand", async () => {
+    const user = userEvent.setup();
+    const withGeneric: BrandRow[] = [
+      { id: "b1", organization_id: "o", name: "Cisco", created_at: "" },
+      { id: "bg", organization_id: "o", name: "Generic", created_at: "" },
+    ];
+    render(
+      <RackDeviceEditor mode="create" types={types} brands={withGeneric} onSave={noop} onCancel={noop} onDeleteBrand={vi.fn(async () => true)} />,
+    );
+    await user.click(screen.getByTestId("brand-trigger"));
+    expect(screen.getByRole("option", { name: "Generic" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete generic/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /delete cisco/i })).toBeInTheDocument();
   });
 
   it("Cancel calls onCancel", async () => {
@@ -189,6 +220,33 @@ describe("RackDeviceEditor — per-port editing", () => {
     fireEvent.click(screen.getByTestId("group-box-g"));
     fireEvent.click(screen.getByTestId("port-target-1"));
     expect(screen.getByTestId("port-settings")).toBeInTheDocument();
+  });
+
+  it("the rotate button rotates the selected port icon 180° (disabled with no port)", () => {
+    withGroup();
+    const rotate = screen.getByTestId("rotate-element");
+    expect(rotate).toBeDisabled(); // nothing selected yet
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    expect(rotate).toBeEnabled();
+    const glyph = () => screen.getAllByTestId("port-cell")[0].querySelector("g[transform]")?.getAttribute("transform") ?? "";
+    expect(glyph()).not.toContain("rotate(180");
+    fireEvent.click(rotate);
+    expect(glyph()).toContain("rotate(180");
+    fireEvent.click(rotate); // 180 + 180 = back to 0
+    expect(glyph()).not.toContain("rotate(180");
+  });
+
+  it("clicking empty canvas space deselects the group and port", () => {
+    withGroup();
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-1"));
+    expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("port-settings")).toBeInTheDocument();
+    // click empty palette space (the "Port Types" label) — both selections clear
+    fireEvent.click(screen.getByText("Port Types"));
+    expect(screen.queryByTestId("pg-settings")).toBeNull();
+    expect(screen.queryByTestId("port-settings")).toBeNull();
   });
 
   it("typing a port name updates the rendered label", async () => {

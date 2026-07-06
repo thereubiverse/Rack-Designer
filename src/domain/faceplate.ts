@@ -34,7 +34,7 @@ export interface PortGroup {
   gridY: number;
   colSpacing: number;
   rowSpacing: number;
-  portOverrides: Record<number, { name?: string; flipped?: boolean; labelPos?: "top" | "bottom" }>;
+  portOverrides: Record<number, { name?: string; flipped?: boolean; labelPos?: "top" | "bottom"; rotation?: number; media?: Media; connectorType?: string }>;
 }
 
 export interface TextElement {
@@ -70,8 +70,11 @@ export function emptyFace(): Face {
   return { portGroups: [], elements: [] };
 }
 
+/** Max device body width — a rack device never exceeds this (rails are 19", ears fill the rest). */
+export const MAX_BODY_WIDTH_IN = 17.5;
+
 export function isValidWidthIn(n: number): boolean {
-  return typeof n === "number" && n > 0 && n <= 30;
+  return typeof n === "number" && n > 0 && n <= MAX_BODY_WIDTH_IN;
 }
 
 export function isValidRackUnits(n: number): boolean {

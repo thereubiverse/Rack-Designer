@@ -49,6 +49,12 @@ export async function createBrand(db: SupabaseClient, input: { name: string }): 
   return data as BrandRow;
 }
 
+// Devices referencing this brand have brand_id set to null (FK on delete set null).
+export async function deleteBrand(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("brands").delete().eq("id", id);
+  if (error) throw new Error(`deleteBrand: ${error.message}`);
+}
+
 interface TemplateJoinRow {
   id: string; name: string; rack_units: number; width_in: number; rack_mounted: boolean;
   brands: { name: string } | null;

@@ -172,10 +172,12 @@ describe("EditorCanvas spacing handle", () => {
     );
     const handle = getByTestId("spacing-handle");
     fireEvent.pointerDown(handle, { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 130, clientY: 100 }); // +30 horizontal
+    fireEvent.pointerMove(window, { clientX: 130, clientY: 100 }); // handle follows cursor +30
     expect(onSpacing).toHaveBeenCalled();
     const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
-    expect(last.colSpacing).toBeCloseTo(30, 5);
+    // cursor moved +30; the box widens by (cols-1)=2 per unit of spacing, so the
+    // handle tracks the cursor when colSpacing = 30/2 = 15.
+    expect(last.colSpacing).toBeCloseTo(15, 5);
     fireEvent.pointerUp(window, { clientX: 130, clientY: 100 });
   });
 
@@ -240,21 +242,13 @@ describe("EditorCanvas chevron drag (3d)", () => {
   });
 });
 
-describe("EditorCanvas port tile selection box (3e)", () => {
-  it("renders a blue tile box for the selected port only", () => {
-    const { queryByTestId, rerender } = render(
-      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onSelectPort={() => {}} />,
-    );
-    expect(queryByTestId("port-select-box")).toBeNull();
-    rerender(
+describe("EditorCanvas port selection (recolor only, no box)", () => {
+  it("never renders a per-port selection box — port selection is the blue recolor only", () => {
+    const { queryByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
         selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
     );
-    const box = queryByTestId("port-select-box");
-    expect(box).not.toBeNull();
-    expect(box!.getAttribute("style")).toContain("#2d5bff");
-    expect(box!.style.pointerEvents).toBe("none");
+    expect(queryByTestId("port-select-box")).toBeNull();
   });
 });
 

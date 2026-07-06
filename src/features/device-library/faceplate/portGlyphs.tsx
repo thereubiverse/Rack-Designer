@@ -8,6 +8,11 @@ export interface GlyphSpec {
   body: ReactNode;
 }
 
+// Fixed slot height for palette chips so every chip lands the same height and
+// matches the Elements chips. Matches the 18px Elements icons; the one glyph that
+// is taller (ps2 = 20) overflows ~1px into the chip padding, which is harmless.
+export const GLYPH_SLOT_H = 18;
+
 // Our own original, connector-accurate glyphs. Each is authored so that at
 // width=GLYPH_W it reads unmistakably as its connector while every glyph keeps
 // the same rendered width. currentColor drives the fill.
@@ -136,12 +141,17 @@ export const PORT_GLYPHS: Record<Media, GlyphSpec> = {
   },
 };
 
-/** Standalone glyph at normalized width (palette chips + faceplate cells). */
+/**
+ * Standalone glyph at normalized width, centered in a fixed-height slot so every
+ * palette chip is the same size regardless of the glyph's natural height.
+ */
 export function PortGlyph({ media }: { media: Media }) {
   const spec = PORT_GLYPHS[media];
   return (
-    <svg width={GLYPH_W} height={spec.height} viewBox={spec.viewBox}>
-      {spec.body}
-    </svg>
+    <span style={{ display: "flex", width: GLYPH_W, height: GLYPH_SLOT_H, alignItems: "center", justifyContent: "center" }}>
+      <svg width={GLYPH_W} height={spec.height} viewBox={spec.viewBox} style={{ display: "block" }}>
+        {spec.body}
+      </svg>
+    </span>
   );
 }

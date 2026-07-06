@@ -8,7 +8,7 @@ import { RackDeviceEditor } from "./RackDeviceEditor";
 import type { DeviceDraft } from "./useDeviceDraft";
 import {
   saveNewDeviceTemplateAction, saveDeviceTemplateAction,
-  getDeviceTemplateAction, createBrandAction,
+  getDeviceTemplateAction, createBrandAction, deleteBrandAction,
 } from "../actions";
 
 type EditingState =
@@ -85,6 +85,10 @@ export function EditorLauncher({
           onCreateBrand={async (name) => {
             const res = await createBrandAction(name);
             return res.ok && res.brand ? res.brand : null;
+          }}
+          onDeleteBrand={async (id) => {
+            const res = await deleteBrandAction(id);
+            return res.ok;
           }}
         />
       )}

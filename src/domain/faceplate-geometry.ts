@@ -1,5 +1,6 @@
 // Pure rack-mount geometry for the SVG faceplate renderer. No React, no I/O.
 // Reused unchanged by the Phase 2b rack view.
+import { MAX_BODY_WIDTH_IN } from "./faceplate";
 
 export const RAIL_WIDTH_IN = 19;   // EIA 19" rack rail-to-rail width
 export const U_HEIGHT_IN = 1.75;   // one rack unit
@@ -8,6 +9,7 @@ export const CELL_W = 24;          // uniform port cell width (px)
 export const ROW_H = 24;           // uniform port cell height (px)
 export const GLYPH_W = 20;         // normalized glyph width (px)
 export const LABEL_H = 12;         // vertical strip for a port's number label
+export const SCREW_EDGE_INSET_PX = 18; // screw-hole centre distance from the outer rail edge
 
 /** Ear width (inches) on ONE side: half the gap between body and the rails. */
 export function earWidthIn(bodyWidthIn: number, rackMounted: boolean): number {
@@ -32,7 +34,7 @@ export function frameDims(opts: {
   rackMounted: boolean;
 }): FrameDims {
   const { widthIn, rackUnits, rackMounted } = opts;
-  const bodyWidthIn = rackMounted ? Math.min(widthIn, RAIL_WIDTH_IN) : widthIn;
+  const bodyWidthIn = Math.min(widthIn, MAX_BODY_WIDTH_IN);
   const ear = earWidthIn(bodyWidthIn, rackMounted);
   const frameWidthIn = rackMounted ? RAIL_WIDTH_IN : bodyWidthIn;
   const heightIn = U_HEIGHT_IN * rackUnits;
@@ -55,21 +57,21 @@ export interface ScrewHole {
 
 /**
  * Screw holes pinned near the outer rail edges so they line up on the rack
- * regardless of body width. 2 holes per U per ear (top & bottom third of each
- * U). Returns [] when there are no ears.
+ * regardless of body width. 2 holes per ear — near the top & bottom corners of
+ * the whole faceplate (not repeated per U). Returns [] when there are no ears.
  */
-export function screwHoles(dims: FrameDims, rackUnits: number): ScrewHole[] {
+export function screwHoles(dims: FrameDims, _rackUnits: number): ScrewHole[] {
   if (dims.earWidthPx <= 0) return [];
-  const leftX = dims.earWidthPx / 2;
-  const rightX = dims.frameWidthPx - dims.earWidthPx / 2;
-  const uPx = U_HEIGHT_IN * PX_PER_IN;
+  // Fixed distance from the outer rail edge regardless of body width, clamped so a
+  // thin ear (wide body) still keeps the hole centred inside it.
+  const inset = Math.min(SCREW_EDGE_INSET_PX, dims.earWidthPx / 2);
+  const leftX = inset;
+  const rightX = dims.frameWidthPx - inset;
+  const edge = U_HEIGHT_IN * PX_PER_IN * 0.16; // inset from each edge (matches the 1U look)
   const holes: ScrewHole[] = [];
   for (const cx of [leftX, rightX]) {
-    for (let u = 0; u < rackUnits; u++) {
-      const top = u * uPx;
-      holes.push({ cx, cy: top + uPx * 0.28 });
-      holes.push({ cx, cy: top + uPx * 0.72 });
-    }
+    holes.push({ cx, cy: edge });
+    holes.push({ cx, cy: dims.heightPx - edge });
   }
   return holes;
 }
@@ -116,6 +118,7 @@ export interface LaidOutPort {
   label: string;
   labelPos: "top" | "bottom";
   flipped: boolean;
+  rotation: number;
   media: Media;
   connectorType: string;
 }
@@ -144,8 +147,12 @@ export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGro
     const override = group.portOverrides[index];
     const number = seq[index];
     const label = override?.name ?? `${group.idPrefix}${pad2(number)}`;
-    const labelPos: "top" | "bottom" =
-      override?.labelPos ?? (group.rows > 1 && row === group.rows - 1 ? "bottom" : "top");
+    // Default label side: a 2-row group keeps the common top/bottom split; a dense
+    // (3+ row) group puts every label on the bottom so they don't collide — spacing
+    // (added on the third row) gives each one room. A single row labels on top.
+    const defaultLabelPos: "top" | "bottom" =
+      group.rows >= 3 ? "bottom" : group.rows === 2 && row === group.rows - 1 ? "bottom" : "top";
+    const labelPos: "top" | "bottom" = override?.labelPos ?? defaultLabelPos;
     cells.push({
       index,
       row,
@@ -156,8 +163,9 @@ export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGro
       label,
       labelPos,
       flipped: override?.flipped ?? false,
-      media: group.media,
-      connectorType: group.connectorType,
+      rotation: override?.rotation ?? 0,
+      media: override?.media ?? group.media,
+      connectorType: override?.connectorType ?? group.connectorType,
     });
   }
   const width = group.cols * CELL_W + Math.max(0, group.cols - 1) * group.colSpacing;

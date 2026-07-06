@@ -38,6 +38,13 @@ export interface HighlightPort {
   portIndex: number;
 }
 
+// Live drag hint: shift one group's glyphs + labels horizontally by offsetX so they
+// track the selection box while it's being moved (editor only; 0/undefined otherwise).
+export interface MovePreview {
+  groupId: string;
+  offsetX: number;
+}
+
 function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boolean }) {
   const spec = PORT_GLYPHS[cell.media];
   const gx = cell.x + CELL_W / 2; // glyph horizontal center
@@ -59,7 +66,7 @@ function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boole
         {cell.label}
       </text>
       <g
-        transform={`translate(${gx - GLYPH_W / 2}, ${gy - spec.height / 2})${
+        transform={`${cell.rotation ? `rotate(${cell.rotation}, ${gx}, ${gy}) ` : ""}translate(${gx - GLYPH_W / 2}, ${gy - spec.height / 2})${
           cell.flipped ? ` translate(0, ${spec.height}) scale(1, -1)` : ""
         }`}
         color={glyphColor}
@@ -72,7 +79,7 @@ function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boole
   );
 }
 
-export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | null) {
+export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | null, movePreview?: MovePreview | null) {
   const dims = frameDims(opts);
   const holes = screwHoles(dims, opts.rackUnits);
   const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
@@ -116,15 +123,19 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
       ))}
       {/* body / grid (centered by the ear offset) */}
       <g data-testid="faceplate-body" transform={`translate(${dims.earWidthPx}, 0)`}>
-        {groups.flatMap((g) =>
-          g.cells.map((cell) => (
+        {groups.map((g) => {
+          const dx = movePreview?.groupId === g.id ? movePreview.offsetX : 0;
+          const cells = g.cells.map((cell) => (
             <PortCell
               key={`${g.id}-${cell.index}`}
               cell={cell}
               highlighted={highlight?.groupId === g.id && highlight?.portIndex === cell.index}
             />
-          )),
-        )}
+          ));
+          return (
+            <g key={g.id} transform={dx ? `translate(${dx}, 0)` : undefined}>{cells}</g>
+          );
+        })}
       </g>
     </>
   );
@@ -134,8 +145,9 @@ export function Faceplate({
   face,
   side,
   highlight,
+  movePreview,
   ...opts
-}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | null } & FaceplateOptions) {
+}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | null; movePreview?: MovePreview | null } & FaceplateOptions) {
   const dims = frameDims(opts);
   const width = dims.frameWidthPx + (side ? LABEL_GUTTER : 0);
   const height = dims.heightPx;
@@ -147,7 +159,7 @@ export function Faceplate({
       viewBox={`0 0 ${width} ${height}`}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {renderFace(face, opts, highlight)}
+      {renderFace(face, opts, highlight, movePreview)}
       {side && (
         <text
           x={dims.frameWidthPx + LABEL_GUTTER / 2}

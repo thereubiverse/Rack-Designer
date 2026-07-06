@@ -5,7 +5,7 @@ import { emptyFace } from "@/domain/faceplate";
 function input(over: Partial<DeviceTemplateInput> = {}): DeviceTemplateInput {
   return {
     name: "Switch", brandId: null, deviceTypeId: "t1",
-    rackUnits: 1, widthIn: 19, rackMounted: true,
+    rackUnits: 1, widthIn: 17.5, rackMounted: true,
     frontFace: emptyFace(), backFace: emptyFace(),
     ...over,
   };
