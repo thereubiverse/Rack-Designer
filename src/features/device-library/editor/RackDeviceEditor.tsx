@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media } from "@/domain/faceplate";
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
 import { EditorCanvas } from "./EditorCanvas";
-import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup, GRID_PX } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
 import { PortSettings, BatchSettings } from "./PortSettings";
 import { BrandPicker } from "./BrandPicker";
@@ -46,6 +46,31 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [selectedPortIndices, setSelectedPortIndices] = useState<number[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(false); // toggle only for now; snapping wired in a later slice
+  // Live palette drag: a full-size, blue-bordered clone of the chip that follows the cursor
+  // (the native drag image is suppressed). It's anchored to where the cursor grabbed it
+  // (grabDX/grabDY) and matches the source chip's size so it doesn't appear to shrink.
+  const [paletteDrag, setPaletteDrag] = useState<
+    { media: Media; x: number; y: number; grabDX: number; grabDY: number; width: number; height: number } | null
+  >(null);
+  const dragImgRef = useRef<HTMLImageElement | null>(null);
+  function transparentDragImage(): HTMLImageElement {
+    if (!dragImgRef.current) {
+      const img = new Image();
+      img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      dragImgRef.current = img;
+    }
+    return dragImgRef.current;
+  }
+  // While a palette drag is active, keep the clone under the cursor.
+  const paletteDragging = paletteDrag !== null;
+  useEffect(() => {
+    if (!paletteDragging) return;
+    function onDragOver(e: DragEvent) {
+      setPaletteDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d));
+    }
+    document.addEventListener("dragover", onDragOver);
+    return () => document.removeEventListener("dragover", onDragOver);
+  }, [paletteDragging]);
   const dims = frameDims({
     widthIn: draft.widthIn > 0 ? draft.widthIn : 1,
     rackUnits: draft.rackUnits >= 1 ? draft.rackUnits : 1,
@@ -269,13 +294,24 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   const portSelected = singleGroupId != null && singlePortIndex !== null;
                   return (
                     <span key={m} draggable
-                      onDragStart={(e) => e.dataTransfer.setData("text/plain", m)}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", m);
+                        e.dataTransfer.effectAllowed = "move"; // "move" so dropEffect can suppress the "+" badge
+                        e.dataTransfer.setDragImage(transparentDragImage(), 0, 0); // hide the default ghost
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setPaletteDrag({
+                          media: m, x: e.clientX, y: e.clientY,
+                          grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top,
+                          width: rect.width, height: rect.height,
+                        });
+                      }}
+                      onDragEnd={() => setPaletteDrag(null)}
                       onClick={(e) => {
                         if (!portSelected) return;
                         e.stopPropagation(); // keep the port selected so its settings stay shown
                         setActiveFace(setPortMedia(activeFace, singleGroupId!, singlePortIndex!, m));
                       }}
-                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200"}`}
+                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 ${paletteDrag?.media === m ? "opacity-40" : ""} ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200"}`}
                       title={portSelected ? `Set selected port to ${MEDIA_LABELS[m]}` : MEDIA_LABELS[m]}>
                       <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
                     </span>
@@ -354,11 +390,13 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               onSelect={selectGroup}
               onCreate={(media, pos) => {
                 const before = activeFace.portGroups.length;
-                const next = addPortGroup(activeFace, media, pos, bounds);
+                const next = addPortGroup(activeFace, media, pos, bounds, snapToGrid ? GRID_PX : 1);
                 setActiveFace(next);
                 if (next.portGroups.length > before) selectGroup(next.portGroups[next.portGroups.length - 1].id);
               }}
-              onMove={(id, pos) => setActiveFace(movePortGroup(activeFace, id, pos, bounds))}
+              snapToGrid={snapToGrid}
+              paletteDragMedia={paletteDrag?.media ?? null}
+              onMove={(id, target) => setActiveFace(movePortGroup(activeFace, id, target, bounds, { snap: snapToGrid, allowVertical: (draft.rackUnits >= 1 ? draft.rackUnits : 1) >= 2 }))}
               onAddColumn={(id) => setActiveFace((prev) => addColumn(prev, id, bounds))}
               onAddRow={(id) => setActiveFace((prev) => addRow(prev, id, bounds))}
               onRemoveColumn={(id) => setActiveFace((prev) => removeColumn(prev, id))}
@@ -467,6 +505,18 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         {/* consumed so errors object isn't flagged as unused when wired in 3b */}
         <span className="hidden">{Object.values(errors).join("")}</span>
       </div>
+
+      {/* Full-size, blue-bordered clone of the dragged palette chip, anchored to the cursor's
+          grab point so it doesn't jump or shrink when picked up. */}
+      {paletteDrag && (
+        <div
+          data-testid="palette-drag-ghost"
+          className="pointer-events-none fixed z-[1000] flex items-center gap-1 rounded-md border border-blue-500 bg-white px-2 py-1 text-xs text-neutral-800 opacity-80 shadow-md"
+          style={{ left: paletteDrag.x - paletteDrag.grabDX, top: paletteDrag.y - paletteDrag.grabDY, width: paletteDrag.width, height: paletteDrag.height }}
+        >
+          <span className="text-neutral-900"><PortGlyph media={paletteDrag.media} /></span>{MEDIA_LABELS[paletteDrag.media]}
+        </div>
+      )}
     </div>
   );
 }

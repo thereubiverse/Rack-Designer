@@ -43,6 +43,7 @@ export interface HighlightPort {
 export interface MovePreview {
   groupId: string;
   offsetX: number;
+  offsetY?: number;
 }
 
 function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boolean }) {
@@ -126,6 +127,7 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
       <g data-testid="faceplate-body" transform={`translate(${dims.earWidthPx}, 0)`}>
         {groups.map((g) => {
           const dx = movePreview?.groupId === g.id ? movePreview.offsetX : 0;
+          const dy = movePreview?.groupId === g.id ? (movePreview.offsetY ?? 0) : 0;
           const cells = g.cells.map((cell) => (
             <PortCell
               key={`${g.id}-${cell.index}`}
@@ -134,7 +136,7 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
             />
           ));
           return (
-            <g key={g.id} transform={dx ? `translate(${dx}, 0)` : undefined}>{cells}</g>
+            <g key={g.id} transform={dx || dy ? `translate(${dx}, ${dy})` : undefined}>{cells}</g>
           );
         })}
       </g>

@@ -102,6 +102,18 @@ describe("EditorCanvas overlay", () => {
     fireEvent.drop(getByTestId("editor-overlay"), { dataTransfer: { getData: () => "banana" }, clientX: 5, clientY: 5 });
     expect(onCreate).not.toHaveBeenCalled();
   });
+
+  it("shows a drop-preview box while a palette chip is dragged over empty space", () => {
+    const { getByTestId, queryByTestId } = render(
+      <EditorCanvas face={{ portGroups: [], elements: [] }} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onCreate={() => {}} paletteDragMedia="copper" />,
+    );
+    expect(queryByTestId("drop-preview")).toBeNull();
+    fireEvent.dragOver(getByTestId("editor-overlay"), { dataTransfer: { dropEffect: "" }, clientX: 100, clientY: 40 });
+    expect(getByTestId("drop-preview")).toBeInTheDocument();
+    fireEvent.dragLeave(getByTestId("editor-overlay"));
+    expect(queryByTestId("drop-preview")).toBeNull();
+  });
 });
 
 describe("EditorCanvas drag-to-move", () => {
@@ -118,8 +130,24 @@ describe("EditorCanvas drag-to-move", () => {
     expect(onMove).toHaveBeenCalledTimes(1);
     const [id, pos] = onMove.mock.calls[0];
     expect(id).toBe("g1");
-    // group started at gridX 20, gridY 20; moved +40 horizontally (vertical is fixed)
-    expect(pos).toEqual({ x: 60, y: 20 });
+    // group started at gridX 20; moved +40 horizontally. This is a 1U device, so vertical
+    // is fixed → yOffset stays at the group's original offset (0).
+    expect(pos).toEqual({ x: 60, yOffset: 0 });
+  });
+
+  it("on a 2RU device a vertical drag carries a yOffset delta", () => {
+    const onMove = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={2} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onMove={onMove} />,
+    );
+    const box = getByTestId("group-box-g1");
+    fireEvent.pointerDown(box, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 140 }); // straight down 40px
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 140 });
+    expect(onMove).toHaveBeenCalledTimes(1);
+    const [, target] = onMove.mock.calls[0];
+    expect(target.yOffset).toBe(40); // vertical delta carried (allowVertical on 2RU)
   });
 
   it("does not commit a move when the pointer did not move (plain click)", () => {

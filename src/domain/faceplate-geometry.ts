@@ -10,6 +10,8 @@ export const ROW_H = 24;           // uniform port cell height (px)
 export const GLYPH_W = 20;         // normalized glyph width (px)
 export const LABEL_H = 12;         // vertical strip for a port's number label
 export const SCREW_EDGE_INSET_PX = 18; // screw-hole centre distance from the outer rail edge
+export const GRID_IN = 0.25;       // snap-to-grid step (inches)
+export const GRID_PX = PX_PER_IN * GRID_IN; // 12px — and CELL_W/ROW_H (24) & 1U (84) are multiples
 
 /** Ear width (inches) on ONE side: half the gap between body and the rails. */
 export function earWidthIn(bodyWidthIn: number, rackMounted: boolean): number {
@@ -138,8 +140,16 @@ function pad2(n: number): string {
 export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGroup {
   const seq = portSequence(group.rows, group.cols, group.countingDirection);
   const height = group.rows * ROW_H + Math.max(0, group.rows - 1) * group.rowSpacing;
-  // Vertical origin: centered in the device when heightPx is provided, else legacy gridY.
-  const top = heightPx !== undefined ? (heightPx - height) / 2 : group.gridY;
+  // Vertical origin: centered in the device (when heightPx is provided) plus an optional
+  // yOffset for groups dragged up/down on 2RU+ devices, clamped so the stack stays inside
+  // the device. Falls back to legacy gridY when no device height is given.
+  let top: number;
+  if (heightPx !== undefined) {
+    const center = (heightPx - height) / 2;
+    top = Math.max(0, Math.min(center + (group.yOffset ?? 0), Math.max(0, heightPx - height)));
+  } else {
+    top = group.gridY;
+  }
   const cells: LaidOutPort[] = [];
   for (let index = 0; index < group.rows * group.cols; index++) {
     const row = Math.floor(index / group.cols);

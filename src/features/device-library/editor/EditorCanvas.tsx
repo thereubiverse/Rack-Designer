@@ -2,9 +2,9 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
-import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN } from "@/domain/faceplate-geometry";
-import { MEDIA, type Face, type Media } from "@/domain/faceplate";
-import { maxSpacing, wouldOverlapAt, SEL_PAD, type Pos } from "./portGroupOps";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX } from "@/domain/faceplate-geometry";
+import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
+import { maxSpacing, wouldOverlapAt, resolveYOffset, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 
 // Vertical breathing room for the selection box labels + bottom edge controls.
 // Horizontal is 0 so the device spans the full canvas width — the left ear lines
@@ -29,8 +29,11 @@ export interface EditorCanvasProps {
   onAddRow?: (id: string) => void;
   onRemoveColumn?: (id: string) => void;
   onRemoveRow?: (id: string) => void;
-  onMove?: (id: string, pos: Pos) => void;
+  onMove?: (id: string, target: { x: number; yOffset: number }) => void;
   onSpacing?: (id: string, spacing: { colSpacing: number; rowSpacing: number }) => void;
+  snapToGrid?: boolean;
+  /** Media of the palette chip currently being dragged (for the drop-preview box). */
+  paletteDragMedia?: Media | null;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
@@ -68,7 +71,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   }, [scaleRefW]);
 
   const [drag, setDrag] = useState<
-    { id: string; startX: number; startY: number; origX: number; origY: number; dx: number; dy: number } | null
+    { id: string; startX: number; startY: number; origX: number; origY: number; origOffset: number; dx: number; dy: number } | null
   >(null);
 
   useEffect(() => {
@@ -84,7 +87,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
       // Only commit an actual move — a plain select-click (no movement) must not
       // mutate the face (avoids a redundant re-render and off-grid re-snapping).
       if (dx !== 0 || dy !== 0) {
-        props.onMove?.(drag!.id, { x: drag!.origX + dx, y: drag!.origY });
+        // Only carry a vertical delta on devices tall enough to move groups up/down.
+        props.onMove?.(drag!.id, { x: drag!.origX + dx, yOffset: allowVertical ? drag!.origOffset + dy : drag!.origOffset });
       }
       setDrag(null);
     }
@@ -149,6 +153,24 @@ export function EditorCanvas(props: EditorCanvasProps) {
   }, [chevDrag, props]);
 
   const bounds = { width: dims.bodyWidthPx, height: dims.heightPx };
+  // Snap step (12px on, free off) and whether the device is tall enough to drag vertically.
+  const snapStep = props.snapToGrid ? GRID_PX : 1;
+  const allowVertical = rackUnits >= 2;
+  const snapX = (x: number) => (snapStep > 1 ? Math.round(x / snapStep) * snapStep : x);
+
+  // The clamped-to-body selection box for a group, in overlay-local coords. Shared by the
+  // live selection box and the palette drop-preview so they line up exactly.
+  function clampedBox(gridX: number, laidWidth: number, laidTop: number, laidHeight: number) {
+    const rawLeft = earX + gridX - SEL_PAD;
+    const rawTop = laidTop - LABEL_H - SEL_PAD;
+    const rawW = laidWidth + SEL_PAD * 2;
+    const rawH = laidHeight + LABEL_H * 2 + SEL_PAD * 2;
+    const cL = Math.max(0, earX - rawLeft);
+    const cT = Math.max(0, -rawTop);
+    const cR = Math.min(rawW, earX + dims.bodyWidthPx - rawLeft);
+    const cB = Math.min(rawH, dims.heightPx - rawTop);
+    return { left: rawLeft + cL, top: rawTop + cT, width: Math.max(0, cR - cL), height: Math.max(0, cB - cT) };
+  }
   const [spaceDrag, setSpaceDrag] = useState<
     { id: string; startX: number; startY: number; grabCol: number; grabRow: number; maxCol: number; maxRow: number; cols: number; rows: number } | null
   >(null);
@@ -183,6 +205,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
   // Which existing port sits under the cursor (for drag-a-type-onto-a-port).
   const [dragOverPort, setDragOverPort] = useState<{ groupId: string; index: number } | null>(null);
+  // Where a new group would land if the palette chip is dropped on empty space (drop preview).
+  const [dropPreview, setDropPreview] = useState<PortGroup | null>(null);
   function portAt(clientX: number, clientY: number): { groupId: string; index: number } | null {
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect) return null;
@@ -207,8 +231,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
     if (!g) return null;
     const laidW = layoutPortGroup(g, dims.heightPx).width;
     const liveMax = Math.max(SEL_PAD, bounds.width - laidW - SEL_PAD);
-    const liveX = Math.max(SEL_PAD, Math.min(g.gridX + drag.dx, liveMax));
-    return { groupId: g.id, offsetX: liveX - g.gridX };
+    const liveX = Math.max(SEL_PAD, Math.min(snapX(g.gridX + drag.dx), liveMax));
+    const liveOffsetY = allowVertical ? resolveYOffset(g, (g.yOffset ?? 0) + drag.dy, bounds, snapStep) : (g.yOffset ?? 0);
+    return { groupId: g.id, offsetX: liveX - g.gridX, offsetY: liveOffsetY - (g.yOffset ?? 0) };
   })();
 
   return (
@@ -231,14 +256,30 @@ export function EditorCanvas(props: EditorCanvasProps) {
           onClick={() => props.onSelect?.(null, false)}
           onDragOver={(e) => {
             e.preventDefault();
+            e.dataTransfer.dropEffect = "move"; // suppress the native "+" copy badge
             const p = portAt(e.clientX, e.clientY);
-            setDragOverPort((prev) => (prev?.groupId === p?.groupId && prev?.index === p?.index ? prev : p));
+            if (p) {
+              // Over a port → it will be re-typed; show the port highlight, not a drop box.
+              setDragOverPort((prev) => (prev?.groupId === p.groupId && prev?.index === p.index ? prev : p));
+              setDropPreview(null);
+            } else {
+              setDragOverPort(null);
+              // Over empty space → preview where the new group's selection box will land.
+              const media = props.paletteDragMedia;
+              if (media) {
+                const base = phantomGroup(media);
+                // Same step as the real drop: 1px (smooth) when snap is off, 12px when on.
+                const free = findFreePosition(face, base, dropPos(e), bounds, undefined, snapStep);
+                setDropPreview(free ? { ...base, gridX: free.x } : null);
+              }
+            }
           }}
-          onDragLeave={() => setDragOverPort(null)}
+          onDragLeave={() => { setDragOverPort(null); setDropPreview(null); }}
           onDrop={(e) => {
             e.preventDefault();
             const media = e.dataTransfer.getData("text/plain") as Media;
             setDragOverPort(null);
+            setDropPreview(null);
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
             if (p) props.onPortMedia?.(p.groupId, p.index, media); // drop onto a port → change its type
@@ -255,16 +296,21 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const boxTop = laid.top;
             const dragging = drag?.id === g.id;
             // Clamp the live-drag x to the body so the box can't be dragged off the device
-            // (matches the on-drop clamp, so there's no snap-back either).
-            const rawLiveX = dragging ? g.gridX + drag!.dx : g.gridX;
+            // (matches the on-drop clamp, so there's no snap-back either). Snap when the grid
+            // toggle is on so the box jumps to grid lines as you drag.
+            const rawLiveX = dragging ? snapX(g.gridX + drag!.dx) : g.gridX;
             const liveMax = Math.max(SEL_PAD, bounds.width - laid.width - SEL_PAD);
             const liveX = Math.max(SEL_PAD, Math.min(rawLiveX, liveMax));
-            const invalid = dragging && wouldOverlapAt(face, g, { x: liveX, y: g.gridY }, bounds);
+            // Live vertical offset (2RU+ only); box + ports shift by dyVisual during the drag.
+            const liveOffsetY = dragging && allowVertical ? resolveYOffset(g, (g.yOffset ?? 0) + drag!.dy, bounds, snapStep) : (g.yOffset ?? 0);
+            const dyVisual = liveOffsetY - (g.yOffset ?? 0);
+            const liveBoxTop = boxTop + dyVisual;
+            const invalid = dragging && wouldOverlapAt(face, { ...g, yOffset: liveOffsetY }, { x: liveX, y: g.gridY }, bounds);
             // Raw box wraps ports + labels; the visible blue box is clamped to the device
             // BODY (between the ears) so it never touches or spills into the ears — ports
             // may still spread right up to that edge. Coords are local to the raw box origin.
             const rawLeft = (earX + liveX) - SEL_PAD;
-            const rawTop = boxTop - LABEL_H - SEL_PAD;
+            const rawTop = liveBoxTop - LABEL_H - SEL_PAD;
             const rawW = laid.width + SEL_PAD * 2;
             const rawH = laid.height + LABEL_H * 2 + SEL_PAD * 2;
             const bodyLeft = earX;
@@ -285,14 +331,14 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 onPointerDown={(e) => {
                   if (!props.onMove) return;
                   e.stopPropagation();
-                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, dx: 0, dy: 0 });
+                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, origOffset: g.yOffset ?? 0, dx: 0, dy: 0 });
                 }}
                 style={{
                   position: "absolute",
                   // The box wraps the whole group INCLUDING the port labels, so it
                   // never cuts through a top/bottom label: extend by LABEL_H each side.
                   left: (earX + liveX) - SEL_PAD,
-                  top: boxTop - LABEL_H - SEL_PAD,
+                  top: liveBoxTop - LABEL_H - SEL_PAD,
                   width: laid.width + SEL_PAD * 2,
                   height: laid.height + LABEL_H * 2 + SEL_PAD * 2,
                   cursor: props.onMove ? "move" : "pointer",
@@ -308,7 +354,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                       position: "absolute",
                       left: cL, top: cT, width: cW, height: cH,
                       borderRadius: 6,
-                      border: invalid ? "1.5px solid #dc2626" : "1.5px solid #2d5bff",
+                      border: invalid ? "1px solid #dc2626" : "1px solid #2d5bff",
                       background: "rgba(45,91,255,0.06)",
                       pointerEvents: "none",
                     }}
@@ -369,6 +415,25 @@ export function EditorCanvas(props: EditorCanvasProps) {
               </div>
             );
           })}
+          {dropPreview && (() => {
+            const laid = layoutPortGroup(dropPreview, dims.heightPx);
+            const box = clampedBox(dropPreview.gridX, laid.width, laid.top, laid.height);
+            return (
+              <div
+                data-testid="drop-preview"
+                style={{
+                  position: "absolute",
+                  left: box.left, top: box.top, width: box.width, height: box.height,
+                  borderRadius: 6,
+                  border: "1px solid #2d5bff",
+                  background: "rgba(45,91,255,0.06)",
+                  opacity: 0.5,
+                  pointerEvents: "none",
+                  zIndex: 15,
+                }}
+              />
+            );
+          })()}
               </div>
             )}
           </div>
@@ -376,6 +441,14 @@ export function EditorCanvas(props: EditorCanvasProps) {
       </div>
     </div>
   );
+}
+
+/** A minimal 1×1 group of `media`, used only to size/place the palette drop-preview box. */
+function phantomGroup(media: Media): PortGroup {
+  return {
+    id: "drop-preview", media, connectorType: "", idPrefix: "", countingDirection: "ltr",
+    rows: 1, cols: 1, gridX: 0, gridY: 0, colSpacing: 0, rowSpacing: 0, portOverrides: {},
+  };
 }
 
 export function toDevicePos(

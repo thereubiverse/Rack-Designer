@@ -23,13 +23,21 @@ describe("groupBounds", () => {
 describe("wouldOverlap", () => {
   const face: Face = { portGroups: [group({ id: "a", gridX: 0, gridY: 0 })], elements: [] };
   it("detects an overlapping candidate", () => {
-    expect(wouldOverlap(face, group({ id: "b", gridX: 10, gridY: 0 }))).toBe(true);
+    expect(wouldOverlap(face, group({ id: "b", gridX: 10, gridY: 0 }), bounds)).toBe(true);
   });
   it("clears a non-overlapping candidate", () => {
-    expect(wouldOverlap(face, group({ id: "b", gridX: 40, gridY: 0 }))).toBe(false);
+    expect(wouldOverlap(face, group({ id: "b", gridX: 40, gridY: 0 }), bounds)).toBe(false);
   });
   it("excludes the group itself by id", () => {
-    expect(wouldOverlap(face, group({ id: "a", gridX: 0, gridY: 0 }), "a")).toBe(false);
+    expect(wouldOverlap(face, group({ id: "a", gridX: 0, gridY: 0 }), bounds, "a")).toBe(false);
+  });
+  it("clears a same-column candidate that is vertically separated (2RU)", () => {
+    // two 1-row groups on a 2U (168px) device: one pushed to the top, one to the bottom,
+    // both at gridX 0 → same column but no vertical overlap.
+    const twoU: GridBounds = { width: 400, height: 168 };
+    const top = group({ id: "a", gridX: 0, yOffset: -60 });
+    const faceTop: Face = { portGroups: [top], elements: [] };
+    expect(wouldOverlap(faceTop, group({ id: "b", gridX: 0, yOffset: 60 }), twoU)).toBe(false);
   });
 });
 
@@ -48,7 +56,7 @@ describe("findFreePosition", () => {
     const face: Face = { portGroups: [group({ id: "a", gridX: 0, gridY: 0 })], elements: [] };
     const free = findFreePosition(face, group({ id: "b" }), { x: 0, y: 0 }, bounds, "b");
     expect(free).not.toBeNull();
-    expect(wouldOverlap(face, group({ id: "b", gridX: free!.x, gridY: free!.y }), "b")).toBe(false);
+    expect(wouldOverlap(face, group({ id: "b", gridX: free!.x, gridY: free!.y }), bounds, "b")).toBe(false);
   });
   it("returns null when the grid is full", () => {
     // a single 1x1 cell grid fully occupied
@@ -76,7 +84,13 @@ describe("addPortGroup", () => {
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds);
     const next = addPortGroup(face, "copper", { x: 0, y: 0 }, bounds);
     expect(next.portGroups).toHaveLength(2);
-    expect(wouldOverlap({ portGroups: [next.portGroups[0]], elements: [] }, next.portGroups[1])).toBe(false);
+    expect(wouldOverlap({ portGroups: [next.portGroups[0]], elements: [] }, next.portGroups[1], bounds)).toBe(false);
+  });
+  it("respects the snap step: free (1px) vs the 12px grid", () => {
+    const free = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 33, y: 0 }, bounds, 1).portGroups[0];
+    expect(free.gridX).toBe(33); // step 1 → no snapping
+    const grid = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 17, y: 0 }, bounds, 12).portGroups[0];
+    expect(grid.gridX).toBe(12); // 17 → nearest 12px line
   });
   it("cancels (no group added) when the grid is full", () => {
     const tiny: GridBounds = { width: 24, height: 24 };
@@ -91,9 +105,35 @@ describe("movePortGroup", () => {
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds);
     const id = face.portGroups[0].id;
     const gridYBefore = face.portGroups[0].gridY;
-    // 104 is already on the 8px grid, so it passes through unchanged
-    const next = movePortGroup(face, id, { x: 104, y: 32 }, bounds);
+    // 104 is on the 8px grid; free-move (no snap opts) passes x through unchanged
+    const next = movePortGroup(face, id, { x: 104 }, bounds);
     expect(next.portGroups[0]).toMatchObject({ gridX: 104, gridY: gridYBefore });
+  });
+
+  it("with snap on, snaps x to the 12px (0.25\") grid", () => {
+    const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, bounds);
+    const id = face.portGroups[0].id;
+    const next = movePortGroup(face, id, { x: 17 }, bounds, { snap: true });
+    expect(next.portGroups[0].gridX).toBe(12); // 17 → nearest 12px grid line
+  });
+
+  it("does not move vertically unless allowVertical is set", () => {
+    const twoU: GridBounds = { width: 400, height: 168 };
+    const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, twoU);
+    const id = face.portGroups[0].id;
+    const next = movePortGroup(face, id, { x: 0, yOffset: 60 }, twoU, { snap: true });
+    expect(next.portGroups[0].yOffset ?? 0).toBe(0); // vertical ignored
+  });
+
+  it("with allowVertical, sets a snapped yOffset clamped inside the device", () => {
+    const twoU: GridBounds = { width: 400, height: 168 };
+    const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, twoU);
+    const id = face.portGroups[0].id;
+    // push far down: a 1-row (24px) group in 168px height centers at top 72; max top = 144.
+    const next = movePortGroup(face, id, { x: 0, yOffset: 999 }, twoU, { snap: true, allowVertical: true });
+    const g = next.portGroups[0];
+    // clamped so the icon top sits at 144 (a 12px grid line) → offset = 144 - 72 = 72
+    expect(g.yOffset).toBe(72);
   });
 });
 
@@ -347,15 +387,15 @@ describe("wouldOverlapAt", () => {
   });
 });
 
-describe("horizontal-only collision (3d)", () => {
-  it("two groups overlap when their x-ranges overlap regardless of rows", () => {
-    // a: 1 row at x0 (width 24); b: 2 rows at x10 → x-ranges overlap → collision
+describe("collision — 2D but centered groups collide on x-overlap", () => {
+  it("two centered groups overlap when their x-ranges overlap regardless of rows", () => {
+    // a: 1 row at x0 (width 24); b: 2 rows at x10 → x-ranges overlap; both centered → collision
     const face: Face = { portGroups: [group({ id: "a", gridX: 0, rows: 1 })], elements: [] };
-    expect(wouldOverlap(face, group({ id: "b", gridX: 10, rows: 2 }))).toBe(true);
+    expect(wouldOverlap(face, group({ id: "b", gridX: 10, rows: 2 }), bounds)).toBe(true);
   });
   it("no overlap when x-ranges are clear", () => {
     const face: Face = { portGroups: [group({ id: "a", gridX: 0 })], elements: [] };
-    expect(wouldOverlap(face, group({ id: "b", gridX: 40 }))).toBe(false);
+    expect(wouldOverlap(face, group({ id: "b", gridX: 40 }), bounds)).toBe(false);
   });
 });
 
@@ -364,7 +404,7 @@ describe("movePortGroup is horizontal-only (3d)", () => {
     const face = addPortGroup({ portGroups: [], elements: [] }, "copper", { x: 0, y: 0 }, { width: 400, height: 84 });
     const id = face.portGroups[0].id;
     const before = face.portGroups[0].gridY;
-    const next = movePortGroup(face, id, { x: 104, y: 999 }, { width: 400, height: 84 });
+    const next = movePortGroup(face, id, { x: 104 }, { width: 400, height: 84 });
     expect(next.portGroups[0].gridX).toBe(104);
     expect(next.portGroups[0].gridY).toBe(before);
   });

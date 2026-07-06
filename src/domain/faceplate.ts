@@ -32,6 +32,10 @@ export interface PortGroup {
   cols: number;
   gridX: number;
   gridY: number;
+  // Signed vertical offset (px) from the auto-centered position. Undefined/0 = centered
+  // (default; every existing device). Only set on 2RU+ devices where the group can be
+  // dragged up/down. Clamped by layout so the port stack stays inside the device.
+  yOffset?: number;
   colSpacing: number;
   rowSpacing: number;
   portOverrides: Record<number, { name?: string; flipped?: boolean; labelPos?: "top" | "bottom"; rotation?: number; media?: Media; connectorType?: string }>;

@@ -320,6 +320,21 @@ describe("RackDeviceEditor — palette sections (3e)", () => {
   });
 });
 
+describe("RackDeviceEditor — palette drag ghost", () => {
+  const dt = { setData() {}, setDragImage() {}, effectAllowed: "" };
+  it("shows a floating chip clone while dragging and removes it on drop/end", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    const chip = screen.getByTitle("Copper");
+    expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
+    fireEvent.dragStart(chip, { clientX: 100, clientY: 100, dataTransfer: dt });
+    const ghost = screen.getByTestId("palette-drag-ghost");
+    expect(ghost).toHaveTextContent("Copper");
+    expect(chip.className).toContain("opacity-40"); // source dims while dragging
+    fireEvent.dragEnd(chip);
+    expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
+  });
+});
+
 describe("RackDeviceEditor — multi-select (shift+click)", () => {
   // Two non-overlapping 2-port groups so both single- and multi-group paths are testable.
   const twoGroupFace: Face = {

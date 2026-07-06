@@ -191,6 +191,16 @@ describe("layoutPortGroup — vertical centering & labelPos", () => {
     expect(laid.top).toBeCloseTo(30, 5);
     expect(laid.cells[0].y).toBeCloseTo(30, 5);
   });
+  it("applies yOffset to shift the stack off-center (2RU)", () => {
+    // 168px (2U), single row centers at 72; yOffset -60 → top 12
+    const laid = layoutPortGroup(g({ yOffset: -60 }), 168);
+    expect(laid.top).toBeCloseTo(12, 5);
+  });
+  it("clamps yOffset so the stack stays inside the device", () => {
+    // 168px, single row (24px): max top = 168-24 = 144, so a huge offset clamps there
+    expect(layoutPortGroup(g({ yOffset: 999 }), 168).top).toBeCloseTo(144, 5);
+    expect(layoutPortGroup(g({ yOffset: -999 }), 168).top).toBeCloseTo(0, 5);
+  });
   it("centers a two-row group symmetric about center", () => {
     // 2 rows, rowSpacing 0 → height 48, top = (84-48)/2 = 18; row1 y = 18, row2 y = 18+24 = 42
     const laid = layoutPortGroup(g({ rows: 2, cols: 1 }), 84);
