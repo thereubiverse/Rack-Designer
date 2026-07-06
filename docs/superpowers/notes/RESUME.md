@@ -43,6 +43,20 @@ Everything stacks; each branch is based on the previous:
      key. New pure ops `patchPorts`/`rotatePorts`/`deletePortGroups`; `Faceplate.highlight` accepts
      an array; selection state is now `selectedGroupIds[]` + `selectedPortIndices[]`.
      Spec: `docs/superpowers/specs/2026-07-06-rack-builder-editor-multi-select-design.md`.
+- ✅ **Snap-to-grid + vertical placement + palette drag ghost (2026-07-06, commit `40608ad`, 213 tests,
+  NOT pushed):**
+  1. **Snap-to-grid** — the toggle now governs group dragging: 0.25in (12px) grid, snapped from the port
+     icon; free (1px) when off. New-group drop + drop-preview respect it too. Grid constant `GRID_PX` in
+     faceplate-geometry.
+  2. **Vertical group placement** — new optional `PortGroup.yOffset` (backward-compatible, centered when
+     unset); groups drag up/down on **2RU+** devices (1RU auto-centered). `layoutPortGroup` clamps it;
+     collision is now **2D (AABB)** so groups can share an X column when vertically separated. New pure
+     `resolveYOffset`; `movePortGroup(target,{snap,allowVertical})`.
+  3. **Selection box** thinned to **1px** (matches chevron circles).
+  4. **Palette drag ghost** — dragging a port type shows a full-size, 80%-opacity chip clone anchored to
+     the grab point (native drag image + "+" badge suppressed); over empty device space a **50%-opacity
+     drop-preview box** shows where the new group lands (shared `clampedBox`); over a port → port highlight.
+  NO spec doc written for this one yet.
 
 ## Slice 3f — everything done this session (all uncommitted work is committed on the branch)
 UI/layout polish (mostly `RackDeviceEditor.tsx` / `EditorCanvas.tsx`):
