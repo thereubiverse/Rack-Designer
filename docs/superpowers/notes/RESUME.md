@@ -32,6 +32,17 @@ Everything stacks; each branch is based on the previous:
   palette Port Types + Elements sections (Text/Icon inert); blue tile selection box.
 - ✅ Slice 3f (functionally COMPLETE on branch `phase-2a-slice-3f`, NOT PR'd; 188 tests green,
   typecheck clean, all browser-verified). A long interactive-polish session landed everything below.
+- ✅ **3f follow-ups (2026-07-06, commit `9ad9560`, 203 tests, NOT pushed):** three editor
+  improvements on the same branch —
+  1. **Type propagation on grow** — `shapeOf` now copies a port's TYPE (media + connector), so a
+     chevron duplicates the current port instead of the group's original type (was a bug).
+  2. **Flip toggle = rotation** — the port-settings "Flip" now rotates 180° (like the Rotate
+     button) instead of mirror-flipping, with a sliding white knob like Rack Mounted.
+  3. **Multi-select** — shift+click ports (within one group) or whole group boxes to batch-edit
+     rotation + label position; batch panel (Flip + Label); "Delete groups" button + Delete/Backspace
+     key. New pure ops `patchPorts`/`rotatePorts`/`deletePortGroups`; `Faceplate.highlight` accepts
+     an array; selection state is now `selectedGroupIds[]` + `selectedPortIndices[]`.
+     Spec: `docs/superpowers/specs/2026-07-06-rack-builder-editor-multi-select-design.md`.
 
 ## Slice 3f — everything done this session (all uncommitted work is committed on the branch)
 UI/layout polish (mostly `RackDeviceEditor.tsx` / `EditorCanvas.tsx`):
