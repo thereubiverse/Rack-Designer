@@ -57,6 +57,11 @@ Everything stacks; each branch is based on the previous:
      the grab point (native drag image + "+" badge suppressed); over empty device space a **50%-opacity
      drop-preview box** shows where the new group lands (shared `clampedBox`); over a port → port highlight.
   NO spec doc written for this one yet.
+- ✅ **Editor visual polish (2026-07-06, commit `49904c5`, PUSHED):** hover states on all clickable editor
+  controls (white → `#f5f5f5` = middle-section bg; blue Create/Add desaturate); middle section bg `#f5f5f5`;
+  faceplate palette — white body `#ffffff`, ears+outline+seams `#d4d4d4`, screw holes `#a3a3a3`; frame
+  outline refactor (fills unstroked + single inset outer outline + explicit seam lines so ear corners aren't
+  viewBox-clipped).
 
 ## Slice 3f — everything done this session (all uncommitted work is committed on the branch)
 UI/layout polish (mostly `RackDeviceEditor.tsx` / `EditorCanvas.tsx`):
