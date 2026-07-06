@@ -95,12 +95,16 @@ export function maxRows(bounds: GridBounds): number {
 type PortOverride = PortGroup["portOverrides"][number];
 
 /** The parts of a port override that propagate to newly-added ports: orientation
- *  (flip + rotation) and label position — but NOT the per-port name. */
+ *  (flip + rotation), label position, and the port type (media + its connector) so a
+ *  chevron duplicates whatever port is currently in the row/column — but NOT the
+ *  per-port name (that stays unique to the original port). */
 function shapeOf(ov: PortOverride | undefined): PortOverride {
   const shape: PortOverride = {};
   if (ov?.flipped !== undefined) shape.flipped = ov.flipped;
   if (ov?.labelPos !== undefined) shape.labelPos = ov.labelPos;
   if (ov?.rotation !== undefined) shape.rotation = ov.rotation;
+  if (ov?.media !== undefined) shape.media = ov.media;
+  if (ov?.connectorType !== undefined) shape.connectorType = ov.connectorType;
   return shape;
 }
 const isEmpty = (o: PortOverride): boolean => Object.keys(o).length === 0;
@@ -238,6 +242,53 @@ export function setPortMedia(face: Face, groupId: string, index: number, media: 
     return setPortOverride(face, groupId, index, { media: undefined, connectorType: undefined });
   }
   return setPortOverride(face, groupId, index, { media, connectorType: CONNECTORS[media][0] });
+}
+
+/** A set of port indices within one group — the unit batch edits operate on. */
+export interface PortRef { groupId: string; indices: number[] }
+
+/** Every port index in a group (row-major), used to target a whole group in a batch. */
+export function allPortIndices(group: PortGroup): number[] {
+  return Array.from({ length: group.rows * group.cols }, (_, i) => i);
+}
+
+/** Merge `patch` into every referenced port's override (multi-port / multi-group batch). */
+export function patchPorts(
+  face: Face, refs: PortRef[],
+  patch: { rotation?: number; labelPos?: "top" | "bottom"; flipped?: boolean },
+): Face {
+  const byId = new Map(refs.map((r) => [r.groupId, r.indices]));
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) => {
+      const idxs = byId.get(g.id);
+      if (!idxs || idxs.length === 0) return g;
+      const po = { ...g.portOverrides };
+      for (const i of idxs) po[i] = { ...po[i], ...patch };
+      return { ...g, portOverrides: po };
+    }),
+  };
+}
+
+/** Rotate every referenced port by `delta` degrees (mod 360, kept non-negative). */
+export function rotatePorts(face: Face, refs: PortRef[], delta: number): Face {
+  const byId = new Map(refs.map((r) => [r.groupId, r.indices]));
+  return {
+    ...face,
+    portGroups: face.portGroups.map((g) => {
+      const idxs = byId.get(g.id);
+      if (!idxs || idxs.length === 0) return g;
+      const po = { ...g.portOverrides };
+      for (const i of idxs) po[i] = { ...po[i], rotation: ((((po[i]?.rotation ?? 0) + delta) % 360) + 360) % 360 };
+      return { ...g, portOverrides: po };
+    }),
+  };
+}
+
+/** Remove several groups at once. */
+export function deletePortGroups(face: Face, ids: string[]): Face {
+  const set = new Set(ids);
+  return { ...face, portGroups: face.portGroups.filter((g) => !set.has(g.id)) };
 }
 
 export function setSpacing(

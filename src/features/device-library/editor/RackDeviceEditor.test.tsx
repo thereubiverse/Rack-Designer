@@ -319,3 +319,73 @@ describe("RackDeviceEditor — palette sections (3e)", () => {
     expect(screen.getByTitle("Copper").getAttribute("draggable")).toBe("true");
   });
 });
+
+describe("RackDeviceEditor — multi-select (shift+click)", () => {
+  // Two non-overlapping 2-port groups so both single- and multi-group paths are testable.
+  const twoGroupFace: Face = {
+    portGroups: [
+      { id: "g1", media: "copper", connectorType: "RJ45", idPrefix: "", countingDirection: "ltr", rows: 1, cols: 2, gridX: 0, gridY: 0, colSpacing: 0, rowSpacing: 0, portOverrides: {} },
+      { id: "g2", media: "copper", connectorType: "RJ45", idPrefix: "", countingDirection: "ltr", rows: 1, cols: 2, gridX: 300, gridY: 0, colSpacing: 0, rowSpacing: 0, portOverrides: {} },
+    ],
+    elements: [],
+  };
+  function render2() {
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+      initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: twoGroupFace }} onSave={noop} onCancel={noop} />);
+  }
+  const rotated = () => screen.getAllByTestId("port-cell").filter((c) => (c.querySelector("g[transform]")?.getAttribute("transform") ?? "").includes("rotate(180"));
+
+  it("shift+clicking ports selects several and shows the batch panel", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    fireEvent.click(screen.getByTestId("port-target-1"), { shiftKey: true });
+    expect(screen.getByTestId("batch-settings")).toHaveTextContent("2 ports selected");
+    const blued = screen.getAllByTestId("port-cell").filter((c) => c.getAttribute("data-highlighted") === "true");
+    expect(blued).toHaveLength(2);
+  });
+
+  it("batch Flip rotates every selected port", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    fireEvent.click(screen.getByTestId("port-target-1"), { shiftKey: true });
+    expect(rotated()).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("batch-flip"));
+    expect(rotated()).toHaveLength(2); // both selected ports in g1
+  });
+
+  it("shift+clicking group boxes selects several groups (and clears port selection)", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.click(screen.getByTestId("group-box-g2"), { shiftKey: true });
+    expect(screen.getByTestId("batch-settings")).toHaveTextContent("2 groups selected");
+    expect(screen.getByTestId("group-box-g1").getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("group-box-g2").getAttribute("data-selected")).toBe("true");
+  });
+
+  it("batch Flip on multiple groups rotates every port in each group", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.click(screen.getByTestId("group-box-g2"), { shiftKey: true });
+    fireEvent.click(screen.getByTestId("batch-flip"));
+    expect(rotated()).toHaveLength(4); // all 4 ports across both groups
+  });
+
+  it("Delete groups button removes all selected groups", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.click(screen.getByTestId("group-box-g2"), { shiftKey: true });
+    fireEvent.click(screen.getByTestId("batch-delete"));
+    expect(screen.queryByTestId("group-box-g1")).toBeNull();
+    expect(screen.queryByTestId("group-box-g2")).toBeNull();
+  });
+
+  it("the Delete key removes the selected group(s)", () => {
+    render2();
+    fireEvent.click(screen.getByTestId("group-box-g1"));
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(screen.queryByTestId("group-box-g1")).toBeNull();
+    expect(screen.getByTestId("group-box-g2")).toBeInTheDocument(); // untouched
+  });
+});

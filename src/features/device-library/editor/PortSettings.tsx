@@ -1,13 +1,13 @@
 "use client";
 
 export function PortSettings({
-  portLabel, name, flipped, labelPos, onChange, embedded, typeLabel, connectorType, connectorOptions,
+  portLabel, name, rotation, labelPos, onChange, embedded, typeLabel, connectorType, connectorOptions,
 }: {
   portLabel: string;
   name: string;
-  flipped: boolean;
+  rotation: number;
   labelPos: "top" | "bottom";
-  onChange: (patch: { name?: string; flipped?: boolean; labelPos?: "top" | "bottom"; connectorType?: string }) => void;
+  onChange: (patch: { name?: string; rotation?: number; labelPos?: "top" | "bottom"; connectorType?: string }) => void;
   embedded?: boolean;
   /** Set when this port's type differs from its group — shows the type + a connector picker. */
   typeLabel?: string;
@@ -32,16 +32,21 @@ export function PortSettings({
       onChange={(e) => onChange({ name: e.target.value || undefined })}
     />
   );
+  // "Flip" rotates the glyph 180° (same behavior as the top Rotate button); ports only
+  // ever sit at 0° or 180°, so this reads as a toggle.
+  const rotated = rotation % 360 !== 0;
   const flipBtn = (
     <button
       type="button"
       data-testid="port-flip"
-      aria-pressed={flipped}
-      onClick={() => onChange({ flipped: !flipped })}
+      aria-pressed={rotated}
+      onClick={() => onChange({ rotation: (rotation + 180) % 360 })}
       className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
     >
       Flip
-      <span className={`inline-block h-4 w-8 rounded-full ${flipped ? "bg-blue-600" : "bg-neutral-300"}`} />
+      <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${rotated ? "bg-blue-600" : "bg-neutral-300"}`}>
+        <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-all ${rotated ? "left-3.5" : "left-0.5"}`} />
+      </span>
     </button>
   );
   const labelBtn = (
@@ -74,6 +79,56 @@ export function PortSettings({
         {connectorControl}
         {flipBtn}
         {labelBtn}
+      </div>
+    </div>
+  );
+}
+
+/** Batch panel for a multi-selection (several ports, or several whole groups). Only the
+ *  controls that make sense to apply uniformly: Flip (180° rotation) and Label position.
+ *  A "mixed" summary means the targets currently disagree; clicking converges them. */
+export function BatchSettings({
+  title, rotated, labelPos, onFlip, onLabel, onDelete, deleteLabel,
+}: {
+  title: string;
+  rotated: "on" | "off" | "mixed";
+  labelPos: "top" | "bottom" | "mixed";
+  onFlip: () => void;
+  onLabel: () => void;
+  onDelete?: () => void;
+  deleteLabel?: string;
+}) {
+  const knobOn = rotated === "on";
+  const labelText = labelPos === "mixed" ? "Mixed" : labelPos === "top" ? "Top" : "Bottom";
+  return (
+    <div data-testid="batch-settings" className="flex w-full flex-col text-left">
+      <div className="mb-2 text-xs font-bold text-neutral-800">{title}</div>
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          data-testid="batch-flip"
+          aria-pressed={knobOn}
+          onClick={onFlip}
+          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+        >
+          Flip{rotated === "mixed" ? " (mixed)" : ""}
+          <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${knobOn ? "bg-blue-600" : "bg-neutral-300"}`}>
+            <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-all ${knobOn ? "left-3.5" : "left-0.5"}`} />
+          </span>
+        </button>
+        <button
+          type="button"
+          data-testid="batch-labelpos"
+          onClick={onLabel}
+          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+        >
+          Label: {labelText}
+        </button>
+        {onDelete && (
+          <button type="button" data-testid="batch-delete" onClick={onDelete} className="mt-1 text-left text-xs text-red-600">
+            🗑 {deleteLabel ?? "Delete groups"}
+          </button>
+        )}
       </div>
     </div>
   );

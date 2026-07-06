@@ -47,7 +47,7 @@ describe("EditorCanvas overlay", () => {
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" onSelect={onSelect} />,
     );
     fireEvent.click(getByTestId("group-box-g1"));
-    expect(onSelect).toHaveBeenCalledWith("g1");
+    expect(onSelect).toHaveBeenCalledWith("g1", false);
   });
 
   it("clicking empty overlay space deselects", () => {
@@ -56,12 +56,12 @@ describe("EditorCanvas overlay", () => {
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" onSelect={onSelect} />,
     );
     fireEvent.click(getByTestId("editor-overlay"));
-    expect(onSelect).toHaveBeenCalledWith(null);
+    expect(onSelect).toHaveBeenCalledWith(null, false);
   });
 
   it("marks the selected group's box", () => {
     const { getByTestId } = render(
-      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" selectedGroupId="g1" onSelect={() => {}} />,
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" selectedGroupIds={["g1"]} onSelect={() => {}} />,
     );
     expect(getByTestId("group-box-g1").getAttribute("data-selected")).toBe("true");
   });
@@ -71,7 +71,7 @@ describe("EditorCanvas overlay", () => {
     const onAddRow = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} onAddRow={onAddRow} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onAddColumn={onAddColumn} onAddRow={onAddRow} />,
     );
     fireEvent.pointerDown(getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
     fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
@@ -109,7 +109,7 @@ describe("EditorCanvas drag-to-move", () => {
     const onMove = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onMove={onMove} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onMove={onMove} />,
     );
     const box = getByTestId("group-box-g1");
     fireEvent.pointerDown(box, { clientX: 100, clientY: 100 });
@@ -126,7 +126,7 @@ describe("EditorCanvas drag-to-move", () => {
     const onMove = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onMove={onMove} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onMove={onMove} />,
     );
     const box = getByTestId("group-box-g1");
     fireEvent.pointerDown(box, { clientX: 100, clientY: 100 });
@@ -140,10 +140,10 @@ describe("EditorCanvas per-port selection", () => {
     const onSelectPort = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onSelectPort={onSelectPort} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSelectPort={onSelectPort} />,
     );
     fireEvent.click(getByTestId("port-target-1"));
-    expect(onSelectPort).toHaveBeenCalledWith(1);
+    expect(onSelectPort).toHaveBeenCalledWith(1, false);
   });
 
 });
@@ -152,7 +152,7 @@ describe("EditorCanvas highlight passthrough (3d)", () => {
   it("forwards highlight to Faceplate (selected port renders blue, no overlay copy)", () => {
     const { getAllByTestId, queryByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}}
+        selectedGroupIds={["g1"]} selectedPortIndices={[1]} onSelect={() => {}} onSelectPort={() => {}}
         highlight={{ groupId: "g1", portIndex: 1 }} />,
     );
     expect(queryByTestId("port-highlight")).toBeNull(); // overlay copy gone
@@ -168,7 +168,7 @@ describe("EditorCanvas spacing handle", () => {
     const face: Face = { portGroups: [grp({ id: "g1", cols: 3, gridX: 0, gridY: 0 })], elements: [] };
     const { getByTestId } = render(
       <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={onSpacing} />,
     );
     const handle = getByTestId("spacing-handle");
     fireEvent.pointerDown(handle, { clientX: 100, clientY: 100 });
@@ -186,7 +186,7 @@ describe("EditorCanvas spacing handle", () => {
     const face: Face = { portGroups: [grp({ id: "g1", cols: 1, rows: 1, gridX: 0, gridY: 0 })], elements: [] };
     const { getByTestId } = render(
       <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onSpacing={onSpacing} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={onSpacing} />,
     );
     fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
     fireEvent.pointerMove(window, { clientX: 200, clientY: 200 });
@@ -205,7 +205,7 @@ describe("EditorCanvas live move feedback", () => {
     };
     const { getByTestId, queryByTestId } = render(
       <EditorCanvas face={twoGroups} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g2" onSelect={() => {}} onMove={() => {}} />,
+        selectedGroupIds={["g2"]} onSelect={() => {}} onMove={() => {}} />,
     );
     const box = getByTestId("group-box-g2");
     // drag g2 (at gridX 200) left onto g1 (at gridX 0)
@@ -221,7 +221,7 @@ describe("EditorCanvas chevron drag (3d)", () => {
     const onAddColumn = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onAddColumn={onAddColumn} />,
     );
     const chev = getByTestId("chevron-col");
     fireEvent.pointerDown(chev, { clientX: 100, clientY: 50 });
@@ -234,7 +234,7 @@ describe("EditorCanvas chevron drag (3d)", () => {
     const onAddColumn = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onAddColumn={onAddColumn} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onAddColumn={onAddColumn} />,
     );
     fireEvent.pointerDown(getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
     fireEvent.pointerUp(window, { clientX: 10, clientY: 10 });
@@ -246,7 +246,7 @@ describe("EditorCanvas port selection (recolor only, no box)", () => {
   it("never renders a per-port selection box — port selection is the blue recolor only", () => {
     const { queryByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" selectedPortIndex={1} onSelect={() => {}} onSelectPort={() => {}} />,
+        selectedGroupIds={["g1"]} selectedPortIndices={[1]} onSelect={() => {}} onSelectPort={() => {}} />,
     );
     expect(queryByTestId("port-select-box")).toBeNull();
   });
@@ -282,7 +282,7 @@ describe("EditorCanvas chevron drag to remove (3f)", () => {
     // group g1 has cols:3 (grp default)
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onAddColumn={() => {}} onRemoveColumn={onRemoveColumn} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onAddColumn={() => {}} onRemoveColumn={onRemoveColumn} />,
     );
     const chev = getByTestId("chevron-col");
     fireEvent.pointerDown(chev, { clientX: 100, clientY: 50 });
@@ -297,7 +297,7 @@ describe("EditorCanvas chevron drag to remove (3f)", () => {
     const twoRow: Face = { portGroups: [grp({ id: "g1", rows: 2, cols: 1 })], elements: [] };
     const { getByTestId } = render(
       <EditorCanvas face={twoRow} widthIn={19} rackUnits={1} rackMounted side="FRONT"
-        selectedGroupId="g1" onSelect={() => {}} onAddRow={() => {}} onRemoveRow={onRemoveRow} />,
+        selectedGroupIds={["g1"]} onSelect={() => {}} onAddRow={() => {}} onRemoveRow={onRemoveRow} />,
     );
     const chev = getByTestId("chevron-row");
     fireEvent.pointerDown(chev, { clientX: 50, clientY: 100 });

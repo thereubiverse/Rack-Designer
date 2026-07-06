@@ -18,12 +18,12 @@ export interface EditorCanvasProps {
   rackUnits: number;
   rackMounted: boolean;
   side: "FRONT" | "BACK";
-  selectedGroupId?: string | null;
-  selectedPortIndex?: number | null;
-  highlight?: HighlightPort | null;
+  selectedGroupIds?: string[];
+  selectedPortIndices?: number[];
+  highlight?: HighlightPort | HighlightPort[] | null;
   onCreate?: (media: Media, pos: Pos) => void;
-  onSelect?: (id: string | null) => void;
-  onSelectPort?: (index: number | null) => void;
+  onSelect?: (id: string | null, additive: boolean) => void;
+  onSelectPort?: (index: number, additive: boolean) => void;
   onPortMedia?: (groupId: string, index: number, media: Media) => void;
   onAddColumn?: (id: string) => void;
   onAddRow?: (id: string) => void;
@@ -228,7 +228,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
           ref={overlayRef}
           data-testid="editor-overlay"
           style={{ position: "absolute", inset: 0 }}
-          onClick={() => props.onSelect?.(null)}
+          onClick={() => props.onSelect?.(null, false)}
           onDragOver={(e) => {
             e.preventDefault();
             const p = portAt(e.clientX, e.clientY);
@@ -247,7 +247,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
         >
           {face.portGroups.map((g) => {
             const laid = layoutPortGroup(g, dims.heightPx);
-            const selected = g.id === props.selectedGroupId;
+            const selectedIds = props.selectedGroupIds ?? [];
+            const selected = selectedIds.includes(g.id);
+            // Chevrons, spacing handle and per-port targets are single-group operations,
+            // so they only appear when this is the only selected group.
+            const singleSelected = selectedIds.length === 1 && selectedIds[0] === g.id;
             const boxTop = laid.top;
             const dragging = drag?.id === g.id;
             // Clamp the live-drag x to the body so the box can't be dragged off the device
@@ -277,7 +281,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 data-testid={`group-box-${g.id}`}
                 data-selected={selected ? "true" : "false"}
                 className="group"
-                onClick={(e) => { e.stopPropagation(); props.onSelect?.(g.id); }}
+                onClick={(e) => { e.stopPropagation(); props.onSelect?.(g.id, e.shiftKey); }}
                 onPointerDown={(e) => {
                   if (!props.onMove) return;
                   e.stopPropagation();
@@ -310,7 +314,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     }}
                   />
                 )}
-                {selected && (
+                {singleSelected && (
                   <>
                     <button
                       type="button"
@@ -343,7 +347,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     )}
                   </>
                 )}
-                {selected && (
+                {singleSelected && (
                   <>
                     {laid.cells.map((cell) => {
                       // localY offset by +LABEL_H because the box top now sits LABEL_H
@@ -355,7 +359,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                         <div
                           key={cell.index}
                           data-testid={`port-target-${cell.index}`}
-                          onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index); }}
+                          onClick={(e) => { e.stopPropagation(); props.onSelectPort?.(cell.index, e.shiftKey); }}
                           style={{ position: "absolute", left: localX, top: localY, width: CELL_W, height: ROW_H, cursor: "pointer", zIndex: 5 }}
                         />
                       );

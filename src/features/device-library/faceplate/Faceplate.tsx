@@ -79,7 +79,8 @@ function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boole
   );
 }
 
-export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | null, movePreview?: MovePreview | null) {
+export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | HighlightPort[] | null, movePreview?: MovePreview | null) {
+  const highlights = highlight ? (Array.isArray(highlight) ? highlight : [highlight]) : [];
   const dims = frameDims(opts);
   const holes = screwHoles(dims, opts.rackUnits);
   const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
@@ -129,7 +130,7 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
             <PortCell
               key={`${g.id}-${cell.index}`}
               cell={cell}
-              highlighted={highlight?.groupId === g.id && highlight?.portIndex === cell.index}
+              highlighted={highlights.some((h) => h.groupId === g.id && h.portIndex === cell.index)}
             />
           ));
           return (
@@ -147,7 +148,7 @@ export function Faceplate({
   highlight,
   movePreview,
   ...opts
-}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | null; movePreview?: MovePreview | null } & FaceplateOptions) {
+}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | HighlightPort[] | null; movePreview?: MovePreview | null } & FaceplateOptions) {
   const dims = frameDims(opts);
   const width = dims.frameWidthPx + (side ? LABEL_GUTTER : 0);
   const height = dims.heightPx;

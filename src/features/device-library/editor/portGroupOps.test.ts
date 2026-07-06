@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow, patchPorts, rotatePorts, deletePortGroups, allPortIndices } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -187,6 +187,22 @@ describe("add/remove propagate per-port orientation + label (but not name)", () 
     expect(next.portOverrides[1]?.name).toBeUndefined();
   });
 
+  it("adding a column copies a type-overridden port's media + connector onto the new port", () => {
+    // group is copper; port 0 was overridden to fiber. The new column should duplicate
+    // the CURRENT port (fiber), not fall back to the group's original copper media.
+    const g = group({ cols: 1, rows: 1, media: "copper", connectorType: "RJ45", portOverrides: { 0: { media: "fiber", connectorType: "LC" } } });
+    const next = addColumn({ portGroups: [g], elements: [] }, "g", bounds).portGroups[0];
+    expect(next.portOverrides[1]?.media).toBe("fiber");
+    expect(next.portOverrides[1]?.connectorType).toBe("LC");
+  });
+
+  it("adding a row copies the last row's type override onto the new row", () => {
+    const g = group({ cols: 1, rows: 1, media: "copper", connectorType: "RJ45", portOverrides: { 0: { media: "fiber", connectorType: "LC" } } });
+    const next = addRow({ portGroups: [g], elements: [] }, "g", twoU).portGroups[0];
+    expect(next.portOverrides[1]?.media).toBe("fiber"); // r1c0 inherits r0c0 type
+    expect(next.portOverrides[1]?.connectorType).toBe("LC");
+  });
+
   it("removing a column drops that column's overrides and reindexes the rest", () => {
     // 2 cols, 2 rows; column 0 (idx 0 and 2) flipped
     const g = group({ cols: 2, rows: 2, portOverrides: { 0: { flipped: true }, 2: { flipped: true } } });
@@ -211,6 +227,51 @@ describe("setPortMedia (per-port type override)", () => {
     const next = setPortMedia({ portGroups: [g], elements: [] }, "g", 1, "copper").portGroups[0];
     expect(next.portOverrides[1]?.media).toBeUndefined();
     expect(next.portOverrides[1]?.connectorType).toBeUndefined();
+  });
+});
+
+describe("batch ops: patchPorts / rotatePorts / deletePortGroups (multi-select)", () => {
+  it("patchPorts applies a patch to several ports in one group", () => {
+    const g = group({ id: "g", cols: 4 });
+    const next = patchPorts({ portGroups: [g], elements: [] }, [{ groupId: "g", indices: [0, 2] }], { labelPos: "bottom" }).portGroups[0];
+    expect(next.portOverrides[0]?.labelPos).toBe("bottom");
+    expect(next.portOverrides[2]?.labelPos).toBe("bottom");
+    expect(next.portOverrides[1]).toBeUndefined(); // untouched
+  });
+
+  it("patchPorts spans multiple groups", () => {
+    const a = group({ id: "a", cols: 2 });
+    const b = group({ id: "b", cols: 2 });
+    const face: Face = { portGroups: [a, b], elements: [] };
+    const next = patchPorts(face, [
+      { groupId: "a", indices: allPortIndices(a) },
+      { groupId: "b", indices: allPortIndices(b) },
+    ], { rotation: 180 });
+    expect(next.portGroups[0].portOverrides[1]?.rotation).toBe(180);
+    expect(next.portGroups[1].portOverrides[0]?.rotation).toBe(180);
+  });
+
+  it("patchPorts merges without dropping an existing override", () => {
+    const g = group({ id: "g", cols: 2, portOverrides: { 0: { name: "WAN", media: "fiber" } } });
+    const next = patchPorts({ portGroups: [g], elements: [] }, [{ groupId: "g", indices: [0] }], { rotation: 180 }).portGroups[0];
+    expect(next.portOverrides[0]).toMatchObject({ name: "WAN", media: "fiber", rotation: 180 });
+  });
+
+  it("rotatePorts increments each targeted port by delta (mod 360)", () => {
+    const g = group({ id: "g", cols: 2, portOverrides: { 0: { rotation: 180 } } });
+    const next = rotatePorts({ portGroups: [g], elements: [] }, [{ groupId: "g", indices: [0, 1] }], 180).portGroups[0];
+    expect(next.portOverrides[0]?.rotation).toBe(0);   // 180 + 180 → 0
+    expect(next.portOverrides[1]?.rotation).toBe(180); // 0 + 180 → 180
+  });
+
+  it("allPortIndices lists every port row-major", () => {
+    expect(allPortIndices(group({ rows: 2, cols: 3 }))).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("deletePortGroups removes all listed groups, keeps the rest", () => {
+    const face: Face = { portGroups: [group({ id: "a" }), group({ id: "b" }), group({ id: "c" })], elements: [] };
+    const next = deletePortGroups(face, ["a", "c"]);
+    expect(next.portGroups.map((g) => g.id)).toEqual(["b"]);
   });
 });
 

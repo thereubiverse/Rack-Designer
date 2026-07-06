@@ -8,12 +8,13 @@ import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
 import { EditorCanvas } from "./EditorCanvas";
 import { frameDims, layoutPortGroup } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
-import { PortSettings } from "./PortSettings";
+import { PortSettings, BatchSettings } from "./PortSettings";
 import { BrandPicker } from "./BrandPicker";
 import { Select } from "./Select";
 import {
   addPortGroup, movePortGroup, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
-  setPortOverride, setPortMedia, setSpacing, type GridBounds,
+  setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices,
+  type GridBounds, type PortRef,
 } from "./portGroupOps";
 
 // The seeded default brand — always available, never deletable.
@@ -40,8 +41,10 @@ export interface RackDeviceEditorProps {
 export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid } = useDeviceDraft(props.initial);
   const [brands, setBrands] = useState(props.brands);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [selectedPortIndex, setSelectedPortIndex] = useState<number | null>(null);
+  // Selection is a set of groups; ports are a set within a SINGLE selected group.
+  // Port-multi and group-multi are mutually exclusive.
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+  const [selectedPortIndices, setSelectedPortIndices] = useState<number[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(false); // toggle only for now; snapping wired in a later slice
   const dims = frameDims({
     widthIn: draft.widthIn > 0 ? draft.widthIn : 1,
@@ -49,11 +52,67 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
     rackMounted: draft.rackMounted,
   });
   const bounds: GridBounds = { width: dims.bodyWidthPx, height: dims.heightPx };
-  const selectedGroup = activeFace.portGroups.find((g) => g.id === selectedGroupId) ?? null;
+  // The single selected group (group settings + port targets only exist in single-group mode).
+  const singleGroupId = selectedGroupIds.length === 1 ? selectedGroupIds[0] : null;
+  const selectedGroup = activeFace.portGroups.find((g) => g.id === singleGroupId) ?? null;
+  const multiGroup = selectedGroupIds.length >= 2;
+  // Exactly one port selected in one group → the full single-port panel + palette retype.
+  const singlePortIndex = singleGroupId !== null && selectedPortIndices.length === 1 ? selectedPortIndices[0] : null;
 
-  function selectGroup(id: string | null) {
-    setSelectedGroupId(id);
-    setSelectedPortIndex(null);
+  function clearSelection() {
+    setSelectedGroupIds([]);
+    setSelectedPortIndices([]);
+  }
+
+  // Click a group box → just that group; shift+click → toggle it in the set (group-multi).
+  function selectGroup(id: string | null, additive = false) {
+    if (id === null) return clearSelection();
+    setSelectedPortIndices([]);
+    setSelectedGroupIds((prev) =>
+      additive ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]);
+  }
+
+  // Click a port → that one port in its group; shift+click within the same single group
+  // → toggle it (port-multi). Shift+click elsewhere resets to that port's group.
+  function selectPort(index: number, additive = false) {
+    if (additive && singleGroupId !== null) {
+      setSelectedPortIndices((prev) =>
+        prev.includes(index) ? prev.filter((x) => x !== index) : [...prev, index]);
+    } else {
+      setSelectedPortIndices([index]);
+    }
+  }
+
+  // Ports the batch controls act on: the selected ports (single-group) or every port in
+  // each selected group (multi-group).
+  function targetRefs(): PortRef[] {
+    if (multiGroup) {
+      return selectedGroupIds.map((gid) => {
+        const g = activeFace.portGroups.find((x) => x.id === gid);
+        return { groupId: gid, indices: g ? allPortIndices(g) : [] };
+      });
+    }
+    if (singleGroupId !== null && selectedPortIndices.length > 0) {
+      return [{ groupId: singleGroupId, indices: selectedPortIndices }];
+    }
+    return [];
+  }
+
+  // Effective rotation + label position of every target port (label pos is derived when
+  // not overridden, so read it from the layout the same way the single-port panel does).
+  function targetState(): { rotations: number[]; labels: ("top" | "bottom")[] } {
+    const rotations: number[] = [];
+    const labels: ("top" | "bottom")[] = [];
+    for (const ref of targetRefs()) {
+      const g = activeFace.portGroups.find((x) => x.id === ref.groupId);
+      if (!g) continue;
+      const cells = layoutPortGroup(g, dims.heightPx).cells;
+      for (const i of ref.indices) {
+        rotations.push(g.portOverrides[i]?.rotation ?? 0);
+        labels.push(cells.find((c) => c.index === i)?.labelPos ?? "top");
+      }
+    }
+    return { rotations, labels };
   }
 
   function stepWidth(delta: number) {
@@ -62,21 +121,19 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   }
 
   function switchSide(next: "front" | "back") {
-    setSelectedGroupId(null);
-    setSelectedPortIndex(null);
+    clearSelection();
     setActiveSide(next);
   }
 
   const side = draft.activeSide === "front" ? "FRONT" : "BACK";
 
-  // Rotate the current selection clockwise: a port icon by 180° per click, an element
-  // by 90° (elements arrive in a later slice). Disabled when nothing rotatable is selected.
-  const canRotate = selectedGroupId !== null && selectedPortIndex !== null;
+  // Rotate the current selection 180° per click — one port, many ports, or every port in
+  // the selected groups. Disabled when nothing rotatable is selected.
+  const canRotate = targetRefs().some((r) => r.indices.length > 0);
   function rotateSelection() {
-    if (selectedGroupId === null || selectedPortIndex === null) return;
-    const group = activeFace.portGroups.find((g) => g.id === selectedGroupId);
-    const current = group?.portOverrides[selectedPortIndex]?.rotation ?? 0;
-    setActiveFace(setPortOverride(activeFace, selectedGroupId, selectedPortIndex, { rotation: (current + 180) % 360 }));
+    const refs = targetRefs();
+    if (refs.every((r) => r.indices.length === 0)) return;
+    setActiveFace(rotatePorts(activeFace, refs, 180));
   }
 
   // "Other" always sits at the bottom of the device-type list.
@@ -86,13 +143,25 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   ];
 
   // Escape closes the modal (behaves like Cancel), per spec §10.
+  // Delete/Backspace removes the selected group(s) — but not while typing in a field
+  // (on macOS the "delete" key reports as Backspace, so handle both).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") props.onCancel();
+      if (e.key === "Escape") { props.onCancel(); return; }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const t = e.target as HTMLElement | null;
+        const tag = t?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t?.isContentEditable) return;
+        if (selectedGroupIds.length > 0) {
+          e.preventDefault();
+          setActiveFace(deletePortGroups(activeFace, selectedGroupIds));
+          clearSelection();
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
+  }, [props, selectedGroupIds, activeFace, setActiveFace]);
 
   return (
     <div
@@ -190,21 +259,21 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             selecting them isn't undone by this. */}
         <div
           className="rounded-xl border border-neutral-100 bg-neutral-50 p-4"
-          onClick={() => selectGroup(null)}
+          onClick={() => clearSelection()}
         >
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-stretch gap-2">
               <span className="flex items-center justify-center text-[10px] font-medium text-neutral-400" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Port Types</span>
               <div className="grid grid-cols-5 gap-2 rounded-lg border border-neutral-200 bg-white p-2">
                 {MEDIA.map((m) => {
-                  const portSelected = selectedGroupId != null && selectedPortIndex !== null;
+                  const portSelected = singleGroupId != null && singlePortIndex !== null;
                   return (
                     <span key={m} draggable
                       onDragStart={(e) => e.dataTransfer.setData("text/plain", m)}
                       onClick={(e) => {
                         if (!portSelected) return;
                         e.stopPropagation(); // keep the port selected so its settings stay shown
-                        setActiveFace(setPortMedia(activeFace, selectedGroupId!, selectedPortIndex!, m));
+                        setActiveFace(setPortMedia(activeFace, singleGroupId!, singlePortIndex!, m));
                       }}
                       className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200"}`}
                       title={portSelected ? `Set selected port to ${MEDIA_LABELS[m]}` : MEDIA_LABELS[m]}>
@@ -281,7 +350,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               rackUnits={draft.rackUnits >= 1 ? draft.rackUnits : 1}
               rackMounted={draft.rackMounted}
               side={side}
-              selectedGroupId={selectedGroupId}
+              selectedGroupIds={selectedGroupIds}
               onSelect={selectGroup}
               onCreate={(media, pos) => {
                 const before = activeFace.portGroups.length;
@@ -294,54 +363,88 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               onAddRow={(id) => setActiveFace((prev) => addRow(prev, id, bounds))}
               onRemoveColumn={(id) => setActiveFace((prev) => removeColumn(prev, id))}
               onRemoveRow={(id) => setActiveFace((prev) => removeRow(prev, id))}
-              selectedPortIndex={selectedPortIndex}
-              onSelectPort={setSelectedPortIndex}
+              selectedPortIndices={singleGroupId !== null ? selectedPortIndices : []}
+              onSelectPort={selectPort}
               onPortMedia={(gid, index, media) => {
                 setActiveFace(setPortMedia(activeFace, gid, index, media));
-                setSelectedGroupId(gid);
-                setSelectedPortIndex(index); // select the changed port so its settings show
+                setSelectedGroupIds([gid]);
+                setSelectedPortIndices([index]); // select the changed port so its settings show
               }}
               onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}
-              highlight={selectedGroupId && selectedPortIndex !== null ? { groupId: selectedGroupId, portIndex: selectedPortIndex } : null}
+              highlight={singleGroupId !== null ? selectedPortIndices.map((i) => ({ groupId: singleGroupId, portIndex: i })) : []}
             />
           </div>
         </div>
 
-        {selectedGroup ? (
+        {multiGroup ? (() => {
+          const { rotations, labels } = targetState();
+          const rotated = rotations.length && rotations.every((r) => r % 360 !== 0) ? "on"
+            : rotations.every((r) => r % 360 === 0) ? "off" : "mixed";
+          const labelPos = labels.length && labels.every((l) => l === "bottom") ? "bottom"
+            : labels.every((l) => l === "top") ? "top" : "mixed";
+          return (
+            <div className="mt-4 rounded-xl border border-neutral-200 p-4">
+              <BatchSettings
+                title={`${selectedGroupIds.length} groups selected`}
+                rotated={rotated}
+                labelPos={labelPos}
+                onFlip={() => setActiveFace(patchPorts(activeFace, targetRefs(), { rotation: rotated === "on" ? 0 : 180 }))}
+                onLabel={() => setActiveFace(patchPorts(activeFace, targetRefs(), { labelPos: labelPos === "bottom" ? "top" : "bottom" }))}
+                onDelete={() => { setActiveFace(deletePortGroups(activeFace, selectedGroupIds)); clearSelection(); }}
+                deleteLabel="Delete groups"
+              />
+            </div>
+          );
+        })() : selectedGroup ? (
           <div className="mt-4 flex flex-wrap gap-5 rounded-xl border border-neutral-200 p-4">
             <div className="min-w-0 flex-1">
               <PortGroupSettings
                 embedded
                 group={selectedGroup}
                 onChange={(patch) => setActiveFace(updatePortGroup(activeFace, selectedGroup.id, patch))}
-                onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); selectGroup(null); }}
+                onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); clearSelection(); }}
               />
             </div>
             <div className="flex w-full flex-col rounded-lg border border-dashed border-neutral-300 p-3 sm:w-[230px]">
-              {selectedPortIndex !== null ? (() => {
-                const cell = layoutPortGroup(selectedGroup, undefined).cells.find((c) => c.index === selectedPortIndex);
-                const ov = selectedGroup.portOverrides[selectedPortIndex] ?? {};
+              {selectedPortIndices.length >= 2 ? (() => {
+                const { rotations, labels } = targetState();
+                const rotated = rotations.length && rotations.every((r) => r % 360 !== 0) ? "on"
+                  : rotations.every((r) => r % 360 === 0) ? "off" : "mixed";
+                const labelPos = labels.length && labels.every((l) => l === "bottom") ? "bottom"
+                  : labels.every((l) => l === "top") ? "top" : "mixed";
+                return (
+                  <BatchSettings
+                    title={`${selectedPortIndices.length} ports selected`}
+                    rotated={rotated}
+                    labelPos={labelPos}
+                    onFlip={() => setActiveFace(patchPorts(activeFace, targetRefs(), { rotation: rotated === "on" ? 0 : 180 }))}
+                    onLabel={() => setActiveFace(patchPorts(activeFace, targetRefs(), { labelPos: labelPos === "bottom" ? "top" : "bottom" }))}
+                  />
+                );
+              })() : singlePortIndex !== null ? (() => {
+                const cell = layoutPortGroup(selectedGroup, undefined).cells.find((c) => c.index === singlePortIndex);
+                const ov = selectedGroup.portOverrides[singlePortIndex] ?? {};
                 return (
                   <PortSettings
                     embedded
-                    portLabel={cell ? cell.label : String(selectedPortIndex + 1)}
+                    portLabel={cell ? cell.label : String(singlePortIndex + 1)}
                     name={ov.name ?? ""}
-                    flipped={ov.flipped ?? false}
+                    rotation={ov.rotation ?? 0}
                     labelPos={cell ? cell.labelPos : "top"}
                     typeLabel={ov.media ? MEDIA_LABELS[ov.media] : undefined}
                     connectorType={cell?.connectorType}
                     connectorOptions={ov.media ? CONNECTORS[ov.media] : undefined}
-                    onChange={(patch) => setActiveFace(setPortOverride(activeFace, selectedGroup.id, selectedPortIndex, patch))}
+                    onChange={(patch) => setActiveFace(setPortOverride(activeFace, selectedGroup.id, singlePortIndex, patch))}
                   />
                 );
               })() : (
-                <span className="m-auto text-center text-xs text-neutral-400">Select a port to edit its name.</span>
+                <span className="m-auto text-center text-xs text-neutral-400">Select a port to edit its name. Shift+click to select several.</span>
               )}
             </div>
           </div>
         ) : (
           <div className="mt-4 rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400">
-            Drag a port type onto the grid to add a group. Select a group to edit it.
+            Drag a port type onto the grid to add a group. Select a group to edit it; shift+click to select several.
           </div>
         )}
 
