@@ -41,7 +41,7 @@ export function PortSettings({
       data-testid="port-flip"
       aria-pressed={rotated}
       onClick={() => onChange({ rotation: (rotation + 180) % 360 })}
-      className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+      className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
     >
       Flip
       <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${rotated ? "bg-blue-600" : "bg-neutral-300"}`}>
@@ -54,7 +54,7 @@ export function PortSettings({
       type="button"
       data-testid="port-labelpos"
       onClick={() => onChange({ labelPos: labelPos === "top" ? "bottom" : "top" })}
-      className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+      className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
     >
       Label: {labelPos === "top" ? "Top" : "Bottom"}
     </button>
@@ -109,7 +109,7 @@ export function BatchSettings({
           data-testid="batch-flip"
           aria-pressed={knobOn}
           onClick={onFlip}
-          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
         >
           Flip{rotated === "mixed" ? " (mixed)" : ""}
           <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${knobOn ? "bg-blue-600" : "bg-neutral-300"}`}>
@@ -120,7 +120,7 @@ export function BatchSettings({
           type="button"
           data-testid="batch-labelpos"
           onClick={onLabel}
-          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold"
+          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
         >
           Label: {labelText}
         </button>

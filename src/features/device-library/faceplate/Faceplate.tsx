@@ -90,25 +90,18 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
 
   return (
     <>
-      {/* frame */}
-      <rect
-        x={0}
-        y={0}
-        width={svgWidth}
-        height={svgHeight}
-        rx={CORNER_R}
-        fill="#f7f8fa"
-        stroke="#cfd3da"
-      />
-      {/* ears — outer corners rounded to match the frame, inner seam square */}
+      {/* frame body (white). Fills carry no stroke — a single outer outline is drawn last
+          so its weight stays even and the ear corners render crisply (a per-shape stroke on
+          the outer edges gets clipped to ~half by the viewBox boundary). */}
+      <rect x={0} y={0} width={svgWidth} height={svgHeight} rx={CORNER_R} fill="#ffffff" />
+      {/* ears — fills only; outer corners rounded to match the frame */}
       {dims.earWidthPx > 0 && (
         <>
-          <path d={leftEarPath(dims.earWidthPx, svgHeight)} fill="#e6e9ee" stroke="#cfd3da" />
-          <path
-            d={rightEarPath(svgWidth - dims.earWidthPx, dims.earWidthPx, svgHeight)}
-            fill="#e6e9ee"
-            stroke="#cfd3da"
-          />
+          <path d={leftEarPath(dims.earWidthPx, svgHeight)} fill="#d4d4d4" />
+          <path d={rightEarPath(svgWidth - dims.earWidthPx, dims.earWidthPx, svgHeight)} fill="#d4d4d4" />
+          {/* seam lines where the ears meet the body */}
+          <line x1={dims.earWidthPx} y1={0} x2={dims.earWidthPx} y2={svgHeight} stroke="#d4d4d4" />
+          <line x1={svgWidth - dims.earWidthPx} y1={0} x2={svgWidth - dims.earWidthPx} y2={svgHeight} stroke="#d4d4d4" />
         </>
       )}
       {/* screw holes */}
@@ -119,10 +112,13 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           cx={h.cx}
           cy={h.cy}
           r={4}
-          fill="#c3c8d0"
-          stroke="#9aa1ab"
+          fill="#a3a3a3"
+          stroke="#a3a3a3"
         />
       ))}
+      {/* single outer outline, inset half a stroke so the whole 1px shows (the viewBox
+          would otherwise clip the outer edges) and reads at the same weight as the seams */}
+      <rect x={0.5} y={0.5} width={svgWidth - 1} height={svgHeight - 1} rx={CORNER_R - 0.5} fill="none" stroke="#d4d4d4" />
       {/* body / grid (centered by the ear offset) */}
       <g data-testid="faceplate-body" transform={`translate(${dims.earWidthPx}, 0)`}>
         {groups.map((g) => {

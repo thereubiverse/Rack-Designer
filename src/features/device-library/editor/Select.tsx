@@ -41,7 +41,7 @@ export function Select({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800 transition-colors hover:bg-neutral-100"
       >
         <span className={`truncate ${selected ? "" : "text-neutral-400"}`}>{selected ? selected.label : placeholder}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-neutral-400"><path d="M6 9l6 6l6 -6" /></svg>
@@ -55,7 +55,7 @@ export function Select({
               type="button"
               role="option"
               aria-selected={o.value === value}
-              className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-neutral-50 ${o.value === value ? "font-semibold text-blue-600" : "text-neutral-800"}`}
+              className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-neutral-100 ${o.value === value ? "font-semibold text-blue-600" : "text-neutral-800"}`}
               onClick={() => { onChange(o.value); setOpen(false); }}
             >
               {o.label}

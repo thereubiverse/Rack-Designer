@@ -199,7 +199,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
       <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">Rack Device Editor</h2>
-          <button aria-label="Close" onClick={props.onCancel} className="text-neutral-400">✕</button>
+          <button aria-label="Close" onClick={props.onCancel} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
         </div>
 
         {/* Header fields — Rack units + Width kept narrow so the wider Name/Brand/
@@ -265,12 +265,12 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               />
               <div className="absolute inset-y-1 right-1 flex w-5 flex-col overflow-hidden rounded border border-neutral-200">
                 <button type="button" tabIndex={-1} aria-label="Increase width by 0.1"
-                  className="flex flex-1 items-center justify-center text-neutral-500 hover:bg-neutral-100"
+                  className="flex flex-1 items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-100"
                   onClick={() => stepWidth(0.1)}>
                   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6 -6l6 6" /></svg>
                 </button>
                 <button type="button" tabIndex={-1} aria-label="Decrease width by 0.1"
-                  className="flex flex-1 items-center justify-center border-t border-neutral-200 text-neutral-500 hover:bg-neutral-100"
+                  className="flex flex-1 items-center justify-center border-t border-neutral-200 text-neutral-500 transition-colors hover:bg-neutral-100"
                   onClick={() => stepWidth(-0.1)}>
                   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6l6 -6" /></svg>
                 </button>
@@ -283,7 +283,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             current group/port — group boxes and port targets stopPropagation so
             selecting them isn't undone by this. */}
         <div
-          className="rounded-xl border border-neutral-100 bg-neutral-50 p-4"
+          className="rounded-xl border border-neutral-100 bg-neutral-100 p-4"
           onClick={() => clearSelection()}
         >
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -311,7 +311,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                         e.stopPropagation(); // keep the port selected so its settings stay shown
                         setActiveFace(setPortMedia(activeFace, singleGroupId!, singlePortIndex!, m));
                       }}
-                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 ${paletteDrag?.media === m ? "opacity-40" : ""} ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200"}`}
+                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 transition-colors ${paletteDrag?.media === m ? "opacity-40" : ""} ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200 hover:bg-neutral-100"}`}
                       title={portSelected ? `Set selected port to ${MEDIA_LABELS[m]}` : MEDIA_LABELS[m]}>
                       <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
                     </span>
@@ -347,13 +347,13 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
               <button type="button" data-testid="snap-to-grid" aria-pressed={snapToGrid} aria-label="Snap to grid" title="Snap to grid"
                 onClick={() => setSnapToGrid((v) => !v)}
-                className={`flex h-9 w-9 items-center justify-center rounded-lg border ${snapToGrid ? "border-blue-600 bg-blue-50 text-blue-600" : "border-neutral-200 bg-white text-neutral-400"}`}>
+                className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${snapToGrid ? "border-blue-600 bg-blue-50 text-blue-600" : "border-neutral-200 bg-white text-neutral-400 hover:bg-neutral-100"}`}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></svg>
               </button>
               <button type="button" data-testid="rotate-element" aria-label="Rotate clockwise" title="Rotate clockwise"
                 disabled={!canRotate}
                 onClick={rotateSelection}
-                className={`flex h-9 w-9 items-center justify-center rounded-lg border ${canRotate ? "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100" : "border-neutral-200 bg-white text-neutral-300"}`}>
+                className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-colors ${canRotate ? "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-100" : "border-neutral-200 bg-white text-neutral-300"}`}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19.95 11a8 8 0 1 0 -.5 4" /><path d="M20 4.5v5h-5" /></svg>
               </button>
             </div>
@@ -369,7 +369,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   onClick={() => switchSide("back")}>Back</button>
               </div>
               <button type="button" aria-pressed={draft.rackMounted}
-                className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs font-medium"
+                className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs font-medium transition-colors hover:bg-neutral-100"
                 onClick={() => setField("rackMounted", !draft.rackMounted)}>
                 Rack Mounted
                 <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${draft.rackMounted ? "bg-blue-600" : "bg-neutral-300"}`}>
@@ -490,13 +490,13 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
 
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" data-testid="editor-cancel" onClick={props.onCancel}
-            className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold">Cancel</button>
+            className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
           <button
             type="button"
             data-testid="editor-save"
             disabled={!isValid || props.saving}
             onClick={() => onSaveGuard(isValid, props.saving, () => props.onSave(draft))}
-            className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
+            className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
           >
             {props.saving ? "Saving…" : props.mode === "create" ? "Create" : "Save"}
           </button>

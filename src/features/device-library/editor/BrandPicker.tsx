@@ -55,7 +55,7 @@ export function BrandPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800"
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800 transition-colors hover:bg-neutral-100"
       >
         <span className={`truncate ${selected ? "" : "text-neutral-400"}`}>{selected ? selected.name : "—"}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-neutral-400"><path d="M6 9l6 6l6 -6" /></svg>
@@ -66,13 +66,13 @@ export function BrandPicker({
           <ul className="max-h-48 overflow-auto py-1">
             <li>
               <button type="button"
-                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-50"
+                className="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100"
                 onClick={() => { onChange(null); setOpen(false); }}>—</button>
             </li>
             {brands.map((b) => (
               <li key={b.id} className="flex items-center">
                 <button type="button" role="option" aria-selected={b.id === value}
-                  className={`min-w-0 flex-1 truncate px-3 py-1.5 text-left text-sm hover:bg-neutral-50 ${b.id === value ? "font-semibold text-blue-600" : "text-neutral-800"}`}
+                  className={`min-w-0 flex-1 truncate px-3 py-1.5 text-left text-sm hover:bg-neutral-100 ${b.id === value ? "font-semibold text-blue-600" : "text-neutral-800"}`}
                   onClick={() => { onChange(b.id); setOpen(false); }}>{b.name}</button>
                 {onDelete && (canDelete ? canDelete(b) : true) && (
                   <button type="button" aria-label={`Delete ${b.name}`} title="Delete brand"
@@ -92,12 +92,12 @@ export function BrandPicker({
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirmAdd(); } if (e.key === "Escape") setAdding(false); }}
                     className="h-8 min-w-0 flex-1 rounded border border-neutral-200 px-2 text-sm font-normal" />
                   <button type="button" data-testid="brand-add-confirm" onClick={confirmAdd}
-                    className="h-8 shrink-0 rounded bg-blue-600 px-2 text-sm font-medium text-white">Add</button>
+                    className="h-8 shrink-0 rounded bg-blue-600 px-2 text-sm font-medium text-white transition-colors hover:bg-[#376ad9]">Add</button>
                 </div>
               ) : (
                 <button type="button" data-testid="brand-add"
                   onClick={() => setAdding(true)}
-                  className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm font-medium text-blue-600 hover:bg-neutral-50">
+                  className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm font-medium text-blue-600 hover:bg-neutral-100">
                   <span className="text-base leading-none">＋</span> Add brand
                 </button>
               )}
