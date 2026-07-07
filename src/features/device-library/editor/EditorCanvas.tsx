@@ -89,6 +89,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
   // Marquee (rubber-band) selection state — client coords; converted on use. (Effect below,
   // after `bounds` is in scope.)
   const [marquee, setMarquee] = useState<{ sx: number; sy: number; cx: number; cy: number; additive: boolean } | null>(null);
+  // Set when a marquee actually DRAGGED (vs. a plain click) so the trailing click it produces
+  // can be swallowed before it bubbles to a parent "click empty space → deselect" handler.
+  const marqueeMovedRef = useRef(false);
 
   useEffect(() => {
     if (!drag) return;
@@ -188,18 +191,23 @@ export function EditorCanvas(props: EditorCanvasProps) {
     const rect = overlayRef.current?.getBoundingClientRect();
     return toDevicePos({ x: clientX, y: clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
   }
-  // Select every group the current marquee rectangle touches. Intersects the group boxes'
-  // ACTUAL on-screen rects (client coords) so the hit test can never drift from what's drawn;
-  // the box wraps the glyphs + labels and SLACK adds a little extra reach.
+  // Select every group whose VISIBLE PORTS the marquee overlaps. The group box on screen is
+  // the padded selection box (SEL_PAD all round + LABEL_H label strips top/bottom), so the
+  // glyphs sit inset from its edges — hit-testing the raw box made the marquee grab a group
+  // well before it touched the ports the user sees. Inset the box's real on-screen rect back
+  // to the glyph bounds (× scale, since the rect is in scaled client px) so the hit test still
+  // can't drift from what's drawn. Unmeasurable rects (e.g. jsdom) fall back to the raw box.
   function marqueeSelect(sx: number, sy: number, ex: number, ey: number, additive: boolean) {
     const ml = Math.min(sx, ex), mr = Math.max(sx, ex), mt = Math.min(sy, ey), mb = Math.max(sy, ey);
-    const SLACK = 8;
+    const s = scaleRef.current || 1;
+    const padX = SEL_PAD * s, padY = (LABEL_H + SEL_PAD) * s;
     const ids: string[] = [];
     overlayRef.current?.querySelectorAll('[data-testid^="group-box-"]').forEach((el) => {
       const r = el.getBoundingClientRect();
-      if (r.left - SLACK < mr && r.right + SLACK > ml && r.top - SLACK < mb && r.bottom + SLACK > mt) {
-        ids.push((el.getAttribute("data-testid") || "").replace("group-box-", ""));
-      }
+      const id = (el.getAttribute("data-testid") || "").replace("group-box-", "");
+      if (r.width <= 0 || r.height <= 0) { ids.push(id); return; } // unmeasurable (jsdom) → include
+      const gl = r.left + padX, gr = r.right - padX, gt = r.top + padY, gb = r.bottom - padY;
+      if (gl < mr && gr > ml && gt < mb && gb > mt) ids.push(id);
     });
     props.onMarqueeSelect?.(ids, additive);
   }
@@ -214,7 +222,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
     }
     function onUp(e: PointerEvent) {
       const moved = Math.abs(e.clientX - sx) > 2 || Math.abs(e.clientY - sy) > 2;
-      if (moved) marqueeSelect(sx, sy, e.clientX, e.clientY, additive);
+      if (moved) { marqueeSelect(sx, sy, e.clientX, e.clientY, additive); marqueeMovedRef.current = true; }
       else props.onSelect?.(null, false); // plain click on blank → deselect
       setMarquee(null);
     }
@@ -380,7 +388,17 @@ export function EditorCanvas(props: EditorCanvasProps) {
             // Blank-canvas press (group boxes stop propagation) → start a marquee; a plain
             // click with no drag deselects on release.
             if (!props.onSelect || e.button !== 0) return;
+            // Clear any stale "just dragged" flag (e.g. a prior marquee that released over a
+            // group glyph, so its trailing click never reached this overlay to reset it) — the
+            // press that precedes THIS click owns whether the click gets swallowed.
+            marqueeMovedRef.current = false;
             setMarquee({ sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY, additive: e.shiftKey });
+          }}
+          onClick={(e) => {
+            // A marquee DRAG ends with a synthetic click on this overlay. Swallow it so it
+            // doesn't bubble to a parent "click empty space → deselect" handler and wipe the
+            // selection the drag just made. A plain click (no drag) is left to bubble.
+            if (marqueeMovedRef.current) { e.stopPropagation(); marqueeMovedRef.current = false; }
           }}
           onDragOver={(e) => {
             e.preventDefault();

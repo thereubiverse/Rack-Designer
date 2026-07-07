@@ -74,6 +74,94 @@ describe("EditorCanvas overlay", () => {
     expect(onMarqueeSelect.mock.calls[0][0]).toContain("g1");
   });
 
+  // jsdom has no layout, so mock the group box's on-screen rect. The box is the PADDED
+  // selection box (SEL_PAD=6 all round, LABEL_H=12 strips top+bottom); the visible port
+  // glyphs sit inset from it. left/right glyph edges = box ± 6; top/bottom = box ± 18.
+  function mockGroupRect(el: HTMLElement, r: { left: number; top: number; right: number; bottom: number }) {
+    el.getBoundingClientRect = () => ({
+      left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+      width: r.right - r.left, height: r.bottom - r.top, x: r.left, y: r.top, toJSON() {},
+    }) as DOMRect;
+  }
+
+  it("marquee does NOT select a group while it only overlaps the box padding (not the glyphs)", () => {
+    const onMarqueeSelect = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onMarqueeSelect={onMarqueeSelect} />,
+    );
+    // padded box 100..136 × 100..160 → visible glyphs 106..130 × 118..142.
+    mockGroupRect(getByTestId("group-box-g1"), { left: 100, top: 100, right: 136, bottom: 160 });
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 104, clientY: 130 }); // reaches into the pad (100–106), short of glyph (106)
+    const lastIds = onMarqueeSelect.mock.calls.at(-1)?.[0] ?? [];
+    expect(lastIds).not.toContain("g1");
+  });
+
+  it("marquee selects a group once it overlaps the glyphs", () => {
+    const onMarqueeSelect = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onMarqueeSelect={onMarqueeSelect} />,
+    );
+    mockGroupRect(getByTestId("group-box-g1"), { left: 100, top: 100, right: 136, bottom: 160 });
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 110, clientY: 130 }); // past glyph left edge (106)
+    const lastIds = onMarqueeSelect.mock.calls.at(-1)?.[0] ?? [];
+    expect(lastIds).toContain("g1");
+  });
+
+  it("a marquee drag's trailing click does not bubble (parent can't clear the fresh selection)", () => {
+    const parentClick = vi.fn();
+    const { getByTestId } = render(
+      <div onClick={parentClick}>
+        <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+          onSelect={() => {}} onMarqueeSelect={() => {}} />
+      </div>,
+    );
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 0, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 200 }); // real drag
+    fireEvent.pointerUp(window, { clientX: 900, clientY: 200 });
+    fireEvent.click(getByTestId("editor-overlay"), { clientX: 900, clientY: 200 });
+    expect(parentClick).not.toHaveBeenCalled();
+  });
+
+  it("a plain click (no drag) still bubbles so the parent can deselect", () => {
+    const parentClick = vi.fn();
+    const { getByTestId } = render(
+      <div onClick={parentClick}>
+        <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+          onSelect={() => {}} onMarqueeSelect={() => {}} />
+      </div>,
+    );
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: 50 }); // no movement
+    fireEvent.click(getByTestId("editor-overlay"), { clientX: 50, clientY: 50 });
+    expect(parentClick).toHaveBeenCalled();
+  });
+
+  it("a blank click still deselects even after a marquee that released over a group glyph", () => {
+    const parentClick = vi.fn();
+    const { getByTestId } = render(
+      <div onClick={parentClick}>
+        <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+          onSelect={() => {}} onMarqueeSelect={() => {}} />
+      </div>,
+    );
+    // Marquee drag whose trailing click lands on the GROUP box (not the overlay), so the
+    // overlay's onClick never runs to reset the "just dragged" flag.
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 0, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 900, clientY: 200 });
+    fireEvent.click(getByTestId("group-box-g1")); // click consumed by the group, flag left set
+    parentClick.mockClear();
+    // Now a plain blank click must still bubble so the parent can deselect.
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: 50 });
+    fireEvent.click(getByTestId("editor-overlay"), { clientX: 50, clientY: 50 });
+    expect(parentClick).toHaveBeenCalled();
+  });
+
   it("marks the selected group's box", () => {
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" selectedGroupIds={["g1"]} onSelect={() => {}} />,

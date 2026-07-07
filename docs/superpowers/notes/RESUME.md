@@ -1,6 +1,6 @@
 # RESUME — where we are & how to continue
 
-_Last updated: 2026-07-05 (Slice 3f functionally complete on its branch; 188 tests green)_
+_Last updated: 2026-07-06 (marquee select bugfix; 237 tests green — NOT yet committed)_
 
 ## Project
 Network documentation platform (rack builder). Next.js 16 + Supabase (local via Docker +
@@ -77,6 +77,21 @@ Everything stacks; each branch is based on the previous:
   faceplate palette — white body `#ffffff`, ears+outline+seams `#d4d4d4`, screw holes `#a3a3a3`; frame
   outline refactor (fills unstroked + single inset outer outline + explicit seam lines so ear corners aren't
   viewBox-clipped).
+
+- ⚠️ **Marquee select bugfix (2026-07-06, NOT committed; 237 tests):** two browser-only bugs found via
+  systematic-debugging + browser-verify —
+  1. **Selected too early** — `marqueeSelect` (EditorCanvas.tsx) hit-tested the full PADDED `group-box`
+     rect (SEL_PAD=6 all round + LABEL_H=12 label strips) plus an extra SLACK=8, so it grabbed a group
+     ~14px (H) / ~26px (V) before the box touched the visible ports. Fix: inset the box's on-screen rect
+     back to the glyph bounds (`SEL_PAD*scale`, `(LABEL_H+SEL_PAD)*scale`) and drop SLACK; unmeasurable
+     rects (jsdom) fall back to include-all.
+  2. **Didn't stay selected** — the canvas wrapper (RackDeviceEditor.tsx:287) has `onClick=clearSelection`;
+     the marquee's trailing click bubbled from `editor-overlay` (which, unlike group boxes, didn't
+     stopPropagation) and wiped the fresh selection. Fix: `marqueeMovedRef` set in the marquee `onUp`
+     (when moved), reset on each marquee pointerDown (kills stale-true when a drag releases over a glyph);
+     overlay `onClick` swallows the trailing click when the flag is set. Plain clicks still bubble → deselect.
+  Tests added to EditorCanvas.test.tsx (glyph-boundary select; trailing-click-doesn't-bubble; plain-click-
+  does-bubble; blank-click-still-deselects-after-marquee-over-glyph). NO spec doc.
 
 ## Slice 3f — everything done this session (all uncommitted work is committed on the branch)
 UI/layout polish (mostly `RackDeviceEditor.tsx` / `EditorCanvas.tsx`):
