@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow, patchPorts, rotatePorts, deletePortGroups, allPortIndices } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow, patchPorts, rotatePorts, deletePortGroups, allPortIndices, groupsIntersectingRect } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -312,6 +312,55 @@ describe("batch ops: patchPorts / rotatePorts / deletePortGroups (multi-select)"
     const face: Face = { portGroups: [group({ id: "a" }), group({ id: "b" }), group({ id: "c" })], elements: [] };
     const next = deletePortGroups(face, ["a", "c"]);
     expect(next.portGroups.map((g) => g.id)).toEqual(["b"]);
+  });
+});
+
+describe("duplicateGroups (Alt+drag)", () => {
+  it("appends copies with fresh ids at the same positions, returns the new ids", () => {
+    const face: Face = { portGroups: [group({ id: "a", gridX: 10, cols: 2 }), group({ id: "b", gridX: 100 })], elements: [] };
+    const { face: nf, newIds } = duplicateGroups(face, ["a"]);
+    expect(nf.portGroups).toHaveLength(3);
+    expect(newIds).toHaveLength(1);
+    const copy = nf.portGroups.find((g) => g.id === newIds[0])!;
+    expect(copy).toMatchObject({ gridX: 10, cols: 2 });
+    expect(copy.id).not.toBe("a");
+    expect(nf.portGroups.find((g) => g.id === "b")).toBeTruthy(); // untouched
+  });
+  it("duplicates a whole set", () => {
+    const face: Face = { portGroups: [group({ id: "a", gridX: 0 }), group({ id: "b", gridX: 100 })], elements: [] };
+    const { face: nf, newIds } = duplicateGroups(face, ["a", "b"]);
+    expect(nf.portGroups).toHaveLength(4);
+    expect(newIds).toHaveLength(2);
+  });
+});
+
+describe("moveGroups (multi-move)", () => {
+  it("shifts every group in the set by the shared delta", () => {
+    const face: Face = { portGroups: [group({ id: "a", gridX: 0 }), group({ id: "b", gridX: 100 }), group({ id: "c", gridX: 300 })], elements: [] };
+    const next = moveGroups(face, ["a", "b"], { dx: 20, dyOffset: 0 }, bounds);
+    expect(next.portGroups.find((g) => g.id === "a")!.gridX).toBe(20);
+    expect(next.portGroups.find((g) => g.id === "b")!.gridX).toBe(120);
+    expect(next.portGroups.find((g) => g.id === "c")!.gridX).toBe(300); // untouched
+  });
+  it("rejects the move if the set would overlap a non-selected group", () => {
+    const face: Face = { portGroups: [group({ id: "a", gridX: 0 }), group({ id: "c", gridX: 60 })], elements: [] };
+    // move a right onto c (c at 60..84) → overlap → rejected (unchanged)
+    const next = moveGroups(face, ["a"], { dx: 60, dyOffset: 0 }, bounds);
+    expect(next).toBe(face);
+  });
+});
+
+describe("groupsIntersectingRect (marquee)", () => {
+  // a: 0..24, b: 60..84, both centered vertically in 84px (top 30, bottom 54)
+  const face: Face = { portGroups: [group({ id: "a", gridX: 0 }), group({ id: "b", gridX: 60 })], elements: [] };
+  it("selects groups the rect touches (intersect)", () => {
+    expect(groupsIntersectingRect(face, { x: 10, y: 20, width: 20, height: 40 }, bounds)).toEqual(["a"]);
+  });
+  it("selects multiple when the rect spans them", () => {
+    expect(groupsIntersectingRect(face, { x: 0, y: 20, width: 90, height: 40 }, bounds)).toEqual(["a", "b"]);
+  });
+  it("selects none when the rect is well clear of every group (far to the right)", () => {
+    expect(groupsIntersectingRect(face, { x: 200, y: 20, width: 20, height: 40 }, bounds)).toEqual([]);
   });
 });
 

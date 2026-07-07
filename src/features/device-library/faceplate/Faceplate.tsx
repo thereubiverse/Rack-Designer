@@ -17,7 +17,10 @@ export interface FaceplateOptions {
   rackMounted: boolean;
 }
 
-const LABEL_GUTTER = 22; // room for the vertical FRONT/BACK label on the right
+// The FRONT/BACK label sits inside the frame (on the right ear, or just inside the body's
+// right edge when there are no ears) — no external gutter. LABEL_INSET_PX is how far the
+// label's center sits from the right edge when there are no ears.
+const LABEL_INSET_PX = 18;
 const CORNER_R = 6; // frame corner radius
 
 // Ear paths round only their OUTER corners (to sit flush inside the frame's
@@ -80,8 +83,9 @@ function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boole
   );
 }
 
-export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | HighlightPort[] | null, movePreview?: MovePreview | null) {
+export function renderFace(face: Face, opts: FaceplateOptions, highlight?: HighlightPort | HighlightPort[] | null, movePreview?: MovePreview | MovePreview[] | null) {
   const highlights = highlight ? (Array.isArray(highlight) ? highlight : [highlight]) : [];
+  const previews = movePreview ? (Array.isArray(movePreview) ? movePreview : [movePreview]) : [];
   const dims = frameDims(opts);
   const holes = screwHoles(dims, opts.rackUnits);
   const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
@@ -122,8 +126,9 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
       {/* body / grid (centered by the ear offset) */}
       <g data-testid="faceplate-body" transform={`translate(${dims.earWidthPx}, 0)`}>
         {groups.map((g) => {
-          const dx = movePreview?.groupId === g.id ? movePreview.offsetX : 0;
-          const dy = movePreview?.groupId === g.id ? (movePreview.offsetY ?? 0) : 0;
+          const mp = previews.find((p) => p.groupId === g.id);
+          const dx = mp ? mp.offsetX : 0;
+          const dy = mp ? (mp.offsetY ?? 0) : 0;
           const cells = g.cells.map((cell) => (
             <PortCell
               key={`${g.id}-${cell.index}`}
@@ -146,10 +151,13 @@ export function Faceplate({
   highlight,
   movePreview,
   ...opts
-}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | HighlightPort[] | null; movePreview?: MovePreview | null } & FaceplateOptions) {
+}: { face: Face; side?: "FRONT" | "BACK"; highlight?: HighlightPort | HighlightPort[] | null; movePreview?: MovePreview | MovePreview[] | null } & FaceplateOptions) {
   const dims = frameDims(opts);
-  const width = dims.frameWidthPx + (side ? LABEL_GUTTER : 0);
+  const width = dims.frameWidthPx; // label lives inside the frame now — no extra gutter
   const height = dims.heightPx;
+  // Label x: centered on the right ear when rack-mounted, else just inside the body's right
+  // edge. y is the vertical center — i.e. halfway between the top & bottom screw holes.
+  const labelX = dims.earWidthPx > 0 ? dims.frameWidthPx - dims.earWidthPx / 2 : dims.frameWidthPx - LABEL_INSET_PX;
   return (
     <svg
       data-testid="faceplate-svg"
@@ -161,10 +169,11 @@ export function Faceplate({
       {renderFace(face, opts, highlight, movePreview)}
       {side && (
         <text
-          x={dims.frameWidthPx + LABEL_GUTTER / 2}
+          x={labelX}
           y={height / 2}
           textAnchor="middle"
-          transform={`rotate(90, ${dims.frameWidthPx + LABEL_GUTTER / 2}, ${height / 2})`}
+          dominantBaseline="central"
+          transform={`rotate(90, ${labelX}, ${height / 2})`}
           fontSize={11}
           fontWeight={600}
           fontFamily="Inter, system-ui, sans-serif"

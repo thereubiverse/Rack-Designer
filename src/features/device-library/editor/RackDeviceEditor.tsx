@@ -12,7 +12,7 @@ import { PortSettings, BatchSettings } from "./PortSettings";
 import { BrandPicker } from "./BrandPicker";
 import { Select } from "./Select";
 import {
-  addPortGroup, movePortGroup, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
+  addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices,
   type GridBounds, type PortRef,
 } from "./portGroupOps";
@@ -388,6 +388,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               side={side}
               selectedGroupIds={selectedGroupIds}
               onSelect={selectGroup}
+              onMarqueeSelect={(ids, additive) => {
+                setSelectedPortIndices([]);
+                setSelectedGroupIds((prev) => (additive ? [...new Set([...prev, ...ids])] : ids));
+              }}
               onCreate={(media, pos) => {
                 const before = activeFace.portGroups.length;
                 const next = addPortGroup(activeFace, media, pos, bounds, snapToGrid ? GRID_PX : 1);
@@ -396,7 +400,23 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               }}
               snapToGrid={snapToGrid}
               paletteDragMedia={paletteDrag?.media ?? null}
-              onMove={(id, target) => setActiveFace(movePortGroup(activeFace, id, target, bounds, { snap: snapToGrid, allowVertical: (draft.rackUnits >= 1 ? draft.rackUnits : 1) >= 2 }))}
+              onMove={(id, target) => setActiveFace(movePortGroup(activeFace, id, target, bounds, { snap: false, allowVertical: (draft.rackUnits >= 1 ? draft.rackUnits : 1) >= 2 }))}
+              onMoveGroups={(ids, delta) => setActiveFace(moveGroups(activeFace, ids, delta, bounds))}
+              onDuplicate={(ids) => {
+                const { face: nf, newIds } = duplicateGroups(activeFace, ids);
+                setActiveFace(nf);
+                setSelectedPortIndices([]);
+                setSelectedGroupIds(newIds);
+                return newIds;
+              }}
+              onDuplicateDrop={(newIds, delta) => {
+                // Discard the copies on a no-move or an overlapping drop; otherwise place them.
+                setActiveFace((prev) => {
+                  if (!delta) return deletePortGroups(prev, newIds);
+                  const moved = moveGroups(prev, newIds, delta, bounds);
+                  return moved === prev ? deletePortGroups(prev, newIds) : moved;
+                });
+              }}
               onAddColumn={(id) => setActiveFace((prev) => addColumn(prev, id, bounds))}
               onAddRow={(id) => setActiveFace((prev) => addRow(prev, id, bounds))}
               onRemoveColumn={(id) => setActiveFace((prev) => removeColumn(prev, id))}

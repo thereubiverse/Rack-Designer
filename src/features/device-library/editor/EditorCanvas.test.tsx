@@ -50,13 +50,28 @@ describe("EditorCanvas overlay", () => {
     expect(onSelect).toHaveBeenCalledWith("g1", false);
   });
 
-  it("clicking empty overlay space deselects", () => {
+  it("clicking empty overlay space (no drag) deselects", () => {
     const onSelect = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" onSelect={onSelect} />,
     );
-    fireEvent.click(getByTestId("editor-overlay"));
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 50, clientY: 50 }); // no movement → deselect
     expect(onSelect).toHaveBeenCalledWith(null, false);
+  });
+
+  it("dragging a marquee on blank space selects the groups it touches", () => {
+    const onMarqueeSelect = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onMarqueeSelect={onMarqueeSelect} />,
+    );
+    // drag a box across the whole overlay → should include g1
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 0, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 900, clientY: 200 });
+    expect(onMarqueeSelect).toHaveBeenCalled();
+    expect(onMarqueeSelect.mock.calls[0][0]).toContain("g1");
   });
 
   it("marks the selected group's box", () => {

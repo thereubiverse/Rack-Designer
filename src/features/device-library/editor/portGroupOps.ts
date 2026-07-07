@@ -17,6 +17,22 @@ export function groupBounds(group: PortGroup): Rect {
   return { x: group.gridX, y: group.gridY, width: laid.width, height: laid.height };
 }
 
+// Extra reach (device px) around a group so the marquee grabs anything it gets NEAR, not just
+// overlaps — a full port cell of slack on every side.
+const MARQUEE_REACH = 24;
+
+/** Ids of groups the marquee `rect` touches or comes near (device coords, generous intersect). */
+export function groupsIntersectingRect(face: Face, rect: Rect, bounds: GridBounds): string[] {
+  const rl = rect.x, rr = rect.x + rect.width, rt = rect.y, rb = rect.y + rect.height;
+  const pad = MARQUEE_REACH;
+  return face.portGroups.filter((g) => {
+    const laid = layoutPortGroup(g, bounds.height);
+    const gl = g.gridX - pad, gr = g.gridX + laid.width + pad;
+    const gt = laid.top - LABEL_H - pad, gb = laid.top + laid.height + LABEL_H + pad;
+    return gl <= rr && gr >= rl && gt <= rb && gb >= rt;
+  }).map((g) => g.id);
+}
+
 function groupWidth(g: PortGroup): number {
   return g.cols * CELL_W + Math.max(0, g.cols - 1) * g.colSpacing;
 }
@@ -109,6 +125,39 @@ export function movePortGroup(
   const free = findFreePosition(face, moved, { x: target.x, y: g.gridY }, bounds, id, step);
   if (!free) return face;
   return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? { ...moved, gridX: free.x } : x)) };
+}
+
+/** Duplicate a set of groups (new ids, same positions). The copies are appended; returns the
+ *  new face and the new ids (for selecting + dragging the copies). */
+export function duplicateGroups(face: Face, ids: string[]): { face: Face; newIds: string[] } {
+  const set = new Set(ids);
+  const copies: PortGroup[] = [];
+  const newIds: string[] = [];
+  for (const g of face.portGroups) {
+    if (!set.has(g.id)) continue;
+    const nid = crypto.randomUUID();
+    newIds.push(nid);
+    copies.push({ ...g, id: nid, portOverrides: { ...g.portOverrides } });
+  }
+  return { face: { ...face, portGroups: [...face.portGroups, ...copies] }, newIds };
+}
+
+/** Move a whole set of groups by a shared delta (px), preserving their relative layout.
+ *  yOffset is clamped per group. Rejected (returns the original face) if the moved set would
+ *  overlap any group that isn't in the set. Position/snap resolution is the caller's job. */
+export function moveGroups(
+  face: Face, ids: string[], delta: { dx: number; dyOffset: number }, bounds: GridBounds,
+): Face {
+  const set = new Set(ids);
+  const moved = face.portGroups.map((g) => set.has(g.id)
+    ? { ...g, gridX: g.gridX + delta.dx, yOffset: resolveYOffset(g, (g.yOffset ?? 0) + delta.dyOffset, bounds, 1) }
+    : g);
+  for (const g of moved) {
+    if (!set.has(g.id)) continue;
+    const gr = groupRect(g, bounds);
+    if (moved.some((o) => !set.has(o.id) && rectsOverlap(gr, groupRect(o, bounds)))) return face; // reject
+  }
+  return { ...face, portGroups: moved };
 }
 
 /** Max rows a group may have — 2 per rack unit. */

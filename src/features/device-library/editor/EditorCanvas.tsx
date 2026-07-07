@@ -5,6 +5,10 @@ import { Faceplate, type HighlightPort } from "@/features/device-library/facepla
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
+import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
+
+// How close (screen px) a group edge/gap must get before a smart guide snaps.
+const GUIDE_THRESHOLD_PX = 6;
 
 // Vertical breathing room for the selection box labels + bottom edge controls.
 // Horizontal is 0 so the device spans the full canvas width — the left ear lines
@@ -23,6 +27,7 @@ export interface EditorCanvasProps {
   highlight?: HighlightPort | HighlightPort[] | null;
   onCreate?: (media: Media, pos: Pos) => void;
   onSelect?: (id: string | null, additive: boolean) => void;
+  onMarqueeSelect?: (ids: string[], additive: boolean) => void;
   onSelectPort?: (index: number, additive: boolean) => void;
   onPortMedia?: (groupId: string, index: number, media: Media) => void;
   onAddColumn?: (id: string) => void;
@@ -30,6 +35,11 @@ export interface EditorCanvasProps {
   onRemoveColumn?: (id: string) => void;
   onRemoveRow?: (id: string) => void;
   onMove?: (id: string, target: { x: number; yOffset: number }) => void;
+  onMoveGroups?: (ids: string[], delta: { dx: number; dyOffset: number }) => void;
+  /** Alt+drag: duplicate `ids`, select the copies, and return their new ids to drag. */
+  onDuplicate?: (ids: string[]) => string[];
+  /** End of an Alt+drag: place the copies at `delta`, or discard them (delta null / rejected). */
+  onDuplicateDrop?: (newIds: string[], delta: { dx: number; dyOffset: number } | null) => void;
   onSpacing?: (id: string, spacing: { colSpacing: number; rowSpacing: number }) => void;
   snapToGrid?: boolean;
   /** Media of the palette chip currently being dragged (for the drop-preview box). */
@@ -43,13 +53,14 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const dims = frameDims({ widthIn, rackUnits, rackMounted });
   const earX = dims.earWidthPx;
 
-  const LABEL_GUTTER = 22; // matches Faceplate's FRONT/BACK gutter (side is always set here)
-  const svgW = dims.frameWidthPx + LABEL_GUTTER;
+  // No label gutter — the FRONT/BACK label sits inside the frame, so the device fills the
+  // full width and its right edge lines up with the toolbar toggles.
+  const svgW = dims.frameWidthPx;
   const svgH = dims.heightPx;
   // Scale off a constant reference (the full rack-mounted 19" frame) so toggling
   // Rack Mounted — which shrinks the frame — doesn't change the scale, and the
   // render height stays put instead of shifting vertically.
-  const scaleRefW = RAIL_WIDTH_IN * PX_PER_IN + LABEL_GUTTER;
+  const scaleRefW = RAIL_WIDTH_IN * PX_PER_IN;
   const outerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const scaleRef = useRef(1);
@@ -59,8 +70,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
     if (!el || typeof ResizeObserver === "undefined") return;
     const apply = () => {
       // Reserve the horizontal padding so the padded box never overflows into a scrollbar.
+      // Scale to fill the width (SVG scales cleanly, so growing past 1 is fine) — a full
+      // rack device then spans the container and its right edge lines up with the toolbar.
       const avail = el.clientWidth - CANVAS_PAD_X * 2;
-      const s = avail > 0 ? Math.min(1, avail / scaleRefW) : 1;
+      const s = avail > 0 ? avail / scaleRefW : 1;
       scaleRef.current = s;
       setScale(s);
     };
@@ -71,8 +84,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
   }, [scaleRefW]);
 
   const [drag, setDrag] = useState<
-    { id: string; startX: number; startY: number; origX: number; origY: number; origOffset: number; dx: number; dy: number } | null
+    { id: string; ids: string[]; duplicate?: boolean; startX: number; startY: number; origX: number; origY: number; origOffset: number; dx: number; dy: number } | null
   >(null);
+  // Marquee (rubber-band) selection state — client coords; converted on use. (Effect below,
+  // after `bounds` is in scope.)
+  const [marquee, setMarquee] = useState<{ sx: number; sy: number; cx: number; cy: number; additive: boolean } | null>(null);
 
   useEffect(() => {
     if (!drag) return;
@@ -86,9 +102,19 @@ export function EditorCanvas(props: EditorCanvasProps) {
       const dy = (e.clientY - drag!.startY) / s;
       // Only commit an actual move — a plain select-click (no movement) must not
       // mutate the face (avoids a redundant re-render and off-grid re-snapping).
-      if (dx !== 0 || dy !== 0) {
-        // Only carry a vertical delta on devices tall enough to move groups up/down.
-        props.onMove?.(drag!.id, { x: drag!.origX + dx, yOffset: allowVertical ? drag!.origOffset + dy : drag!.origOffset });
+      const moved = dx !== 0 || dy !== 0;
+      // Delta from the set's original position (guides/grid/clamp applied).
+      const delta = (() => {
+        if (!moved) return null;
+        if (drag!.ids.length > 1) { const m = resolveMultiMove(drag!.ids, dx, dy); return m ? { dx: m.dx, dyOffset: m.dyOffset } : null; }
+        const r = resolveDrag(drag!.id, dx, dy);
+        return r ? { dx: r.liveX - drag!.origX, dyOffset: r.liveOffsetY - drag!.origOffset } : null;
+      })();
+      if (drag!.duplicate) {
+        props.onDuplicateDrop?.(drag!.ids, delta); // place the copies, or discard on no-move/overlap
+      } else if (moved) {
+        if (drag!.ids.length > 1) { if (delta) props.onMoveGroups?.(drag!.ids, delta); }
+        else { const r = resolveDrag(drag!.id, dx, dy); if (r) props.onMove?.(drag!.id, { x: r.liveX, yOffset: r.liveOffsetY }); }
       }
       setDrag(null);
     }
@@ -157,6 +183,96 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const snapStep = props.snapToGrid ? GRID_PX : 1;
   const allowVertical = rackUnits >= 2;
   const snapX = (x: number) => (snapStep > 1 ? Math.round(x / snapStep) * snapStep : x);
+
+  function clientToDevice(clientX: number, clientY: number): Pos {
+    const rect = overlayRef.current?.getBoundingClientRect();
+    return toDevicePos({ x: clientX, y: clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
+  }
+  // Select every group the current marquee rectangle touches. Intersects the group boxes'
+  // ACTUAL on-screen rects (client coords) so the hit test can never drift from what's drawn;
+  // the box wraps the glyphs + labels and SLACK adds a little extra reach.
+  function marqueeSelect(sx: number, sy: number, ex: number, ey: number, additive: boolean) {
+    const ml = Math.min(sx, ex), mr = Math.max(sx, ex), mt = Math.min(sy, ey), mb = Math.max(sy, ey);
+    const SLACK = 8;
+    const ids: string[] = [];
+    overlayRef.current?.querySelectorAll('[data-testid^="group-box-"]').forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.left - SLACK < mr && r.right + SLACK > ml && r.top - SLACK < mb && r.bottom + SLACK > mt) {
+        ids.push((el.getAttribute("data-testid") || "").replace("group-box-", ""));
+      }
+    });
+    props.onMarqueeSelect?.(ids, additive);
+  }
+  // Marquee lifecycle: select LIVE as it's dragged (so it never depends on the release point),
+  // and deselect on a plain click.
+  useEffect(() => {
+    if (!marquee) return;
+    const { sx, sy, additive } = marquee;
+    function onMove(e: PointerEvent) {
+      setMarquee((m) => (m ? { ...m, cx: e.clientX, cy: e.clientY } : m));
+      if (Math.abs(e.clientX - sx) > 2 || Math.abs(e.clientY - sy) > 2) marqueeSelect(sx, sy, e.clientX, e.clientY, additive);
+    }
+    function onUp(e: PointerEvent) {
+      const moved = Math.abs(e.clientX - sx) > 2 || Math.abs(e.clientY - sy) > 2;
+      if (moved) marqueeSelect(sx, sy, e.clientX, e.clientY, additive);
+      else props.onSelect?.(null, false); // plain click on blank → deselect
+      setMarquee(null);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [marquee, face, bounds, props]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resolve a live drag position: smart guides win when a guide is within threshold,
+  // otherwise fall back to grid-snap / free. Returns the clamped live position + the guide
+  // lines & equal-spacing brackets to draw. Shared by the render, move preview, and commit.
+  function resolveDrag(gid: string, dx: number, dy: number): { liveX: number; liveOffsetY: number; lines: GuideLine[]; spacings: SpacingGuide[] } | null {
+    const g = face.portGroups.find((x) => x.id === gid);
+    if (!g) return null;
+    const rawX = g.gridX + dx;
+    const rawOffsetY = allowVertical ? (g.yOffset ?? 0) + dy : (g.yOffset ?? 0);
+    let x = rawX, yOff = rawOffsetY;
+    let lines: GuideLine[] = [], spacings: SpacingGuide[] = [];
+    const gr = computeGuides(face, gid, { x: rawX, yOffset: rawOffsetY }, bounds, { threshold: GUIDE_THRESHOLD_PX / (scaleRef.current || 1), allowVertical });
+    if (gr.lines.length || gr.spacings.length) { x = gr.x; yOff = gr.yOffset; lines = gr.lines; spacings = gr.spacings; }
+    else x = snapX(rawX);
+    const laidW = layoutPortGroup(g, dims.heightPx).width;
+    const liveMax = Math.max(SEL_PAD, bounds.width - laidW - SEL_PAD);
+    const liveX = Math.max(SEL_PAD, Math.min(x, liveMax));
+    const guideY = lines.some((l) => l.axis === "y");
+    const liveOffsetY = allowVertical ? resolveYOffset(g, yOff, bounds, guideY ? 1 : snapStep) : (g.yOffset ?? 0);
+    return { liveX, liveOffsetY, lines, spacings };
+  }
+  const activeDrag = drag ? resolveDrag(drag.id, drag.dx, drag.dy) : null;
+
+  // Resolve a multi-group move: apply a shared raw delta, then snap the selection's outer
+  // bounding box (smart guides → grid), clamp it to the body, and return the final delta +
+  // guides. Each moving group ends up at its original position + this delta.
+  function resolveMultiMove(ids: string[], rawDx: number, rawDy: number): { dx: number; dyOffset: number; lines: GuideLine[]; spacings: SpacingGuide[] } | null {
+    const movers = ids.map((id) => face.portGroups.find((g) => g.id === id)).filter((g): g is NonNullable<typeof g> => !!g);
+    if (movers.length < 2) return null;
+    const cand: Rect[] = movers.map((g) => rectOf(g, bounds, { gridX: g.gridX + rawDx, yOffset: allowVertical ? (g.yOffset ?? 0) + rawDy : (g.yOffset ?? 0) }));
+    const bbox: Rect = {
+      left: Math.min(...cand.map((r) => r.left)), right: Math.max(...cand.map((r) => r.right)),
+      top: Math.min(...cand.map((r) => r.top)), bottom: Math.max(...cand.map((r) => r.bottom)),
+      cx: 0, cy: 0, w: 0, h: 0,
+    };
+    bbox.cx = (bbox.left + bbox.right) / 2; bbox.cy = (bbox.top + bbox.bottom) / 2; bbox.w = bbox.right - bbox.left; bbox.h = bbox.bottom - bbox.top;
+    const others = face.portGroups.filter((g) => !ids.includes(g.id)).map((o) => rectOf(o, bounds));
+    let ddx = 0, ddy = 0, lines: GuideLine[] = [], spacings: SpacingGuide[] = [];
+    const gridSnap = (v: number) => (snapStep > 1 ? Math.round(v / snapStep) * snapStep - v : 0);
+    const gr = guidesForMovingRect(bbox, others, bounds, { threshold: GUIDE_THRESHOLD_PX / (scaleRef.current || 1), allowVertical });
+    if (gr.lines.length || gr.spacings.length) { ddx = gr.ddx; ddy = gr.ddy; lines = gr.lines; spacings = gr.spacings; }
+    else ddx = gridSnap(bbox.left);
+    // clamp the bounding box inside the body
+    const bl = bbox.left + ddx, br = bbox.right + ddx;
+    if (bl < SEL_PAD) ddx += SEL_PAD - bl; else if (br > bounds.width - SEL_PAD) ddx -= br - (bounds.width - SEL_PAD);
+    if (allowVertical) { const bt = bbox.top + ddy, bb = bbox.bottom + ddy; if (bt < 0) ddy -= bt; else if (bb > bounds.height) ddy -= bb - bounds.height; }
+    return { dx: rawDx + ddx, dyOffset: allowVertical ? rawDy + ddy : 0, lines, spacings };
+  }
+  const isMulti = !!drag && drag.ids.length > 1;
+  const multiDrag = isMulti && drag ? resolveMultiMove(drag.ids, drag.dx, drag.dy) : null;
+  const guideData = isMulti ? multiDrag : activeDrag; // which drag's guides to draw
 
   // The clamped-to-body selection box for a group, in overlay-local coords. Shared by the
   // live selection box and the palette drop-preview so they line up exactly.
@@ -227,13 +343,20 @@ export function EditorCanvas(props: EditorCanvasProps) {
   // offset as the selection box, so they track the box during the drag.
   const movePreview = (() => {
     if (!drag) return null;
+    if (isMulti && multiDrag) {
+      return drag.ids.flatMap((id) => {
+        const g = face.portGroups.find((x) => x.id === id);
+        if (!g) return [];
+        const laidW = rectOf(g, bounds).w;
+        const liveX = Math.max(SEL_PAD, Math.min(g.gridX + multiDrag.dx, bounds.width - laidW - SEL_PAD));
+        const liveOffsetY = resolveYOffset(g, (g.yOffset ?? 0) + multiDrag.dyOffset, bounds, 1);
+        return [{ groupId: id, offsetX: liveX - g.gridX, offsetY: liveOffsetY - (g.yOffset ?? 0) }];
+      });
+    }
+    if (!activeDrag) return null;
     const g = face.portGroups.find((x) => x.id === drag.id);
     if (!g) return null;
-    const laidW = layoutPortGroup(g, dims.heightPx).width;
-    const liveMax = Math.max(SEL_PAD, bounds.width - laidW - SEL_PAD);
-    const liveX = Math.max(SEL_PAD, Math.min(snapX(g.gridX + drag.dx), liveMax));
-    const liveOffsetY = allowVertical ? resolveYOffset(g, (g.yOffset ?? 0) + drag.dy, bounds, snapStep) : (g.yOffset ?? 0);
-    return { groupId: g.id, offsetX: liveX - g.gridX, offsetY: liveOffsetY - (g.yOffset ?? 0) };
+    return { groupId: g.id, offsetX: activeDrag.liveX - g.gridX, offsetY: activeDrag.liveOffsetY - (g.yOffset ?? 0) };
   })();
 
   return (
@@ -253,7 +376,12 @@ export function EditorCanvas(props: EditorCanvasProps) {
           ref={overlayRef}
           data-testid="editor-overlay"
           style={{ position: "absolute", inset: 0 }}
-          onClick={() => props.onSelect?.(null, false)}
+          onPointerDown={(e) => {
+            // Blank-canvas press (group boxes stop propagation) → start a marquee; a plain
+            // click with no drag deselects on release.
+            if (!props.onSelect || e.button !== 0) return;
+            setMarquee({ sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY, additive: e.shiftKey });
+          }}
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move"; // suppress the native "+" copy badge
@@ -295,14 +423,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const singleSelected = selectedIds.length === 1 && selectedIds[0] === g.id;
             const boxTop = laid.top;
             const dragging = drag?.id === g.id;
-            // Clamp the live-drag x to the body so the box can't be dragged off the device
-            // (matches the on-drop clamp, so there's no snap-back either). Snap when the grid
-            // toggle is on so the box jumps to grid lines as you drag.
-            const rawLiveX = dragging ? snapX(g.gridX + drag!.dx) : g.gridX;
-            const liveMax = Math.max(SEL_PAD, bounds.width - laid.width - SEL_PAD);
-            const liveX = Math.max(SEL_PAD, Math.min(rawLiveX, liveMax));
-            // Live vertical offset (2RU+ only); box + ports shift by dyVisual during the drag.
-            const liveOffsetY = dragging && allowVertical ? resolveYOffset(g, (g.yOffset ?? 0) + drag!.dy, bounds, snapStep) : (g.yOffset ?? 0);
+            const inMulti = isMulti && !!multiDrag && !!drag?.ids.includes(g.id);
+            // Live position: multi-move shifts every group in the set by the shared delta;
+            // otherwise the single dragged group uses the shared resolver; others stay put.
+            const liveX = inMulti
+              ? Math.max(SEL_PAD, Math.min(g.gridX + multiDrag!.dx, bounds.width - laid.width - SEL_PAD))
+              : (dragging && activeDrag ? activeDrag.liveX : g.gridX);
+            const liveOffsetY = inMulti
+              ? resolveYOffset(g, (g.yOffset ?? 0) + multiDrag!.dyOffset, bounds, 1)
+              : (dragging && activeDrag ? activeDrag.liveOffsetY : (g.yOffset ?? 0));
             const dyVisual = liveOffsetY - (g.yOffset ?? 0);
             const liveBoxTop = boxTop + dyVisual;
             const invalid = dragging && wouldOverlapAt(face, { ...g, yOffset: liveOffsetY }, { x: liveX, y: g.gridY }, bounds);
@@ -321,17 +450,37 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const cB = Math.min(rawH, dims.heightPx - rawTop);
             const cW = Math.max(0, cR - cL);
             const cH = Math.max(0, cB - cT);
+            // Only the glyph area "grabs" the group; presses on the surrounding padding fall
+            // through (no stopPropagation) to the overlay so a marquee can start there.
+            const onGlyph = (e: React.PointerEvent | React.MouseEvent) => {
+              const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              if (box.width <= 0) return true; // unmeasurable (e.g. jsdom) → whole box grabs
+              const s = scaleRef.current || 1;
+              const lx = (e.clientX - box.left) / s, ly = (e.clientY - box.top) / s;
+              return lx >= SEL_PAD && lx <= SEL_PAD + laid.width && ly >= LABEL_H + SEL_PAD && ly <= LABEL_H + SEL_PAD + laid.height;
+            };
             return (
               <div
                 key={g.id}
                 data-testid={`group-box-${g.id}`}
                 data-selected={selected ? "true" : "false"}
                 className="group"
-                onClick={(e) => { e.stopPropagation(); props.onSelect?.(g.id, e.shiftKey); }}
+                onClick={(e) => { if (!onGlyph(e)) return; e.stopPropagation(); props.onSelect?.(g.id, e.shiftKey); }}
                 onPointerDown={(e) => {
-                  if (!props.onMove) return;
+                  if (!props.onMove || !onGlyph(e)) return;
                   e.stopPropagation();
-                  setDrag({ id: g.id, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, origOffset: g.yOffset ?? 0, dx: 0, dy: 0 });
+                  // The set to act on: this group's multi-selection, or just this group.
+                  const selIds = props.selectedGroupIds ?? [];
+                  const setIds = selIds.length > 1 && selIds.includes(g.id) ? selIds : [g.id];
+                  // Alt+drag → duplicate the set and drag the copies (originals stay put).
+                  if (e.altKey && props.onDuplicate) {
+                    const newIds = props.onDuplicate(setIds);
+                    if (newIds.length) {
+                      setDrag({ id: newIds[0], ids: newIds, duplicate: true, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, origOffset: g.yOffset ?? 0, dx: 0, dy: 0 });
+                      return;
+                    }
+                  }
+                  setDrag({ id: g.id, ids: setIds, startX: e.clientX, startY: e.clientY, origX: g.gridX, origY: g.gridY, origOffset: g.yOffset ?? 0, dx: 0, dy: 0 });
                 }}
                 style={{
                   position: "absolute",
@@ -432,6 +581,31 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   zIndex: 15,
                 }}
               />
+            );
+          })()}
+          {guideData && (guideData.lines.length > 0 || guideData.spacings.length > 0) && (
+            <>
+              {guideData.lines.map((l, i) => l.axis === "x" ? (
+                <div key={`gl${i}`} data-testid="align-guide" style={{ position: "absolute", left: earX + l.pos, top: Math.min(l.start, l.end), width: 0, height: Math.abs(l.end - l.start), borderLeft: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
+              ) : (
+                <div key={`gl${i}`} data-testid="align-guide" style={{ position: "absolute", left: earX + Math.min(l.start, l.end), top: l.pos, width: Math.abs(l.end - l.start), height: 0, borderTop: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
+              ))}
+              {guideData.spacings.map((s, i) => (
+                <div key={`gs${i}`} data-testid="spacing-guide">
+                  <div style={{ position: "absolute", left: earX + Math.min(s.start, s.end), top: s.y, width: Math.abs(s.end - s.start), height: 0, borderTop: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
+                  <div style={{ position: "absolute", left: earX + (s.start + s.end) / 2, top: s.y, transform: "translate(-50%,-140%)", background: "#2d5bff", color: "#fff", fontSize: 9, lineHeight: "12px", padding: "0 4px", borderRadius: 3, pointerEvents: "none", zIndex: 31, whiteSpace: "nowrap" }}>{s.gap}px</div>
+                </div>
+              ))}
+            </>
+          )}
+          {marquee && (() => {
+            const a = clientToDevice(marquee.sx, marquee.sy), b = clientToDevice(marquee.cx, marquee.cy);
+            // Clamp to the device body so the marquee never spills into the ears or past the edges.
+            const clx = (v: number) => Math.max(0, Math.min(v, bounds.width));
+            const cly = (v: number) => Math.max(0, Math.min(v, bounds.height));
+            const x1 = clx(a.x), x2 = clx(b.x), y1 = cly(a.y), y2 = cly(b.y);
+            return (
+              <div data-testid="marquee" style={{ position: "absolute", left: earX + Math.min(x1, x2), top: Math.min(y1, y2), width: Math.abs(x1 - x2), height: Math.abs(y1 - y2), border: "1px solid #2d5bff", background: "rgba(45,91,255,0.06)", pointerEvents: "none", zIndex: 25 }} />
             );
           })()}
               </div>
