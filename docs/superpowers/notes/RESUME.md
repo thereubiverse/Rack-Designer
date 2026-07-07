@@ -57,6 +57,21 @@ Everything stacks; each branch is based on the previous:
      the grab point (native drag image + "+" badge suppressed); over empty device space a **50%-opacity
      drop-preview box** shows where the new group lands (shared `clampedBox`); over a port → port highlight.
   NO spec doc written for this one yet.
+- ✅ **Editor interaction features (2026-07-06, commit `c120a26`, PUSHED):**
+  - **Front/Back label** now sits on the right ear, centered between the screws (dominant-baseline central);
+    ears off → just inside the body's right edge. Gutter removed; render scales to fill so the device's
+    right edge lines up with the toolbar toggles (EditorCanvas scale no longer clamped to 1).
+  - **Smart guides** (`alignmentGuides.ts`, pure+tested) while dragging a group: edge/center alignment
+    (H + vertical on 2RU+), equal spacing, centered-between, device center, equal-distance-to-edge. Dashed
+    blue lines + px spacing brackets, clamped to body. Core `guidesForMovingRect` reused by multi-move.
+  - **Marquee select**: drag blank/padding → selects every group the box touches; **selects LIVE during the
+    drag** (doesn't depend on release), intersects the real on-screen group rects, solid line, body-clamped.
+    Groups only grab presses on their **glyph** (`onGlyph` gate) so the padding around them is marquee-able.
+  - **Multi-group move**: drag a multi-selection → moves the set together (snap, guides on bounding box,
+    external-overlap block, body clamp). Pure `moveGroups`.
+  - **Alt/Option+drag = duplicate**: clones the set, drags the copies, originals stay; copies discarded on
+    no-move/overlapping drop. Pure `duplicateGroups`. Alt no longer suppresses guides. `Faceplate.movePreview`
+    accepts an array. NO spec doc for this batch.
 - ✅ **Editor visual polish (2026-07-06, commit `49904c5`, PUSHED):** hover states on all clickable editor
   controls (white → `#f5f5f5` = middle-section bg; blue Create/Add desaturate); middle section bg `#f5f5f5`;
   faceplate palette — white body `#ffffff`, ears+outline+seams `#d4d4d4`, screw holes `#a3a3a3`; frame
