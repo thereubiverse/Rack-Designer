@@ -1,6 +1,35 @@
 # RESUME — where we are & how to continue
 
-_Last updated: 2026-07-06 (marquee select bugfix; 237 tests green — NOT yet committed)_
+_Last updated: 2026-07-07 (vertical port/label placement feature set; 262 tests green)_
+
+## Vertical port/label placement (2026-07-07) — single/2-row/3+ snap positions + left handle
+Editor feature built iteratively (all in `EditorCanvas.tsx`, `portGroupOps.ts`, `RackDeviceEditor.tsx`,
+`PortSettings.tsx`). Pure ops all TDD'd in `portGroupOps.test.ts`.
+- **Left up/down handle** (blue filled triangles, `chevronStyle` circle, left edge of the box) controls
+  the vertical port/label POSITION. `vertDrag` state, live-commits on drag:
+  - single-row (rows===1): 6 positions (`singleRowPositions`/`rankForRowState`/`resolveRowRank`) — glyph
+    slides in a 1RU slot from top-pad-edge(label below) → high → centre-top(default) → centre-bottom →
+    low → bottom-pad-edge(label above). Commits `onVerticalMove(id, yOffset, labelPos)`.
+  - 2-row: 2 positions (`twoRowPositions`/`rankForTwoRowState`) — rows together (labels outside) ↔ spread
+    to pad edges (`TWO_ROW_SPREAD`=24, labels swapped inside via `setRowLabels`). Commits `onRowSnap`.
+  - 3+ rows: all labels default BOTTOM (`layoutPortGroup` + `addRow` resets on 2→3); the handle only flips
+    all labels above/below (`labelSidePositions`/`rankForLabelSide`), glyphs stay put.
+- **Standalone Label toggle is HIDDEN for ALL groups** (`hideLabel` on PortSettings/BatchSettings) — the
+  left handle owns the label side, so it can never go out of bounds.
+- **Spacing handle** = spacing only now (`spaceDrag`): columns always; rows only when `maxRow>0` (2RU+);
+  smooth, or grid-stepped when snap-to-grid on. Hidden when nothing to space (lone port). Removed the
+  earlier snap-on-spacing-handle behavior.
+- **1RU selection box** for single-row groups. On 1RU the box fills the device (fixed slot, glyph slides).
+  On **2RU+** the box FOLLOWS the port during a whole-group drag but STAYS 1RU tall: `resolveSingleRowBoxOffset`
+  snaps the BOX top to 25%-of-1RU (`vSnapStep`=RU_PX/4=21) when snap-on and clamps it to `[0, H−RU_PX]` so
+  the box never shrinks/clips. Ghost/drop-preview box is 1RU too. `RU_PX` const in faceplate-geometry.
+- **Bugs fixed this session:** marquee glyph-bounds hit-test (was padded box); in-box control clicks
+  (chevrons/spacing/vert-handle) now stopPropagation so they don't bubble to the wrapper's clearSelection
+  and deselect; `addRow` 1→2 resets the single-row snap state (was placing the new row off-centre + label
+  overlap). NO spec doc written for this feature set.
+
+## Prior state
+_Marquee select bugfix (2026-07-06); 237 tests green — committed as b6964fa/pushed._
 
 ## Project
 Network documentation platform (rack builder). Next.js 16 + Supabase (local via Docker +

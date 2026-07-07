@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PortSettings } from "./PortSettings";
+import { PortSettings, BatchSettings } from "./PortSettings";
 
 describe("PortSettings", () => {
   it("shows the port label and current name", () => {
@@ -48,5 +48,24 @@ describe("PortSettings", () => {
     render(<PortSettings portLabel="01" name="" rotation={0} labelPos="top" onChange={onChange} />);
     await user.click(screen.getByTestId("port-labelpos"));
     expect(onChange).toHaveBeenLastCalledWith({ labelPos: "bottom" });
+  });
+
+  it("hides the label toggle when hideLabel is set (label owned by the vertical snap)", () => {
+    render(<PortSettings portLabel="01" name="" rotation={0} labelPos="top" onChange={() => {}} hideLabel />);
+    expect(screen.queryByTestId("port-labelpos")).toBeNull();
+    expect(screen.getByTestId("port-flip")).toBeInTheDocument(); // flip still available
+  });
+});
+
+describe("BatchSettings", () => {
+  it("hides the label toggle when hideLabel is set", () => {
+    render(<BatchSettings title="2 ports selected" rotated="off" labelPos="top" onFlip={() => {}} onLabel={() => {}} hideLabel />);
+    expect(screen.queryByTestId("batch-labelpos")).toBeNull();
+    expect(screen.getByTestId("batch-flip")).toBeInTheDocument();
+  });
+
+  it("shows the label toggle by default", () => {
+    render(<BatchSettings title="2 ports selected" rotated="off" labelPos="top" onFlip={() => {}} onLabel={() => {}} />);
+    expect(screen.getByTestId("batch-labelpos")).toBeInTheDocument();
   });
 });

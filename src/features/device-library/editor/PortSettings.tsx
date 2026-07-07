@@ -1,7 +1,7 @@
 "use client";
 
 export function PortSettings({
-  portLabel, name, rotation, labelPos, onChange, embedded, typeLabel, connectorType, connectorOptions,
+  portLabel, name, rotation, labelPos, onChange, embedded, hideLabel, typeLabel, connectorType, connectorOptions,
 }: {
   portLabel: string;
   name: string;
@@ -9,6 +9,9 @@ export function PortSettings({
   labelPos: "top" | "bottom";
   onChange: (patch: { name?: string; rotation?: number; labelPos?: "top" | "bottom"; connectorType?: string }) => void;
   embedded?: boolean;
+  /** Hide the label-side toggle — used for single-row groups, whose label is owned by the
+   *  vertical snap so it can never sit out of bounds. */
+  hideLabel?: boolean;
   /** Set when this port's type differs from its group — shows the type + a connector picker. */
   typeLabel?: string;
   connectorType?: string;
@@ -49,7 +52,7 @@ export function PortSettings({
       </span>
     </button>
   );
-  const labelBtn = (
+  const labelBtn = hideLabel ? null : (
     <button
       type="button"
       data-testid="port-labelpos"
@@ -88,7 +91,7 @@ export function PortSettings({
  *  controls that make sense to apply uniformly: Flip (180° rotation) and Label position.
  *  A "mixed" summary means the targets currently disagree; clicking converges them. */
 export function BatchSettings({
-  title, rotated, labelPos, onFlip, onLabel, onDelete, deleteLabel,
+  title, rotated, labelPos, onFlip, onLabel, onDelete, deleteLabel, hideLabel,
 }: {
   title: string;
   rotated: "on" | "off" | "mixed";
@@ -97,6 +100,9 @@ export function BatchSettings({
   onLabel: () => void;
   onDelete?: () => void;
   deleteLabel?: string;
+  /** Hide the label-side toggle when the selection includes a single-row group (label owned by
+   *  the vertical snap). */
+  hideLabel?: boolean;
 }) {
   const knobOn = rotated === "on";
   const labelText = labelPos === "mixed" ? "Mixed" : labelPos === "top" ? "Top" : "Bottom";
@@ -116,14 +122,16 @@ export function BatchSettings({
             <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-all ${knobOn ? "left-3.5" : "left-0.5"}`} />
           </span>
         </button>
-        <button
-          type="button"
-          data-testid="batch-labelpos"
-          onClick={onLabel}
-          className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
-        >
-          Label: {labelText}
-        </button>
+        {!hideLabel && (
+          <button
+            type="button"
+            data-testid="batch-labelpos"
+            onClick={onLabel}
+            className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-xs font-semibold transition-colors hover:bg-neutral-100"
+          >
+            Label: {labelText}
+          </button>
+        )}
         {onDelete && (
           <button type="button" data-testid="batch-delete" onClick={onDelete} className="mt-1 text-left text-xs text-red-600">
             🗑 {deleteLabel ?? "Delete groups"}

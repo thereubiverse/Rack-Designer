@@ -1,4 +1,4 @@
-import { layoutPortGroup, CELL_W, ROW_H, LABEL_H, U_HEIGHT_IN, PX_PER_IN, GRID_PX } from "@/domain/faceplate-geometry";
+import { layoutPortGroup, CELL_W, ROW_H, LABEL_H, U_HEIGHT_IN, PX_PER_IN, GRID_PX, RU_PX } from "@/domain/faceplate-geometry";
 import type { Face, PortGroup } from "@/domain/faceplate";
 import { CONNECTORS, type Media } from "@/domain/faceplate";
 
@@ -108,6 +108,110 @@ export function resolveYOffset(g: PortGroup, desiredOffset: number, bounds: Grid
   if (step > 1) top = Math.round(top / step) * step; // snap the ICON top, not the box
   top = Math.max(0, Math.min(top, Math.max(0, bounds.height - laid.height)));
   return top - center;
+}
+
+/** Px of vertical drag that advances the single-row snap by one rank. */
+export const SINGLE_ROW_STEP = ROW_H / 2; // 12
+
+export interface RowPosition { yOffset: number; labelPos: "top" | "bottom" }
+
+/** The six vertical snap positions for a single row inside its 1RU slot, ordered top→bottom.
+ *  Offsets are px from centered (glyph local-Y = slot centre + offset). At the extremes the glyph
+ *  tucks against the padding edge and the label sits on the inner side so both stay in the box;
+ *  the centred pair differ only by which side the label is on. Rank 2 (centred, label on top) is
+ *  the default. */
+export function singleRowPositions(): RowPosition[] {
+  const h = ROW_H / 2; // 12
+  return [
+    { yOffset: -2 * h, labelPos: "bottom" }, // 0: glyph at top padding edge, label below
+    { yOffset: -h, labelPos: "top" },        // 1
+    { yOffset: 0, labelPos: "top" },         // 2: default — centred, label on top
+    { yOffset: 0, labelPos: "bottom" },      // 3: centred, label on bottom
+    { yOffset: h, labelPos: "bottom" },      // 4
+    { yOffset: 2 * h, labelPos: "top" },     // 5: glyph at bottom padding edge, label above
+  ];
+}
+
+/** The rank (index into singleRowPositions) matching a group's current offset+label. Falls back
+ *  to the nearest position (offset first, label as a tiebreak) for any off-grid legacy state. */
+export function rankForRowState(yOffset: number, labelPos: "top" | "bottom"): number {
+  const ps = singleRowPositions();
+  const exact = ps.findIndex((p) => p.yOffset === yOffset && p.labelPos === labelPos);
+  if (exact >= 0) return exact;
+  let best = 0, bestD = Infinity;
+  ps.forEach((p, i) => {
+    const d = Math.abs(p.yOffset - yOffset) + (p.labelPos === labelPos ? 0 : 0.5);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  return best;
+}
+
+/** Advance a grabbed rank by a vertical drag (px), clamped to `count` positions (6 by default,
+ *  or 2 for the two-row snap). */
+export function resolveRowRank(grabRank: number, dragPx: number, count = singleRowPositions().length): number {
+  return Math.max(0, Math.min(count - 1, Math.round(grabRank + dragPx / SINGLE_ROW_STEP)));
+}
+
+/** Row spacing (px) that spreads a 2-row group's icons to the top & bottom padding edges of the
+ *  1RU slot: 84 − 2×24 (rows) − 2×6 (pad) = 24. */
+export const TWO_ROW_SPREAD = RU_PX - 2 * ROW_H - 2 * SEL_PAD;
+
+export interface TwoRowPosition { rowSpacing: number; labels: ("top" | "bottom")[] }
+
+/** The two vertical snap positions for a 2-row group: rows together with labels on the outside,
+ *  or spread to the padding edges with the labels swapped to the inside (so nothing clips). */
+export function twoRowPositions(): TwoRowPosition[] {
+  return [
+    { rowSpacing: 0, labels: ["top", "bottom"] },
+    { rowSpacing: TWO_ROW_SPREAD, labels: ["bottom", "top"] },
+  ];
+}
+
+/** The rank (0 together / 1 spread) matching a 2-row group's current row spacing. */
+export function rankForTwoRowState(rowSpacing: number): number {
+  return rowSpacing >= TWO_ROW_SPREAD / 2 ? 1 : 0;
+}
+
+/** The two label-side positions for a dense (3+ row) group, whose glyphs stay put — all labels
+ *  above (rank 0) or all below (rank 1, the default so tight rows don't collide). */
+export function labelSidePositions(): ("top" | "bottom")[] {
+  return ["top", "bottom"];
+}
+
+/** The rank matching a dense group's current (uniform) label side. */
+export function rankForLabelSide(labelPos: "top" | "bottom"): number {
+  return labelPos === "top" ? 0 : 1;
+}
+
+/** Set every port's label side by its row (labels[row]); used by the 2-row snap so both columns
+ *  of a row share a label side. */
+export function setRowLabels(face: Face, id: string, labels: ("top" | "bottom")[]): Face {
+  const g = face.portGroups.find((x) => x.id === id);
+  if (!g) return face;
+  const po = { ...g.portOverrides };
+  for (let i = 0; i < g.rows * g.cols; i++) {
+    const row = Math.floor(i / g.cols);
+    if (row < labels.length) po[i] = { ...po[i], labelPos: labels[row] };
+  }
+  return { ...face, portGroups: face.portGroups.map((x) => (x.id === id ? { ...x, portOverrides: po } : x)) };
+}
+
+/** Resolve a single-row group's vertical offset during a whole-group drag on a tall device. The
+ *  port sits centred in a 1RU-tall box; this snaps the BOX top to `snapStep` and clamps it so the
+ *  full 1RU box always stays inside the device (the box never shrinks at the edges). Returns the
+ *  yOffset (offset of the centred port from the device centre). */
+export function resolveSingleRowBoxOffset(desiredOffset: number, deviceHeight: number, snapStep: number): number {
+  const centeredTop = (deviceHeight - ROW_H) / 2;
+  const slotInset = (RU_PX - ROW_H) / 2;
+  let boxTop = centeredTop + desiredOffset - slotInset;
+  if (snapStep > 1) boxTop = Math.round(boxTop / snapStep) * snapStep;
+  boxTop = Math.max(0, Math.min(deviceHeight - RU_PX, boxTop));
+  return boxTop + slotInset - centeredTop;
+}
+
+/** Set a group's vertical offset directly (used by the single-row vertical snap control). */
+export function setGroupYOffset(face: Face, id: string, yOffset: number): Face {
+  return { ...face, portGroups: face.portGroups.map((g) => (g.id === id ? { ...g, yOffset } : g)) };
 }
 
 export function movePortGroup(
@@ -249,8 +353,21 @@ export function addColumn(face: Face, id: string, bounds: GridBounds): Face {
 }
 
 export function addRow(face: Face, id: string, bounds: GridBounds): Face {
-  const grown = grow(face, id, bounds, { rows: 1 });
+  const before = face.portGroups.find((x) => x.id === id);
+  let grown = grow(face, id, bounds, { rows: 1 });
   const g = grown.portGroups.find((x) => x.id === id);
+  // Crossing 1 → 2 rows: the single-row 6-position snap state (yOffset + inherited label override)
+  // doesn't apply to a 2-row group, which centres its rows and labels them top/bottom. Reset it to
+  // the 2-row default so the new row isn't shoved off-centre with a clipped/overlapping label.
+  if (before && before.rows === 1 && g && g.rows === 2) {
+    grown = { ...grown, portGroups: grown.portGroups.map((x) => (x.id === id ? { ...x, yOffset: 0, rowSpacing: 0 } : x)) };
+    return setRowLabels(grown, id, ["top", "bottom"]);
+  }
+  // Crossing into 3+ rows: dense rows would collide, so every label defaults to the bottom
+  // (replacing the inherited top/bottom split). The left handle can flip them all afterwards.
+  if (before && before.rows === 2 && g && g.rows === 3) {
+    grown = patchPorts(grown, [{ groupId: id, indices: allPortIndices(g) }], { labelPos: "bottom" });
+  }
   // A dense (3+ row) group needs a little row spacing so its (all-bottom) labels have
   // room to show. Seed a sensible default the first time we cross into 3 rows; the
   // user can still adjust it with the spacing handle afterwards.

@@ -13,7 +13,7 @@ import { BrandPicker } from "./BrandPicker";
 import { Select } from "./Select";
 import {
   addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
-  setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices,
+  setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices, setGroupYOffset, setRowLabels,
   type GridBounds, type PortRef,
 } from "./portGroupOps";
 
@@ -402,6 +402,14 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               paletteDragMedia={paletteDrag?.media ?? null}
               onMove={(id, target) => setActiveFace(movePortGroup(activeFace, id, target, bounds, { snap: false, allowVertical: (draft.rackUnits >= 1 ? draft.rackUnits : 1) >= 2 }))}
               onMoveGroups={(ids, delta) => setActiveFace(moveGroups(activeFace, ids, delta, bounds))}
+              onVerticalMove={(id, yOffset, labelPos) => setActiveFace((prev) => {
+                // Snap the row's offset and set every port's label to the side the snapped position
+                // implies. Functional update so it composes with the spacing commit fired in the
+                // same drag move.
+                const g = prev.portGroups.find((x) => x.id === id);
+                const refs = g ? [{ groupId: id, indices: allPortIndices(g) }] : [];
+                return patchPorts(setGroupYOffset(prev, id, yOffset), refs, { labelPos });
+              })}
               onDuplicate={(ids) => {
                 const { face: nf, newIds } = duplicateGroups(activeFace, ids);
                 setActiveFace(nf);
@@ -428,7 +436,9 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 setSelectedGroupIds([gid]);
                 setSelectedPortIndices([index]); // select the changed port so its settings show
               }}
-              onSpacing={(id, spacing) => setActiveFace(setSpacing(activeFace, id, spacing))}
+              onSpacing={(id, spacing) => setActiveFace((prev) => setSpacing(prev, id, spacing))}
+              onRowSnap={(id, colSpacing, rowSpacing, labels) => setActiveFace((prev) =>
+                setRowLabels(setSpacing(prev, id, { colSpacing, rowSpacing }), id, labels))}
               highlight={singleGroupId !== null ? selectedPortIndices.map((i) => ({ groupId: singleGroupId, portIndex: i })) : []}
             />
           </div>
@@ -446,6 +456,8 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 title={`${selectedGroupIds.length} groups selected`}
                 rotated={rotated}
                 labelPos={labelPos}
+                // Labels are owned by each group's left up/down handle, so hide the batch toggle.
+                hideLabel
                 onFlip={() => setActiveFace(patchPorts(activeFace, targetRefs(), { rotation: rotated === "on" ? 0 : 180 }))}
                 onLabel={() => setActiveFace(patchPorts(activeFace, targetRefs(), { labelPos: labelPos === "bottom" ? "top" : "bottom" }))}
                 onDelete={() => { setActiveFace(deletePortGroups(activeFace, selectedGroupIds)); clearSelection(); }}
@@ -475,6 +487,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                     title={`${selectedPortIndices.length} ports selected`}
                     rotated={rotated}
                     labelPos={labelPos}
+                    hideLabel
                     onFlip={() => setActiveFace(patchPorts(activeFace, targetRefs(), { rotation: rotated === "on" ? 0 : 180 }))}
                     onLabel={() => setActiveFace(patchPorts(activeFace, targetRefs(), { labelPos: labelPos === "bottom" ? "top" : "bottom" }))}
                   />
@@ -485,6 +498,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 return (
                   <PortSettings
                     embedded
+                    hideLabel
                     portLabel={cell ? cell.label : String(singlePortIndex + 1)}
                     name={ov.name ?? ""}
                     rotation={ov.rotation ?? 0}

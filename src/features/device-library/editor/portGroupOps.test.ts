@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow, patchPorts, rotatePorts, deletePortGroups, allPortIndices, groupsIntersectingRect } from "./portGroupOps";
+import { groupBounds, wouldOverlap, findFreePosition, SNAP, type GridBounds, addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, updatePortGroup, deletePortGroup, setPortOverride, setPortMedia, setSpacing, maxSpacing, wouldOverlapAt, removeColumn, removeRow, patchPorts, rotatePorts, deletePortGroups, allPortIndices, groupsIntersectingRect, singleRowPositions, rankForRowState, resolveRowRank, setGroupYOffset, twoRowPositions, rankForTwoRowState, setRowLabels, labelSidePositions, rankForLabelSide, resolveSingleRowBoxOffset } from "./portGroupOps";
 import type { Face, PortGroup } from "@/domain/faceplate";
 
 function group(over: Partial<PortGroup> = {}): PortGroup {
@@ -495,5 +495,120 @@ describe("removeColumn / removeRow (3f)", () => {
     expect(removeRow(face, "g").portGroups[0].rows).toBe(2);
     const single: Face = { portGroups: [group({ id: "g", cols: 1, rows: 1 })], elements: [] };
     expect(removeRow(single, "g").portGroups[0].rows).toBe(1);
+  });
+});
+
+describe("single-row vertical snap positions", () => {
+  it("has six positions top→bottom, labels tucked at the padding-edge extremes", () => {
+    expect(singleRowPositions()).toEqual([
+      { yOffset: -24, labelPos: "bottom" }, // glyph at top padding edge, label below
+      { yOffset: -12, labelPos: "top" },
+      { yOffset: 0, labelPos: "top" },       // default: centred, label on top
+      { yOffset: 0, labelPos: "bottom" },
+      { yOffset: 12, labelPos: "bottom" },
+      { yOffset: 24, labelPos: "top" },      // glyph at bottom padding edge, label above
+    ]);
+  });
+  it("finds the rank for a group's current offset+label (label distinguishes the centre pair)", () => {
+    expect(rankForRowState(0, "top")).toBe(2); // the default
+    expect(rankForRowState(0, "bottom")).toBe(3);
+    expect(rankForRowState(-24, "bottom")).toBe(0);
+    expect(rankForRowState(24, "top")).toBe(5);
+  });
+  it("advances the grabbed rank ~12px per step, clamped to the ends", () => {
+    expect(resolveRowRank(2, 0)).toBe(2);
+    expect(resolveRowRank(2, 12)).toBe(3);
+    expect(resolveRowRank(2, 36)).toBe(5);
+    expect(resolveRowRank(2, 999)).toBe(5);
+    expect(resolveRowRank(2, -24)).toBe(0);
+    expect(resolveRowRank(2, -999)).toBe(0);
+  });
+  it("clamps to a custom position count (used for the 2-row snap)", () => {
+    expect(resolveRowRank(0, 12, 2)).toBe(1);
+    expect(resolveRowRank(0, 999, 2)).toBe(1);
+    expect(resolveRowRank(1, -12, 2)).toBe(0);
+  });
+});
+
+describe("two-row vertical snap positions", () => {
+  it("has two positions: together (labels outside) and spread to the pad edges (labels swapped inside)", () => {
+    expect(twoRowPositions()).toEqual([
+      { rowSpacing: 0, labels: ["top", "bottom"] },
+      { rowSpacing: 24, labels: ["bottom", "top"] },
+    ]);
+  });
+  it("ranks a group by its current row spacing", () => {
+    expect(rankForTwoRowState(0)).toBe(0);
+    expect(rankForTwoRowState(24)).toBe(1);
+    expect(rankForTwoRowState(20)).toBe(1); // past the halfway point → spread
+  });
+  it("sets each row's label across all its columns", () => {
+    // 2 rows × 2 cols → indices 0,1 = row 0; 2,3 = row 1 (row-major).
+    const face: Face = { portGroups: [group({ id: "g", rows: 2, cols: 2 })], elements: [] };
+    const out = setRowLabels(face, "g", ["bottom", "top"]).portGroups[0].portOverrides;
+    expect(out[0]!.labelPos).toBe("bottom");
+    expect(out[1]!.labelPos).toBe("bottom");
+    expect(out[2]!.labelPos).toBe("top");
+    expect(out[3]!.labelPos).toBe("top");
+  });
+
+  it("resets the single-row snap state when a row is added (1→2)", () => {
+    // A single-row group snapped to a non-default position: yOffset set + label overridden.
+    // Growing to 2 rows must drop that (it belongs to the single-row 6-position model) so the
+    // rows centre and the labels read top/bottom instead of both inheriting the single-row label.
+    const face: Face = {
+      portGroups: [group({ id: "g", rows: 1, cols: 1, yOffset: 24, portOverrides: { 0: { labelPos: "top" } } })],
+      elements: [],
+    };
+    const out = addRow(face, "g", { width: 400, height: 84 }).portGroups[0];
+    expect(out.rows).toBe(2);
+    expect(out.yOffset ?? 0).toBe(0);                  // single-row offset cleared
+    expect(out.rowSpacing).toBe(0);                    // starts at the "together" position
+    expect(out.portOverrides[0]?.labelPos).toBe("top");    // row 0 label outside-top
+    expect(out.portOverrides[1]?.labelPos).toBe("bottom"); // row 1 label outside-bottom (not inherited "top")
+  });
+
+  it("defaults every label to the bottom when a group grows to 3 rows", () => {
+    // A 2-row group with the usual top/bottom labels. Growing to 3 rows (dense) must put every
+    // label on the bottom so they don't collide — not leave row 0 on the top.
+    const face: Face = {
+      portGroups: [group({ id: "g", rows: 2, cols: 2, portOverrides: { 0: { labelPos: "top" }, 1: { labelPos: "top" }, 2: { labelPos: "bottom" }, 3: { labelPos: "bottom" } } })],
+      elements: [],
+    };
+    const out = addRow(face, "g", { width: 400, height: 168 }).portGroups[0]; // 2RU → room for 3 rows
+    expect(out.rows).toBe(3);
+    for (const i of [0, 1, 2, 3, 4, 5]) expect(out.portOverrides[i]?.labelPos).toBe("bottom");
+  });
+});
+
+describe("3+ row label side (left-handle toggle)", () => {
+  it("has two positions: all labels above / all below", () => {
+    expect(labelSidePositions()).toEqual(["top", "bottom"]);
+  });
+  it("ranks by the current label side (bottom is the 3+ default)", () => {
+    expect(rankForLabelSide("top")).toBe(0);
+    expect(rankForLabelSide("bottom")).toBe(1);
+  });
+});
+
+describe("resolveSingleRowBoxOffset (1RU slot stays fully in the device)", () => {
+  // 2RU device (168). centeredTop = 72, slotInset = 30 → box top = 42 + yOffset, clamped [0, 84].
+  it("clamps the offset so the full 1RU box stays inside the device", () => {
+    expect(resolveSingleRowBoxOffset(100, 168, 1)).toBe(42);   // box top → 84
+    expect(resolveSingleRowBoxOffset(-100, 168, 1)).toBe(-42); // box top → 0
+    expect(resolveSingleRowBoxOffset(0, 168, 1)).toBe(0);      // centred
+  });
+  it("snaps the box top to the step (25% of 1RU = 21) when stepping", () => {
+    expect(resolveSingleRowBoxOffset(10, 168, 21)).toBe(0);  // box top 52 → snaps to 42 → yOffset 0
+    expect(resolveSingleRowBoxOffset(20, 168, 21)).toBe(21); // box top 62 → snaps to 63 → yOffset 21
+  });
+});
+
+describe("setGroupYOffset", () => {
+  it("sets yOffset on the target group and leaves others untouched", () => {
+    const face: Face = { portGroups: [group({ id: "a" }), group({ id: "b", yOffset: 5 })], elements: [] };
+    const out = setGroupYOffset(face, "a", 18);
+    expect(out.portGroups.find((g) => g.id === "a")!.yOffset).toBe(18);
+    expect(out.portGroups.find((g) => g.id === "b")!.yOffset).toBe(5);
   });
 });

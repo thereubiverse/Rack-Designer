@@ -294,15 +294,12 @@ describe("RackDeviceEditor — 3d refinements", () => {
     expect(blued).toHaveLength(1);
   });
 
-  it("toggling label position moves that port's label", async () => {
-    const user = userEvent.setup();
-    withGroup();
+  it("locks a single-row group's label to the vertical snap (no per-port label toggle)", () => {
+    withGroup(); // 1×3 single-row group — its label side is owned by the snap positions
     fireEvent.click(screen.getByTestId("group-box-g"));
     fireEvent.click(screen.getByTestId("port-target-0"));
-    const before = Number(screen.getAllByTestId("port-cell")[0].querySelector("text")!.getAttribute("y"));
-    await user.click(screen.getByTestId("port-labelpos"));
-    const after = Number(screen.getAllByTestId("port-cell")[0].querySelector("text")!.getAttribute("y"));
-    expect(after).not.toBe(before);
+    expect(screen.getByTestId("port-settings")).toBeInTheDocument(); // panel still shows (name/flip)
+    expect(screen.queryByTestId("port-labelpos")).toBeNull();        // but no standalone label toggle
   });
 });
 

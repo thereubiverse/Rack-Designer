@@ -5,6 +5,7 @@ import { MAX_BODY_WIDTH_IN } from "./faceplate";
 export const RAIL_WIDTH_IN = 19;   // EIA 19" rack rail-to-rail width
 export const U_HEIGHT_IN = 1.75;   // one rack unit
 export const PX_PER_IN = 48;       // rendering scale (19" -> 912px, 1U -> 84px)
+export const RU_PX = U_HEIGHT_IN * PX_PER_IN; // one rack unit in px (84)
 export const CELL_W = 24;          // uniform port cell width (px)
 export const ROW_H = 24;           // uniform port cell height (px)
 export const GLYPH_W = 20;         // normalized glyph width (px)

@@ -2,9 +2,9 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
-import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX, RU_PX } from "@/domain/faceplate-geometry";
 import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
-import { maxSpacing, wouldOverlapAt, resolveYOffset, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
+import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
 
 // How close (screen px) a group edge/gap must get before a smart guide snaps.
@@ -36,11 +36,16 @@ export interface EditorCanvasProps {
   onRemoveRow?: (id: string) => void;
   onMove?: (id: string, target: { x: number; yOffset: number }) => void;
   onMoveGroups?: (ids: string[], delta: { dx: number; dyOffset: number }) => void;
+  /** Single-row vertical snap: set the group's vertical offset (px from centered) and the label
+   *  side that the snapped position implies. */
+  onVerticalMove?: (id: string, yOffset: number, labelPos: "top" | "bottom") => void;
+  /** Two-row vertical snap: set the row spacing + per-row label sides the snapped position implies. */
+  onRowSnap?: (id: string, colSpacing: number, rowSpacing: number, labels: ("top" | "bottom")[]) => void;
   /** Alt+drag: duplicate `ids`, select the copies, and return their new ids to drag. */
   onDuplicate?: (ids: string[]) => string[];
   /** End of an Alt+drag: place the copies at `delta`, or discard them (delta null / rejected). */
   onDuplicateDrop?: (newIds: string[], delta: { dx: number; dyOffset: number } | null) => void;
-  onSpacing?: (id: string, spacing: { colSpacing: number; rowSpacing: number }) => void;
+  onSpacing?: (id: string, spacing: { colSpacing?: number; rowSpacing?: number }) => void;
   snapToGrid?: boolean;
   /** Media of the palette chip currently being dragged (for the drop-preview box). */
   paletteDragMedia?: Media | null;
@@ -184,6 +189,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const bounds = { width: dims.bodyWidthPx, height: dims.heightPx };
   // Snap step (12px on, free off) and whether the device is tall enough to drag vertically.
   const snapStep = props.snapToGrid ? GRID_PX : 1;
+  // Vertical drag steps by a quarter of a rack unit when snap-to-grid is on (free otherwise).
+  const vSnapStep = props.snapToGrid ? RU_PX / 4 : 1;
   const allowVertical = rackUnits >= 2;
   const snapX = (x: number) => (snapStep > 1 ? Math.round(x / snapStep) * snapStep : x);
 
@@ -191,23 +198,19 @@ export function EditorCanvas(props: EditorCanvasProps) {
     const rect = overlayRef.current?.getBoundingClientRect();
     return toDevicePos({ x: clientX, y: clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
   }
-  // Select every group whose VISIBLE PORTS the marquee overlaps. The group box on screen is
-  // the padded selection box (SEL_PAD all round + LABEL_H label strips top/bottom), so the
-  // glyphs sit inset from its edges — hit-testing the raw box made the marquee grab a group
-  // well before it touched the ports the user sees. Inset the box's real on-screen rect back
-  // to the glyph bounds (× scale, since the rect is in scaled client px) so the hit test still
-  // can't drift from what's drawn. Unmeasurable rects (e.g. jsdom) fall back to the raw box.
+  // Select every group whose VISIBLE PORTS the marquee overlaps. Each group renders a hidden
+  // `glyph-bounds` element matching the exact on-screen port area, so the hit test uses that
+  // real rect directly — it can never drift from what's drawn, and it stays correct as the
+  // selection box grows (single-row 1RU slots) or the ports slide inside it. Unmeasurable
+  // rects (e.g. jsdom) fall back to including the group.
   function marqueeSelect(sx: number, sy: number, ex: number, ey: number, additive: boolean) {
     const ml = Math.min(sx, ex), mr = Math.max(sx, ex), mt = Math.min(sy, ey), mb = Math.max(sy, ey);
-    const s = scaleRef.current || 1;
-    const padX = SEL_PAD * s, padY = (LABEL_H + SEL_PAD) * s;
     const ids: string[] = [];
-    overlayRef.current?.querySelectorAll('[data-testid^="group-box-"]').forEach((el) => {
+    overlayRef.current?.querySelectorAll('[data-testid^="glyph-bounds-"]').forEach((el) => {
       const r = el.getBoundingClientRect();
-      const id = (el.getAttribute("data-testid") || "").replace("group-box-", "");
+      const id = (el.getAttribute("data-testid") || "").replace("glyph-bounds-", "");
       if (r.width <= 0 || r.height <= 0) { ids.push(id); return; } // unmeasurable (jsdom) → include
-      const gl = r.left + padX, gr = r.right - padX, gt = r.top + padY, gb = r.bottom - padY;
-      if (gl < mr && gr > ml && gt < mb && gb > mt) ids.push(id);
+      if (r.left < mr && r.right > ml && r.top < mb && r.bottom > mt) ids.push(id);
     });
     props.onMarqueeSelect?.(ids, additive);
   }
@@ -231,6 +234,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [marquee, face, bounds, props]); // eslint-disable-line react-hooks/exhaustive-deps
 
+
   // Resolve a live drag position: smart guides win when a guide is within threshold,
   // otherwise fall back to grid-snap / free. Returns the clamped live position + the guide
   // lines & equal-spacing brackets to draw. Shared by the render, move preview, and commit.
@@ -248,7 +252,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
     const liveMax = Math.max(SEL_PAD, bounds.width - laidW - SEL_PAD);
     const liveX = Math.max(SEL_PAD, Math.min(x, liveMax));
     const guideY = lines.some((l) => l.axis === "y");
-    const liveOffsetY = allowVertical ? resolveYOffset(g, yOff, bounds, guideY ? 1 : snapStep) : (g.yOffset ?? 0);
+    // Single-row groups keep their full 1RU box inside the device (box snaps/clamps, never shrinks);
+    // other groups clamp the port stack itself.
+    const liveOffsetY = !allowVertical ? (g.yOffset ?? 0)
+      : g.rows === 1 ? resolveSingleRowBoxOffset(yOff, bounds.height, guideY ? 1 : vSnapStep)
+      : resolveYOffset(g, yOff, bounds, guideY ? 1 : vSnapStep);
     return { liveX, liveOffsetY, lines, spacings };
   }
   const activeDrag = drag ? resolveDrag(drag.id, drag.dx, drag.dy) : null;
@@ -282,13 +290,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const multiDrag = isMulti && drag ? resolveMultiMove(drag.ids, drag.dx, drag.dy) : null;
   const guideData = isMulti ? multiDrag : activeDrag; // which drag's guides to draw
 
-  // The clamped-to-body selection box for a group, in overlay-local coords. Shared by the
-  // live selection box and the palette drop-preview so they line up exactly.
+  // The clamped-to-body 1RU slot box for the palette drop-preview, in overlay-local coords. A
+  // fresh drop is a single-row group, so the preview matches its 1RU selection box exactly.
   function clampedBox(gridX: number, laidWidth: number, laidTop: number, laidHeight: number) {
     const rawLeft = earX + gridX - SEL_PAD;
-    const rawTop = laidTop - LABEL_H - SEL_PAD;
+    const rawTop = laidTop - (RU_PX - laidHeight) / 2;
     const rawW = laidWidth + SEL_PAD * 2;
-    const rawH = laidHeight + LABEL_H * 2 + SEL_PAD * 2;
+    const rawH = RU_PX;
     const cL = Math.max(0, earX - rawLeft);
     const cT = Math.max(0, -rawTop);
     const cR = Math.min(rawW, earX + dims.bodyWidthPx - rawLeft);
@@ -304,14 +312,21 @@ export function EditorCanvas(props: EditorCanvasProps) {
     function onMove(e: PointerEvent) {
       const s = scaleRef.current || 1;
       const sd = spaceDrag!;
-      // Map cursor movement so the handle tracks the cursor: each unit of column
-      // spacing widens the box by (cols-1); each unit of row spacing grows it from
-      // the center, so the bottom edge moves at (rows-1)/2.
+      // Spacing is smooth by default; when snap-to-grid is on it steps by the grid (GRID_PX).
+      const snap = (v: number) => (props.snapToGrid ? Math.round(v / GRID_PX) * GRID_PX : v);
+      // Map cursor movement so the handle tracks the cursor: each unit of column spacing widens
+      // the box by (cols-1); each unit of row spacing grows it from the center at (rows-1)/2.
       const colDen = Math.max(1, sd.cols - 1);
-      const rowDen = Math.max(1, sd.rows - 1);
-      const colSpacing = Math.max(0, Math.min(sd.maxCol, sd.grabCol + (e.clientX - sd.startX) / (s * colDen)));
-      const rowSpacing = Math.max(0, Math.min(sd.maxRow, sd.grabRow + (2 * (e.clientY - sd.startY)) / (s * rowDen)));
-      props.onSpacing?.(sd.id, { colSpacing, rowSpacing });
+      const colSpacing = Math.max(0, Math.min(sd.maxCol, snap(sd.grabCol + (e.clientX - sd.startX) / (s * colDen))));
+      if (sd.maxRow > 0) {
+        // 2RU+ has vertical room: also space the rows. (On 1RU maxRow is 0, so the handle spaces
+        // horizontally only — the vertical arrangement is owned by the left up/down handle.)
+        const rowDen = Math.max(1, sd.rows - 1);
+        const rowSpacing = Math.max(0, Math.min(sd.maxRow, snap(sd.grabRow + (2 * (e.clientY - sd.startY)) / (s * rowDen))));
+        props.onSpacing?.(sd.id, { colSpacing, rowSpacing });
+      } else {
+        props.onSpacing?.(sd.id, { colSpacing }); // leave rowSpacing (owned by the left handle) untouched
+      }
     }
     function onUp() { setSpaceDrag(null); }
     window.addEventListener("pointermove", onMove);
@@ -321,6 +336,38 @@ export function EditorCanvas(props: EditorCanvasProps) {
       window.removeEventListener("pointerup", onUp);
     };
   }, [spaceDrag, props]);
+
+  // The left up/down handle: snap a group's vertical port/label position. A single row cycles the
+  // six 1RU-slot positions (yOffset + label); a 2-row group toggles the two positions (rows
+  // together with labels outside ↔ spread to the pad edges with labels swapped inside).
+  const [vertDrag, setVertDrag] = useState<
+    { id: string; startY: number; grabRank: number; grabCol: number; rows: number } | null
+  >(null);
+
+  useEffect(() => {
+    if (!vertDrag) return;
+    function commit(clientY: number) {
+      const s = scaleRef.current || 1;
+      const vd = vertDrag!;
+      const dy = (clientY - vd.startY) / s;
+      if (vd.rows >= 3) {
+        // Dense group: the glyphs stay put; the handle only flips every label above/below.
+        const labelPos = labelSidePositions()[resolveRowRank(vd.grabRank, dy, 2)];
+        props.onVerticalMove?.(vd.id, 0, labelPos);
+      } else if (vd.rows === 2) {
+        const pos = twoRowPositions()[resolveRowRank(vd.grabRank, dy, 2)];
+        props.onRowSnap?.(vd.id, vd.grabCol, pos.rowSpacing, pos.labels);
+      } else {
+        const pos = singleRowPositions()[resolveRowRank(vd.grabRank, dy)];
+        props.onVerticalMove?.(vd.id, pos.yOffset, pos.labelPos);
+      }
+    }
+    function onMove(e: PointerEvent) { commit(e.clientY); }
+    function onUp(e: PointerEvent) { commit(e.clientY); setVertDrag(null); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [vertDrag, props]);
 
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
@@ -439,11 +486,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
             // Chevrons, spacing handle and per-port targets are single-group operations,
             // so they only appear when this is the only selected group.
             const singleSelected = selectedIds.length === 1 && selectedIds[0] === g.id;
+            // A single-ROW group sits in a fixed 1RU-tall slot; its (otherwise idle for vertical)
+            // spacing handle snaps the row between the top / centre / bottom positions of that slot.
+            const singleRow = g.rows === 1;
             const boxTop = laid.top;
             const dragging = drag?.id === g.id;
             const inMulti = isMulti && !!multiDrag && !!drag?.ids.includes(g.id);
-            // Live position: multi-move shifts every group in the set by the shared delta;
-            // otherwise the single dragged group uses the shared resolver; others stay put.
+            // Live position: multi-move shifts every group by the shared delta; a whole-group drag
+            // uses the shared resolver; otherwise everything stays at its committed spot (the
+            // single-row vertical snap commits live through the spacing handle).
             const liveX = inMulti
               ? Math.max(SEL_PAD, Math.min(g.gridX + multiDrag!.dx, bounds.width - laid.width - SEL_PAD))
               : (dragging && activeDrag ? activeDrag.liveX : g.gridX);
@@ -453,13 +504,17 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const dyVisual = liveOffsetY - (g.yOffset ?? 0);
             const liveBoxTop = boxTop + dyVisual;
             const invalid = dragging && wouldOverlapAt(face, { ...g, yOffset: liveOffsetY }, { x: liveX, y: g.gridY }, bounds);
-            // Raw box wraps ports + labels; the visible blue box is clamped to the device
-            // BODY (between the ears) so it never touches or spills into the ears — ports
-            // may still spread right up to that edge. Coords are local to the raw box origin.
+            // Box geometry. Normal groups: the box wraps the ports + label strips and moves WITH
+            // the group. Single-row: a 1RU-tall slot. On a 1RU device the slot fills the device and
+            // can't move, so the row snaps between positions WITHIN a fixed box; on 2RU+ the slot is
+            // free to move, so the box follows the port (kept centred in the slot) as it's dragged.
+            const centeredTop = (dims.heightPx - laid.height) / 2; // port top at yOffset 0
+            const slotInset = (RU_PX - laid.height) / 2;           // glyph inset when centred in the slot
+            const glyphLocalY = singleRow ? (allowVertical ? slotInset : slotInset + liveOffsetY) : LABEL_H + SEL_PAD;
             const rawLeft = (earX + liveX) - SEL_PAD;
-            const rawTop = liveBoxTop - LABEL_H - SEL_PAD;
+            const rawTop = singleRow ? (allowVertical ? centeredTop + liveOffsetY - slotInset : centeredTop - slotInset) : liveBoxTop - LABEL_H - SEL_PAD;
             const rawW = laid.width + SEL_PAD * 2;
-            const rawH = laid.height + LABEL_H * 2 + SEL_PAD * 2;
+            const rawH = singleRow ? RU_PX : laid.height + LABEL_H * 2 + SEL_PAD * 2;
             const bodyLeft = earX;
             const bodyRight = earX + dims.bodyWidthPx;
             const cL = Math.max(0, bodyLeft - rawLeft);
@@ -468,6 +523,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const cB = Math.min(rawH, dims.heightPx - rawTop);
             const cW = Math.max(0, cR - cL);
             const cH = Math.max(0, cB - cT);
+            // Controls sit at the box edges (never track the snapping row).
+            const ctrlMidY = (cT + cB) / 2;
             // Only the glyph area "grabs" the group; presses on the surrounding padding fall
             // through (no stopPropagation) to the overlay so a marquee can start there.
             const onGlyph = (e: React.PointerEvent | React.MouseEvent) => {
@@ -475,7 +532,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
               if (box.width <= 0) return true; // unmeasurable (e.g. jsdom) → whole box grabs
               const s = scaleRef.current || 1;
               const lx = (e.clientX - box.left) / s, ly = (e.clientY - box.top) / s;
-              return lx >= SEL_PAD && lx <= SEL_PAD + laid.width && ly >= LABEL_H + SEL_PAD && ly <= LABEL_H + SEL_PAD + laid.height;
+              return lx >= SEL_PAD && lx <= SEL_PAD + laid.width && ly >= glyphLocalY && ly <= glyphLocalY + laid.height;
             };
             return (
               <div
@@ -502,17 +559,18 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 }}
                 style={{
                   position: "absolute",
-                  // The box wraps the whole group INCLUDING the port labels, so it
-                  // never cuts through a top/bottom label: extend by LABEL_H each side.
-                  left: (earX + liveX) - SEL_PAD,
-                  top: liveBoxTop - LABEL_H - SEL_PAD,
-                  width: laid.width + SEL_PAD * 2,
-                  height: laid.height + LABEL_H * 2 + SEL_PAD * 2,
+                  // Multi-row box wraps ports + top/bottom label strips; single-row box is a fixed
+                  // 1RU slot the ports slide within (see the rawTop/rawH derivation above).
+                  left: rawLeft,
+                  top: rawTop,
+                  width: rawW,
+                  height: rawH,
                   cursor: props.onMove ? "move" : "pointer",
                   // Selected group (and its controls) sits above every other group + the faceplate.
                   zIndex: selected ? 20 : 1,
                 }}
               >
+                <div data-testid={`glyph-bounds-${g.id}`} style={{ position: "absolute", left: SEL_PAD, top: glyphLocalY, width: laid.width, height: laid.height, pointerEvents: "none" }} />
                 {invalid && <div data-testid="move-invalid" style={{ display: "none" }} />}
                 {selected && (
                   <div
@@ -534,28 +592,53 @@ export function EditorCanvas(props: EditorCanvasProps) {
                       data-testid="chevron-col"
                       className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
                       title="Add a column of ports (click, or drag right for more)"
+                      onClick={(e) => e.stopPropagation()} // control click must not bubble to the deselect handler
                       onPointerDown={(e) => { e.stopPropagation(); chevNetRef.current = 0; chevMovedRef.current = false; setChevDrag({ id: g.id, axis: "col", start: e.clientX, initial: g.cols }); }}
-                      style={chevronStyle({ left: cR - 6, top: (cT + cB) / 2 - 6, cursor: "ew-resize" })}
+                      style={chevronStyle({ left: cR - 6, top: ctrlMidY - 6, cursor: "ew-resize" })}
                     ><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6l-6 6" /></svg></button>
                     <button
                       type="button"
                       data-testid="chevron-row"
                       className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
                       title="Add a row of ports (click, or drag down for more)"
+                      onClick={(e) => e.stopPropagation()} // control click must not bubble to the deselect handler
                       onPointerDown={(e) => { e.stopPropagation(); chevNetRef.current = 0; chevMovedRef.current = false; setChevDrag({ id: g.id, axis: "row", start: e.clientY, initial: g.rows }); }}
                       style={chevronStyle({ left: (cL + cR) / 2 - 6, top: cB - 6, cursor: "ns-resize" })}
                     ><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6l6 -6" /></svg></button>
-                    {props.onSpacing && (
+                    {/* Left up/down handle: snap the vertical port/label position — 6 positions for a
+                        single row, 2 for a 2-row group, and all-labels-above/below for 3+ rows. */}
+                    {(g.rows === 2 ? props.onRowSnap : props.onVerticalMove) && (
+                      <button
+                        type="button"
+                        data-testid="vert-handle"
+                        className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
+                        title="Drag up/down to move the ports and labels"
+                        onClick={(e) => e.stopPropagation()} // control click must not bubble to the deselect handler
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const grabRank = g.rows >= 3 ? rankForLabelSide(laid.cells[0]?.labelPos ?? "bottom")
+                            : g.rows === 2 ? rankForTwoRowState(g.rowSpacing)
+                            : rankForRowState(g.yOffset ?? 0, laid.cells[0]?.labelPos ?? "top");
+                          setVertDrag({ id: g.id, startY: e.clientY, grabRank, grabCol: g.colSpacing, rows: g.rows });
+                        }}
+                        style={chevronStyle({ left: cL - 6, top: (cT + cB) / 2 - 6, cursor: "ns-resize" })}
+                      ><svg width="9" height="9" viewBox="0 0 24 24" fill="#2d5bff"><path d="M12 3l5 7H7z" /><path d="M12 21l5 -7H7z" /></svg></button>
+                    )}
+                    {/* The spacing handle: horizontal drag spaces columns; on 2RU+ (vertical room)
+                        it also spaces rows. Smooth by default, grid-stepped when snap-to-grid is on.
+                        Hidden when there's nothing to space (a lone column with no vertical room). */}
+                    {props.onSpacing && (g.cols > 1 || (g.rows > 1 && allowVertical)) && (
                       <div
                         data-testid="spacing-handle"
                         className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
                         title="Drag to change spacing"
+                        onClick={(e) => e.stopPropagation()} // control click must not bubble to the deselect handler
                         onPointerDown={(e) => {
                           e.stopPropagation();
                           const { maxCol, maxRow } = maxSpacing(face, g, bounds);
                           setSpaceDrag({ id: g.id, startX: e.clientX, startY: e.clientY, grabCol: g.colSpacing, grabRow: g.rowSpacing, maxCol, maxRow, cols: g.cols, rows: g.rows });
                         }}
-                        style={{ position: "absolute", left: cR - 5, top: cB - 5, width: 10, height: 10, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 7 }}
+                        style={{ position: "absolute", left: cR - 5, top: cB - 5, width: 10, height: 10, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: allowVertical && g.rows > 1 ? "nwse-resize" : "ew-resize", zIndex: 7 }}
                       />
                     )}
                   </>
@@ -563,11 +646,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 {singleSelected && (
                   <>
                     {laid.cells.map((cell) => {
-                      // localY offset by +LABEL_H because the box top now sits LABEL_H
-                      // above the glyph stack (to wrap the labels). Port selection is a
+                      // Port click targets, local to the box. localY tracks the glyph's position
+                      // within the box (which slides for single-row groups). Port selection is a
                       // recolor only (Faceplate highlight) — no per-port box here.
                       const localX = cell.x - g.gridX + SEL_PAD;
-                      const localY = cell.y - boxTop + LABEL_H + SEL_PAD;
+                      const localY = glyphLocalY + (cell.y - laid.top);
                       return (
                         <div
                           key={cell.index}

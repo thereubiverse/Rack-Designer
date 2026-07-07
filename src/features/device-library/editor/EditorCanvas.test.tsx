@@ -74,26 +74,24 @@ describe("EditorCanvas overlay", () => {
     expect(onMarqueeSelect.mock.calls[0][0]).toContain("g1");
   });
 
-  // jsdom has no layout, so mock the group box's on-screen rect. The box is the PADDED
-  // selection box (SEL_PAD=6 all round, LABEL_H=12 strips top+bottom); the visible port
-  // glyphs sit inset from it. left/right glyph edges = box ± 6; top/bottom = box ± 18.
-  function mockGroupRect(el: HTMLElement, r: { left: number; top: number; right: number; bottom: number }) {
+  // jsdom has no layout, so mock the glyph-bounds element's on-screen rect. That element is the
+  // exact visible port area the marquee hit-tests against (no padding math involved).
+  function mockGlyphRect(el: HTMLElement, r: { left: number; top: number; right: number; bottom: number }) {
     el.getBoundingClientRect = () => ({
       left: r.left, top: r.top, right: r.right, bottom: r.bottom,
       width: r.right - r.left, height: r.bottom - r.top, x: r.left, y: r.top, toJSON() {},
     }) as DOMRect;
   }
 
-  it("marquee does NOT select a group while it only overlaps the box padding (not the glyphs)", () => {
+  it("marquee does NOT select a group until it reaches the glyphs", () => {
     const onMarqueeSelect = vi.fn();
     const { getByTestId } = render(
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
         onSelect={() => {}} onMarqueeSelect={onMarqueeSelect} />,
     );
-    // padded box 100..136 × 100..160 → visible glyphs 106..130 × 118..142.
-    mockGroupRect(getByTestId("group-box-g1"), { left: 100, top: 100, right: 136, bottom: 160 });
+    mockGlyphRect(getByTestId("glyph-bounds-g1"), { left: 106, top: 118, right: 130, bottom: 142 });
     fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
-    fireEvent.pointerMove(window, { clientX: 104, clientY: 130 }); // reaches into the pad (100–106), short of glyph (106)
+    fireEvent.pointerMove(window, { clientX: 104, clientY: 130 }); // short of the glyph left edge (106)
     const lastIds = onMarqueeSelect.mock.calls.at(-1)?.[0] ?? [];
     expect(lastIds).not.toContain("g1");
   });
@@ -104,7 +102,7 @@ describe("EditorCanvas overlay", () => {
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT"
         onSelect={() => {}} onMarqueeSelect={onMarqueeSelect} />,
     );
-    mockGroupRect(getByTestId("group-box-g1"), { left: 100, top: 100, right: 136, bottom: 160 });
+    mockGlyphRect(getByTestId("glyph-bounds-g1"), { left: 106, top: 118, right: 130, bottom: 142 });
     fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 50, clientY: 50, button: 0 });
     fireEvent.pointerMove(window, { clientX: 110, clientY: 130 }); // past glyph left edge (106)
     const lastIds = onMarqueeSelect.mock.calls.at(-1)?.[0] ?? [];
@@ -167,6 +165,120 @@ describe("EditorCanvas overlay", () => {
       <EditorCanvas face={faceWithGroup} widthIn={19} rackUnits={1} rackMounted side="FRONT" selectedGroupIds={["g1"]} onSelect={() => {}} />,
     );
     expect(getByTestId("group-box-g1").getAttribute("data-selected")).toBe("true");
+  });
+
+  it("snaps a single-row group to the bottommost position via the left up/down handle", () => {
+    const onVerticalMove = vi.fn();
+    const single: Face = { portGroups: [grp({ cols: 1 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={single} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={() => {}} onVerticalMove={onVerticalMove} />,
+    );
+    fireEvent.pointerDown(getByTestId("vert-handle"), { clientX: 10, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 200 }); // drag far down → rank 5
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 200 });
+    expect(onVerticalMove).toHaveBeenLastCalledWith("g1", 24, "top"); // glyph at bottom pad edge
+  });
+
+  it("keeps a single-row group at the default centre on a small left-handle drag", () => {
+    const onVerticalMove = vi.fn();
+    const single: Face = { portGroups: [grp({ cols: 1 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={single} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={() => {}} onVerticalMove={onVerticalMove} />,
+    );
+    fireEvent.pointerDown(getByTestId("vert-handle"), { clientX: 10, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 104 }); // tiny nudge → still rank 2
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 104 });
+    expect(onVerticalMove).toHaveBeenLastCalledWith("g1", 0, "top");
+  });
+
+  it("moving the left handle down one step from centre flips the label to bottom (same glyph position)", () => {
+    const onVerticalMove = vi.fn();
+    const single: Face = { portGroups: [grp({ cols: 1 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={single} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={() => {}} onVerticalMove={onVerticalMove} />,
+    );
+    fireEvent.pointerDown(getByTestId("vert-handle"), { clientX: 10, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 112 }); // +12px → rank 3
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 112 });
+    expect(onVerticalMove).toHaveBeenLastCalledWith("g1", 0, "bottom");
+  });
+
+  it("clicks on the in-box controls do not bubble to the parent deselect handler", () => {
+    const parentClick = vi.fn();
+    const single: Face = { portGroups: [grp({ cols: 1 })], elements: [] };
+    const { getByTestId } = render(
+      <div onClick={parentClick}>
+        <EditorCanvas face={single} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+          selectedGroupIds={["g1"]} onSelect={() => {}} onVerticalMove={() => {}} onAddColumn={() => {}} onAddRow={() => {}} />
+      </div>,
+    );
+    fireEvent.click(getByTestId("vert-handle"));
+    fireEvent.click(getByTestId("chevron-col"));
+    fireEvent.click(getByTestId("chevron-row"));
+    expect(parentClick).not.toHaveBeenCalled();
+  });
+
+  it("the spacing handle spaces columns only (no vertical) on a 1RU single-row group", () => {
+    const onVerticalMove = vi.fn();
+    const onSpacing = vi.fn();
+    const multi: Face = { portGroups: [grp({ cols: 2 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={multi} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onVerticalMove={onVerticalMove} onSpacing={onSpacing} />,
+    );
+    fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 140, clientY: 200 }); // right + far down
+    fireEvent.pointerUp(window, { clientX: 140, clientY: 200 });
+    expect(onVerticalMove).not.toHaveBeenCalled();                          // no vertical from spacing handle
+    expect(onSpacing.mock.calls.at(-1)![1].colSpacing).toBeGreaterThan(0);  // columns spaced
+    expect(onSpacing.mock.calls.at(-1)![1].rowSpacing).toBeUndefined();     // rowSpacing left untouched on 1RU
+  });
+
+  it("a 2-row group snaps to spread (spacing + swapped labels) via the left handle", () => {
+    const onRowSnap = vi.fn();
+    const onSpacing = vi.fn();
+    const twoRow: Face = { portGroups: [grp({ rows: 2, cols: 2 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={twoRow} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onRowSnap={onRowSnap} onSpacing={onSpacing} />,
+    );
+    fireEvent.pointerDown(getByTestId("vert-handle"), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 140 }); // drag down → spread
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 140 });
+    // spread position: max row spacing (24) with the labels swapped to the inside.
+    expect(onRowSnap).toHaveBeenLastCalledWith("g1", expect.any(Number), 24, ["bottom", "top"]);
+  });
+
+  it("the left handle flips all labels above/below for a 3-row group (glyphs stay put)", () => {
+    const onVerticalMove = vi.fn();
+    const threeRow: Face = { portGroups: [grp({ rows: 3, cols: 2 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={threeRow} widthIn={19} rackUnits={3} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onVerticalMove={onVerticalMove} onSpacing={() => {}} />,
+    );
+    // default is all-bottom (rank 1); drag up → all labels top, offset stays 0.
+    fireEvent.pointerDown(getByTestId("vert-handle"), { clientX: 10, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 60 }); // up → rank 0
+    fireEvent.pointerUp(window, { clientX: 10, clientY: 60 });
+    expect(onVerticalMove).toHaveBeenLastCalledWith("g1", 0, "top");
+  });
+
+  it("the spacing handle does row/col spacing (no vertical snap) for a 3-row group", () => {
+    const onRowSnap = vi.fn();
+    const onSpacing = vi.fn();
+    const threeRow: Face = { portGroups: [grp({ rows: 3, cols: 2 })], elements: [] };
+    const { getByTestId } = render(
+      <EditorCanvas face={threeRow} widthIn={19} rackUnits={3} rackMounted side="FRONT"
+        selectedGroupIds={["g1"]} onSelect={() => {}} onRowSnap={onRowSnap} onSpacing={onSpacing} />,
+    );
+    fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 140 });
+    fireEvent.pointerUp(window, { clientX: 100, clientY: 140 });
+    expect(onRowSnap).not.toHaveBeenCalled();
+    expect(onSpacing).toHaveBeenCalled();
   });
 
   it("shows chevrons on the selected group and fires add column/row", () => {
@@ -312,19 +424,20 @@ describe("EditorCanvas spacing handle", () => {
     fireEvent.pointerUp(window, { clientX: 130, clientY: 100 });
   });
 
-  it("does not spread a single-column group (maxCol 0)", () => {
+  it("does not spread a single-column group horizontally (maxCol 0)", () => {
+    // A multi-row, single-column group (not a single port, so the handle still spaces): its one
+    // column has no room to spread horizontally, so colSpacing stays 0.
     const onSpacing = vi.fn();
-    const face: Face = { portGroups: [grp({ id: "g1", cols: 1, rows: 1, gridX: 0, gridY: 0 })], elements: [] };
+    const face: Face = { portGroups: [grp({ id: "g1", cols: 1, rows: 3, gridX: 0, gridY: 0 })], elements: [] };
     const { getByTestId } = render(
-      <EditorCanvas face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+      <EditorCanvas face={face} widthIn={19} rackUnits={3} rackMounted side="FRONT"
         selectedGroupIds={["g1"]} onSelect={() => {}} onSpacing={onSpacing} />,
     );
     fireEvent.pointerDown(getByTestId("spacing-handle"), { clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(window, { clientX: 200, clientY: 200 });
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 100 }); // horizontal only
     const last = onSpacing.mock.calls[onSpacing.mock.calls.length - 1][1];
     expect(last.colSpacing).toBe(0);
-    expect(last.rowSpacing).toBe(0);
-    fireEvent.pointerUp(window, { clientX: 200, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 200, clientY: 100 });
   });
 });
 
