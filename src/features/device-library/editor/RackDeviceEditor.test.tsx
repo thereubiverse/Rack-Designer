@@ -467,4 +467,10 @@ describe("RackDeviceEditor read-only mode", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("discard-confirm")).not.toBeInTheDocument();
   });
+
+  it("marks the palette and canvas inert so keyboard/programmatic activation is blocked", () => {
+    const { container } = render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+      initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    expect(container.querySelectorAll("[inert]").length).toBeGreaterThanOrEqual(2);
+  });
 });

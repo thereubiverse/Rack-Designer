@@ -327,6 +327,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         <div
           className={`rounded-xl border border-neutral-100 bg-neutral-100 p-4 ${ro ? "pointer-events-none opacity-70" : ""}`}
           onClick={() => clearSelection()}
+          inert={ro || undefined}
         >
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-stretch gap-2">
@@ -442,7 +443,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             </div>
           </div>
 
-          <div className={`mt-2 overflow-auto ${ro ? "pointer-events-none" : ""}`}>
+          <div className={`mt-2 overflow-auto ${ro ? "pointer-events-none" : ""}`} inert={ro || undefined}>
             <EditorCanvas
               face={activeFace}
               widthIn={draft.widthIn > 0 ? draft.widthIn : 1}
