@@ -1,7 +1,11 @@
-import { DeviceLibraryShell } from "@/features/device-library/DeviceLibraryShell";
+import { DeviceLibraryTabs } from "@/features/device-library/DeviceLibraryTabs";
 
-/** Shared shell for the Device Library: the collapsible left rail, top app bar, and section tabs.
- *  The light theme is scoped to this section (the global body theme is dark). */
+/** Section tabs for Device Library; the app shell (rail + top bar) comes from the root layout. */
 export default function DeviceLibraryLayout({ children }: { children: React.ReactNode }) {
-  return <DeviceLibraryShell>{children}</DeviceLibraryShell>;
+  return (
+    <>
+      <div className="pb-4"><DeviceLibraryTabs /></div>
+      {children}
+    </>
+  );
 }

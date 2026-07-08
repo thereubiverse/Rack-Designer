@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
 
 export const SIDEBAR_WIDTH = 248;      // expanded rail width (px)
@@ -9,12 +10,15 @@ export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
 // Signed-in user (placeholder until auth lands). The avatar defaults to the first-name initial.
 const USER = { name: "Reuben Singh" };
 
-/** The app's left navigation rail. Mostly presentational for now — only Device Library routes
- *  (its section is active here); the other destinations are placeholders until those areas ship.
+/** The app's left navigation rail. Racks and Device Library are live routes; the other
+ *  destinations are placeholders until those areas ship. Active state is derived from the
+ *  current pathname so it stays correct across navigations.
  *  Collapsing animates the aside's width while the inner content stays a fixed width and is clipped
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
  *  translate keeps them centred in the narrow rail). */
 export function AppSidebar({ collapsed }: { collapsed: boolean }) {
+  const pathname = usePathname();
+
   return (
     <aside
       className="fixed inset-y-0 left-0 z-30 overflow-hidden border-r border-neutral-200 bg-white transition-[width] duration-300 ease-in-out"
@@ -45,7 +49,8 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
         </nav>
 
         <nav className="space-y-0.5">
-          <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active />
+          <NavItem icon="tabler:server-2" label="Racks" href="/racks" active={pathname.startsWith("/racks")} />
+          <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
           <NavItem icon="tabler:users" label="Users & Permissions" />
           <NavItem icon="tabler:settings" label="Settings & Billing" />
         </nav>

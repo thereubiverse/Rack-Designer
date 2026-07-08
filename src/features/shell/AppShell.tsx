@@ -1,17 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
-import { DeviceLibraryTabs } from "./DeviceLibraryTabs";
 import { AppSidebar, SIDEBAR_WIDTH, SIDEBAR_COLLAPSED } from "./AppSidebar";
 
 const STORE_KEY = "dl-sidebar-collapsed";
 
+const TITLES: [prefix: string, title: string][] = [
+  ["/racks", "Racks"],
+  ["/device-library", "Device Library"],
+];
+
 /** Client shell that owns the sidebar collapse state so the hamburger (in the top bar) and the
- *  sidebar can share it. Lives in the layout, so the state survives tab navigations; it's also
- *  persisted to localStorage. Both the rail and the content offset animate together. */
-export function DeviceLibraryShell({ children }: { children: React.ReactNode }) {
+ *  sidebar can share it. Lives in the root layout, so the state survives route navigations; it's
+ *  also persisted to localStorage. Both the rail and the content offset animate together. The
+ *  page title in the top bar is derived from the current route. */
+export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const pathname = usePathname();
+  const title = TITLES.find(([p]) => pathname.startsWith(p))?.[1] ?? "Rack Designer";
 
   useEffect(() => { if (localStorage.getItem(STORE_KEY) === "1") setCollapsed(true); }, []);
   useEffect(() => { localStorage.setItem(STORE_KEY, collapsed ? "1" : "0"); }, [collapsed]);
@@ -39,7 +47,7 @@ export function DeviceLibraryShell({ children }: { children: React.ReactNode }) 
                   <path d="M4 7h16M4 12h16M4 17h16" />
                 </svg>
               </button>
-              <h1 className="text-lg font-bold tracking-tight">Device Library</h1>
+              <h1 className="text-lg font-bold tracking-tight">{title}</h1>
             </div>
             {/* Context-aware help: will open documentation relevant to the user's current area of
                 the suite (href is a placeholder until that routing lands). */}
@@ -54,10 +62,7 @@ export function DeviceLibraryShell({ children }: { children: React.ReactNode }) 
         </header>
 
         <div className="px-6">
-          <div className="py-4">
-            <DeviceLibraryTabs />
-          </div>
-          <div className="pb-12">{children}</div>
+          <div className="py-4 pb-12">{children}</div>
         </div>
       </div>
     </div>
