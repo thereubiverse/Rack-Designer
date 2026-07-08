@@ -3,7 +3,12 @@ import { getDefaultOrganization } from "@/features/locations/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 
 export interface BrandRow { id: string; organization_id: string; name: string; created_at: string; }
-export interface DeviceTypeRow { id: string; organization_id: string; name: string; created_at: string; }
+export interface DeviceTypeRow {
+  id: string; organization_id: string; name: string; created_at: string;
+  category: "floor" | "rack";
+  code: string;          // ID prefix for generated device IDs (SW01, ...)
+  is_standard: boolean;  // seeded by us: code editable, never deletable
+}
 export interface DeviceTemplateRow {
   id: string; organization_id: string; name: string;
   brand_id: string | null; device_type_id: string;
@@ -22,15 +27,44 @@ export async function listDeviceTypes(db: SupabaseClient): Promise<DeviceTypeRow
   return data as DeviceTypeRow[];
 }
 
-export async function createDeviceType(db: SupabaseClient, input: { name: string }): Promise<DeviceTypeRow> {
+export async function createDeviceType(
+  db: SupabaseClient,
+  input: { name: string; code: string; category: "floor" | "rack" },
+): Promise<DeviceTypeRow> {
   const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("device_types")
-    .insert({ organization_id: org.id, name: input.name }).select("*").single();
+    .insert({
+      organization_id: org.id, name: input.name, code: input.code,
+      category: input.category, is_standard: false,
+    })
+    .select("*").single();
   if (error) throw new Error(`createDeviceType: ${error.message}`);
   return data as DeviceTypeRow;
 }
 
+async function getDeviceType(db: SupabaseClient, id: string): Promise<DeviceTypeRow> {
+  const { data, error } = await db.from("device_types").select("*").eq("id", id).single();
+  if (error) throw new Error(`getDeviceType: ${error.message}`);
+  return data as DeviceTypeRow;
+}
+
+/** Standard types accept a code change only; custom types accept name and/or code. */
+export async function updateDeviceType(
+  db: SupabaseClient, id: string, patch: { name?: string; code?: string },
+): Promise<void> {
+  const row = await getDeviceType(db, id);
+  const applied = row.is_standard
+    ? (patch.code !== undefined ? { code: patch.code } : {})
+    : { ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.code !== undefined ? { code: patch.code } : {}) };
+  if (Object.keys(applied).length === 0) return;
+  const { error } = await db.from("device_types").update(applied).eq("id", id);
+  if (error) throw new Error(`updateDeviceType: ${error.message}`);
+}
+
 export async function deleteDeviceType(db: SupabaseClient, id: string): Promise<void> {
+  const row = await getDeviceType(db, id);
+  if (row.is_standard) throw new Error("Standard device types cannot be deleted");
   const { error } = await db.from("device_types").delete().eq("id", id);
   if (error) throw new Error(`deleteDeviceType: ${error.message}`);
 }
