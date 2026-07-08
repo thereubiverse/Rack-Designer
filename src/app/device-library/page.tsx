@@ -9,5 +9,5 @@ export default async function DeviceLibraryPage() {
   const [rows, types, brands] = await Promise.all([
     listDeviceTemplates(db), listDeviceTypes(db), listBrands(db),
   ]);
-  return <EditorLauncher rows={rows} types={types} brands={brands} />;
+  return <EditorLauncher rows={rows} types={types.filter((t) => t.category === "rack")} brands={brands} />;
 }
