@@ -40,6 +40,7 @@ export interface RackDeviceEditorProps {
   brands: BrandRow[];
   saving?: boolean;
   error?: string | null;
+  readOnly?: boolean;
   onSave: (draft: DeviceDraft) => void;
   onCancel: () => void;
   onCreateBrand?: (name: string) => Promise<BrandRow | null>;
@@ -47,6 +48,7 @@ export interface RackDeviceEditorProps {
 }
 
 export function RackDeviceEditor(props: RackDeviceEditorProps) {
+  const ro = props.readOnly === true;
   const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid, isDirty } = useDeviceDraft(props.initial);
   // Shown when the user tries to close a device that has unsaved work (Cancel / ✕ / Escape).
   const [confirmClose, setConfirmClose] = useState(false);
@@ -199,6 +201,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // (on macOS the "delete" key reports as Backspace, so handle both).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (ro) { if (e.key === "Escape") props.onCancel(); return; }
       if (e.key === "Escape") { if (isDirty) setConfirmClose(true); else props.onCancel(); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const t = e.target as HTMLElement | null;
@@ -217,7 +220,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props, isDirty, selectedGroupIds, selectedElementIds, activeFace, setActiveFace]);
+  }, [props, ro, isDirty, selectedGroupIds, selectedElementIds, activeFace, setActiveFace]);
 
   return (
     <div
@@ -229,11 +232,19 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
       <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">Rack Device Editor</h2>
-          <button aria-label="Close" onClick={attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
+          <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
         </div>
+
+        {ro && (
+          <div data-testid="readonly-banner" className="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 8h.01M11 12h1v4h1" /></svg>
+            You are viewing this custom rack device in read-only mode.
+          </div>
+        )}
 
         {/* Header fields — Rack units + Width kept narrow so the wider Name/Brand/
             Device type columns have room (e.g. the brand "＋" edit row). */}
+        <fieldset disabled={ro} className="contents">
         <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-[1.6fr_1.2fr_1.2fr_0.7fr_0.9fr]">
           <label className="flex flex-col text-xs font-semibold text-neutral-600">
             Name *
@@ -308,12 +319,13 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             </div>
           </label>
         </div>
+        </fieldset>
 
         {/* Canvas + palette + toggles. Clicking any empty space here deselects the
             current group/port — group boxes and port targets stopPropagation so
             selecting them isn't undone by this. */}
         <div
-          className="rounded-xl border border-neutral-100 bg-neutral-100 p-4"
+          className={`rounded-xl border border-neutral-100 bg-neutral-100 p-4 ${ro ? "pointer-events-none opacity-70" : ""}`}
           onClick={() => clearSelection()}
         >
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -430,7 +442,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             </div>
           </div>
 
-          <div className="mt-2 overflow-auto">
+          <div className={`mt-2 overflow-auto ${ro ? "pointer-events-none" : ""}`}>
             <EditorCanvas
               face={activeFace}
               widthIn={draft.widthIn > 0 ? draft.widthIn : 1}
@@ -602,17 +614,24 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         {props.error && <p className="mt-3 text-sm text-red-600">{props.error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" data-testid="editor-cancel" onClick={attemptClose}
-            className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
-          <button
-            type="button"
-            data-testid="editor-save"
-            disabled={!isValid || props.saving}
-            onClick={() => onSaveGuard(isValid, props.saving, () => props.onSave(draft))}
-            className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
-          >
-            {props.saving ? "Saving…" : props.mode === "create" ? "Create" : "Save"}
-          </button>
+          {ro ? (
+            <button type="button" data-testid="editor-close" onClick={props.onCancel}
+              className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Close</button>
+          ) : (
+            <>
+              <button type="button" data-testid="editor-cancel" onClick={attemptClose}
+                className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
+              <button
+                type="button"
+                data-testid="editor-save"
+                disabled={!isValid || props.saving}
+                onClick={() => onSaveGuard(isValid, props.saving, () => props.onSave(draft))}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
+              >
+                {props.saving ? "Saving…" : props.mode === "create" ? "Create" : "Save"}
+              </button>
+            </>
+          )}
         </div>
 
         {/* consumed so errors object isn't flagged as unused when wired in 3b */}

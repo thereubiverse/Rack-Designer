@@ -15,7 +15,8 @@ import {
 type EditingState =
   | { mode: "closed" }
   | { mode: "create" }
-  | { mode: "edit"; id: string; initial: Partial<DeviceDraft> };
+  | { mode: "edit"; id: string; initial: Partial<DeviceDraft> }
+  | { mode: "view"; id: string; initial: Partial<DeviceDraft> };
 
 export function EditorLauncher({
   rows, types, brands,
@@ -41,6 +42,21 @@ export function EditorLauncher({
     const t = res.template;
     setState({
       mode: "edit", id,
+      initial: {
+        name: t.name, brandId: t.brandId, deviceTypeId: t.deviceTypeId,
+        rackUnits: t.rackUnits, widthIn: t.widthIn, rackMounted: t.rackMounted,
+        frontFace: t.frontFace, backFace: t.backFace,
+      },
+    });
+  }
+
+  async function openView(id: string) {
+    setError(null);
+    const res = await getDeviceTemplateAction(id);
+    if (!res.ok || !res.template) { setError(res.error ?? "Failed to load"); return; }
+    const t = res.template;
+    setState({
+      mode: "view", id,
       initial: {
         name: t.name, brandId: t.brandId, deviceTypeId: t.deviceTypeId,
         rackUnits: t.rackUnits, widthIn: t.widthIn, rackMounted: t.rackMounted,
@@ -88,6 +104,7 @@ export function EditorLauncher({
         rows={rows}
         title="Custom Rack Devices"
         onEdit={openEdit}
+        onView={openView}
         onDuplicate={duplicate}
         onDelete={(id) => setConfirmDelete({ id, name: rows.find((r) => r.id === id)?.name ?? "" })}
         onCreate={() => { setError(null); setState({ mode: "create" }); }}
@@ -95,8 +112,9 @@ export function EditorLauncher({
 
       {state.mode !== "closed" && (
         <RackDeviceEditor
-          mode={state.mode}
-          initial={state.mode === "edit" ? state.initial : undefined}
+          mode={state.mode === "create" ? "create" : "edit"}
+          readOnly={state.mode === "view"}
+          initial={state.mode === "edit" || state.mode === "view" ? state.initial : undefined}
           types={types}
           brands={brands}
           saving={saving}

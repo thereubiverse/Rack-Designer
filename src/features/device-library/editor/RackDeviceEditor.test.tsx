@@ -443,3 +443,28 @@ describe("RackDeviceEditor — multi-select (shift+click)", () => {
     expect(screen.getByTestId("group-box-g2")).toBeInTheDocument(); // untouched
   });
 });
+
+describe("RackDeviceEditor read-only mode", () => {
+  it("shows the banner, disables fields, and offers only Close", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+      initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
+    expect(screen.getByText(/read-only mode/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/name/i)).toBeDisabled();
+    expect(screen.queryByTestId("editor-save")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("editor-cancel")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("editor-close"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape closes immediately in read-only mode (no discard warning)", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+      initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
+    await user.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("discard-confirm")).not.toBeInTheDocument();
+  });
+});
