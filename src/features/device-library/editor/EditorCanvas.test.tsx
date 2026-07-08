@@ -550,3 +550,160 @@ describe("EditorCanvas chevron drag to remove (3f)", () => {
     expect(onRemoveRow).toHaveBeenCalledTimes(1); // 2 rows → floor at 1 → one removal
   });
 });
+
+describe("EditorCanvas — icon elements", () => {
+  const iconFace: Face = {
+    portGroups: [],
+    elements: [{ id: "i1", kind: "icon", gridX: 40, gridY: 20, w: 36, h: 36, iconName: "tabler:home" }],
+  };
+
+  it("selects an icon element on click", () => {
+    const onSelectElement = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onSelectElement={onSelectElement} />,
+    );
+    fireEvent.click(getByTestId("icon-el-i1"));
+    expect(onSelectElement).toHaveBeenCalledWith("i1", false);
+  });
+
+  it("shift+clicking an icon element selects additively", () => {
+    const onSelectElement = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onSelectElement={onSelectElement} />,
+    );
+    fireEvent.click(getByTestId("icon-el-i1"), { shiftKey: true });
+    expect(onSelectElement).toHaveBeenCalledWith("i1", true);
+  });
+
+  it("a marquee reports icon elements it sweeps over", () => {
+    const onMarqueeSelect = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onSelectElement={() => {}} onMarqueeSelect={onMarqueeSelect} />,
+    );
+    fireEvent.pointerDown(getByTestId("editor-overlay"), { clientX: 0, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 200 });
+    fireEvent.pointerUp(window, { clientX: 900, clientY: 200 });
+    // jsdom rects are zero → fallback includes it; arg[1] is the element ids
+    expect(onMarqueeSelect.mock.calls.at(-1)?.[1]).toContain("i1");
+  });
+
+  it("drags an icon element to move it (clamped inside the body)", () => {
+    const onMoveElements = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        onSelect={() => {}} onSelectElement={() => {}} onMoveElements={onMoveElements} />,
+    );
+    fireEvent.pointerDown(getByTestId("icon-el-i1"), { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 130, clientY: 110 }); // +30 / +10
+    fireEvent.pointerUp(window, { clientX: 130, clientY: 110 });
+    // gridY snaps to 24 — a smart guide pulls the icon's edge to the 1RU body's vertical centre.
+    expect(onMoveElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "i1", gridX: 70, gridY: 24 }]);
+  });
+
+  it("resizes an icon element via the corner handle", () => {
+    const onResizeElements = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedElementIds={["i1"]} onSelect={() => {}} onSelectElement={() => {}} onResizeElements={onResizeElements} />,
+    );
+    fireEvent.pointerDown(getByTestId("icon-el-resize"), { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 120 }); // +20 / +20
+    fireEvent.pointerUp(window, { clientX: 120, clientY: 120 });
+    expect(onResizeElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "i1", w: 56, h: 56 }]);
+  });
+
+  it("resizes the whole selection from one handle — Shift makes them uniform", () => {
+    const onResizeElements = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={twoIconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedElementIds={["i1", "i2"]} onSelect={() => {}} onSelectElement={() => {}} onResizeElements={onResizeElements} />,
+    );
+    // i1=36, i2=18; drag i1's handle by +18 → i1=54 (factor 1.5). Proportional: i2 keeps ratio → 27.
+    fireEvent.pointerEnter(getByTestId("icon-el-i1")); // reveal i1's handle (hover-gated in multi-select)
+    fireEvent.pointerDown(getByTestId("icon-el-i1").querySelector('[data-testid="icon-el-resize"]')!, { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 118, clientY: 100 }); // +18
+    expect(onResizeElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "i1", w: 54, h: 54 }, { id: "i2", w: 27, h: 27 }]);
+    // Shift held → forced uniform: i2 jumps to the anchor's size (54).
+    fireEvent.pointerMove(window, { clientX: 118, clientY: 100, shiftKey: true });
+    expect(onResizeElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "i1", w: 54, h: 54 }, { id: "i2", w: 54, h: 54 }]);
+    fireEvent.pointerUp(window, { clientX: 118, clientY: 100 });
+  });
+
+  const twoIconFace: Face = {
+    portGroups: [],
+    elements: [
+      { id: "i1", kind: "icon", gridX: 40, gridY: 20, w: 36, h: 36, iconName: "tabler:home" },
+      { id: "i2", kind: "icon", gridX: 100, gridY: 20, w: 18, h: 18, iconName: "tabler:star" },
+    ],
+  };
+
+  it("snaps a dragged icon to another icon's edge and draws a guide", () => {
+    const onMoveElements = vi.fn();
+    const alignFace: Face = {
+      portGroups: [],
+      elements: [
+        { id: "i1", kind: "icon", gridX: 40, gridY: 20, w: 36, h: 36, iconName: "a" },
+        { id: "i2", kind: "icon", gridX: 100, gridY: 20, w: 36, h: 36, iconName: "b" },
+      ],
+    };
+    const { getByTestId, queryAllByTestId } = render(
+      <EditorCanvas face={alignFace} widthIn={19} rackUnits={3} rackMounted side="FRONT"
+        selectedElementIds={["i1"]} onSelect={() => {}} onSelectElement={() => {}} onMoveElements={onMoveElements} />,
+    );
+    fireEvent.pointerDown(getByTestId("icon-el-i1"), { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 162, clientY: 100 }); // +62 → left 102, snaps to i2's left edge (100)
+    expect(onMoveElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "i1", gridX: 100, gridY: 20 }]);
+    expect(queryAllByTestId("align-guide").length).toBeGreaterThan(0);
+    fireEvent.pointerUp(window, { clientX: 162, clientY: 100 });
+    expect(queryAllByTestId("align-guide").length).toBe(0); // guides clear on release
+  });
+
+  it("reveals the resize handle on the hovered icon inside a multi-selection", () => {
+    const { getByTestId, queryByTestId } = render(
+      <EditorCanvas face={twoIconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedElementIds={["i1", "i2"]} onSelect={() => {}} onSelectElement={() => {}}
+        onResizeElements={() => {}} onMoveElements={() => {}} />,
+    );
+    // No hover → no handle (a multi-selection isn't "onlySelected").
+    expect(queryByTestId("icon-el-resize")).toBeNull();
+    fireEvent.pointerEnter(getByTestId("icon-el-i2"));
+    expect(getByTestId("icon-el-i2").querySelector('[data-testid="icon-el-resize"]')).not.toBeNull();
+    fireEvent.pointerLeave(getByTestId("icon-el-i2"));
+    expect(queryByTestId("icon-el-resize")).toBeNull();
+  });
+
+  it("moves the whole multi-selection together when dragging one of them", () => {
+    const onMoveElements = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={twoIconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedElementIds={["i1", "i2"]} onSelect={() => {}} onSelectElement={() => {}} onMoveElements={onMoveElements} />,
+    );
+    fireEvent.pointerDown(getByTestId("icon-el-i1"), { clientX: 100, clientY: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 110, clientY: 105 }); // +10 / +5
+    fireEvent.pointerUp(window, { clientX: 110, clientY: 105 });
+    // both gridY snap to 24 — the set's bounding box aligns to the body's vertical centre.
+    expect(onMoveElements.mock.calls.at(-1)?.[0]).toEqual([
+      { id: "i1", gridX: 50, gridY: 24 },
+      { id: "i2", gridX: 110, gridY: 24 },
+    ]);
+  });
+
+  it("Alt+drag duplicates the selection and drags the copies", () => {
+    const onDuplicateElements = vi.fn(() => ["c1"]);
+    const onMoveElements = vi.fn();
+    const { getByTestId } = render(
+      <EditorCanvas face={iconFace} widthIn={19} rackUnits={1} rackMounted side="FRONT"
+        selectedElementIds={["i1"]} onSelect={() => {}} onSelectElement={() => {}}
+        onDuplicateElements={onDuplicateElements} onMoveElements={onMoveElements} />,
+    );
+    fireEvent.pointerDown(getByTestId("icon-el-i1"), { clientX: 100, clientY: 100, button: 0, altKey: true });
+    fireEvent.pointerMove(window, { clientX: 110, clientY: 105 }); // +10 / +5
+    fireEvent.pointerUp(window, { clientX: 110, clientY: 105 });
+    expect(onDuplicateElements).toHaveBeenCalledWith(["i1"]);
+    // the copy (c1), not the original, is the one that moves (gridY snaps to the body centre)
+    expect(onMoveElements.mock.calls.at(-1)?.[0]).toEqual([{ id: "c1", gridX: 50, gridY: 24 }]);
+  });
+});

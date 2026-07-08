@@ -137,12 +137,35 @@ describe("RackDeviceEditor", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("clicking the backdrop calls onCancel", async () => {
+  it("clicking the backdrop does NOT close the editor (guards against stray drag-releases)", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
     render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
     await user.click(screen.getByTestId("rack-device-editor")); // the backdrop root itself
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("closing a device with unsaved work asks to confirm instead of closing", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    await user.type(screen.getByLabelText(/name/i), "Switch"); // make it dirty
+    await user.click(screen.getByTestId("editor-cancel"));
+    expect(onCancel).not.toHaveBeenCalled();               // held back by the warning
+    expect(screen.getByTestId("discard-confirm")).toBeInTheDocument();
+    await user.click(screen.getByTestId("discard-confirm-btn"));
+    expect(onCancel).toHaveBeenCalledTimes(1);              // Discard closes
+  });
+
+  it("'Keep editing' dismisses the warning without closing", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    await user.type(screen.getByLabelText(/name/i), "Switch"); // make it dirty
+    await user.click(screen.getByTestId("editor-cancel"));
+    await user.click(screen.getByTestId("discard-cancel"));
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("discard-confirm")).not.toBeInTheDocument();
   });
 
   it("does not close when clicking inside the dialog panel", async () => {
@@ -304,14 +327,12 @@ describe("RackDeviceEditor — 3d refinements", () => {
 });
 
 describe("RackDeviceEditor — palette sections (3e)", () => {
-  it("renders Port Types and Elements sections; Text/Icon are inert", () => {
+  it("renders Port Types and Elements sections; Icon is draggable, Text still inert", () => {
     render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
     expect(screen.getByText("Port Types")).toBeInTheDocument();
     expect(screen.getByText("Elements")).toBeInTheDocument();
-    const text = screen.getByTestId("element-text");
-    const icon = screen.getByTestId("element-icon");
-    expect(text).not.toHaveAttribute("draggable", "true");
-    expect(icon).not.toHaveAttribute("draggable", "true");
+    expect(screen.getByTestId("element-text")).not.toHaveAttribute("draggable", "true");
+    expect(screen.getByTestId("element-icon").getAttribute("draggable")).toBe("true"); // Icon is now live
     // a media chip is still draggable
     expect(screen.getByTitle("Copper").getAttribute("draggable")).toBe("true");
   });
@@ -329,6 +350,27 @@ describe("RackDeviceEditor — palette drag ghost", () => {
     expect(chip.className).toContain("opacity-40"); // source dims while dragging
     fireEvent.dragEnd(chip);
     expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
+  });
+
+  it("the Icon chip drags with a follow-cursor ghost like the media chips (dims source, clears on end)", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    const chip = screen.getByTestId("element-icon");
+    expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
+    fireEvent.dragStart(chip, { clientX: 100, clientY: 100, dataTransfer: dt });
+    const ghost = screen.getByTestId("palette-drag-ghost");
+    expect(ghost).toHaveTextContent("Icon");
+    expect(chip.className).toContain("opacity-40"); // source dims while dragging
+    fireEvent.dragEnd(chip);
+    expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
+  });
+
+  it("the Icon chip drag uses a 'move' effect so real drops aren't rejected by the overlay", () => {
+    // The overlay's onDragOver forces dropEffect='move'; the chip's effectAllowed must include it
+    // or the browser rejects the drop and the picker never opens.
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    const d = { setData() {}, setDragImage() {}, effectAllowed: "" };
+    fireEvent.dragStart(screen.getByTestId("element-icon"), { dataTransfer: d });
+    expect(d.effectAllowed).toBe("move");
   });
 });
 

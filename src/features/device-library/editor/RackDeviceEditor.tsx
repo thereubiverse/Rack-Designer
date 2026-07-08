@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media } from "@/domain/faceplate";
+import { useState, useEffect, useRef, type ReactNode } from "react";
+import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement } from "@/domain/faceplate";
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
@@ -11,6 +11,9 @@ import { PortGroupSettings } from "./PortGroupSettings";
 import { PortSettings, BatchSettings } from "./PortSettings";
 import { BrandPicker } from "./BrandPicker";
 import { Select } from "./Select";
+import { IconPicker } from "./IconPicker";
+import { IconSettings } from "./IconSettings";
+import { addIconElement, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, ICON_DEFAULT_SIZE } from "./elementOps";
 import {
   addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices, setGroupYOffset, setRowLabels,
@@ -19,6 +22,11 @@ import {
 
 // The seeded default brand — always available, never deletable.
 const PROTECTED_BRAND_NAME = "Generic";
+
+// The Icon element chip's glyph — shared by the palette chip and its drag ghost.
+const ELEMENT_ICON_GLYPH = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6.5" cy="6.5" r="3.5" /><path d="M2.5 21h8l-4 -7z" /><path d="M14 3l7 7" /><path d="M14 14h7v7h-7z" /></svg>
+);
 
 const MEDIA_LABELS: Record<Media, string> = {
   copper: "Copper", fiber: "Fiber", sfp: "SFP", usb_a: "USB-A", usb_c: "USB-C",
@@ -39,18 +47,27 @@ export interface RackDeviceEditorProps {
 }
 
 export function RackDeviceEditor(props: RackDeviceEditorProps) {
-  const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid } = useDeviceDraft(props.initial);
+  const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid, isDirty } = useDeviceDraft(props.initial);
+  // Shown when the user tries to close a device that has unsaved work (Cancel / ✕ / Escape).
+  const [confirmClose, setConfirmClose] = useState(false);
+  // Every close path routes through here: warn first if there's unsaved work, else close.
+  function attemptClose() { if (isDirty) setConfirmClose(true); else props.onCancel(); }
   const [brands, setBrands] = useState(props.brands);
   // Selection is a set of groups; ports are a set within a SINGLE selected group.
   // Port-multi and group-multi are mutually exclusive.
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [selectedPortIndices, setSelectedPortIndices] = useState<number[]>([]);
   const [snapToGrid, setSnapToGrid] = useState(false); // toggle only for now; snapping wired in a later slice
+  // Where the Icon chip was dropped (device coords) — non-null while the icon picker is open.
+  const [iconPickerAt, setIconPickerAt] = useState<{ x: number; y: number } | null>(null);
+  // When true the icon picker is open to REPLACE the icon on the current selection (vs. place a new one).
+  const [iconReplaceOpen, setIconReplaceOpen] = useState(false);
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
   // Live palette drag: a full-size, blue-bordered clone of the chip that follows the cursor
   // (the native drag image is suppressed). It's anchored to where the cursor grabbed it
   // (grabDX/grabDY) and matches the source chip's size so it doesn't appear to shrink.
   const [paletteDrag, setPaletteDrag] = useState<
-    { media: Media; x: number; y: number; grabDX: number; grabDY: number; width: number; height: number } | null
+    { id: string; content: ReactNode; media?: Media; x: number; y: number; grabDX: number; grabDY: number; width: number; height: number } | null
   >(null);
   const dragImgRef = useRef<HTMLImageElement | null>(null);
   function transparentDragImage(): HTMLImageElement {
@@ -83,15 +100,25 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const multiGroup = selectedGroupIds.length >= 2;
   // Exactly one port selected in one group → the full single-port panel + palette retype.
   const singlePortIndex = singleGroupId !== null && selectedPortIndices.length === 1 ? selectedPortIndices[0] : null;
+  // The selected icon elements → drive the icon-settings panel. Colour/opacity are the selection's
+  // common value, or null when it disagrees (the panel then falls back to the defaults).
+  const selectedIcons = activeFace.elements.filter(
+    (e): e is IconElement => e.kind === "icon" && selectedElementIds.includes(e.id),
+  );
+  const common = <T,>(vals: T[]): T | null => (vals.length > 0 && vals.every((v) => v === vals[0]) ? vals[0] : null);
+  const iconColor = common(selectedIcons.map((e) => e.color ?? null));
+  const iconOpacity = common(selectedIcons.map((e) => e.opacity ?? null));
 
   function clearSelection() {
     setSelectedGroupIds([]);
     setSelectedPortIndices([]);
+    setSelectedElementIds([]);
   }
 
   // Click a group box → just that group; shift+click → toggle it in the set (group-multi).
   function selectGroup(id: string | null, additive = false) {
     if (id === null) return clearSelection();
+    setSelectedElementIds([]); // groups and icon elements are mutually-exclusive selections
     setSelectedPortIndices([]);
     setSelectedGroupIds((prev) =>
       additive ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]);
@@ -167,12 +194,12 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
     ...props.types.filter((t) => t.name === "Other"),
   ];
 
-  // Escape closes the modal (behaves like Cancel), per spec §10.
+  // Escape asks to close (behaves like Cancel) — guarded so unsaved work can't vanish.
   // Delete/Backspace removes the selected group(s) — but not while typing in a field
   // (on macOS the "delete" key reports as Backspace, so handle both).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { props.onCancel(); return; }
+      if (e.key === "Escape") { if (isDirty) setConfirmClose(true); else props.onCancel(); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const t = e.target as HTMLElement | null;
         const tag = t?.tagName;
@@ -181,12 +208,16 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           e.preventDefault();
           setActiveFace(deletePortGroups(activeFace, selectedGroupIds));
           clearSelection();
+        } else if (selectedElementIds.length > 0) {
+          e.preventDefault();
+          setActiveFace((prev) => selectedElementIds.reduce((f, id) => deleteElement(f, id), prev));
+          clearSelection();
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props, selectedGroupIds, activeFace, setActiveFace]);
+  }, [props, isDirty, selectedGroupIds, selectedElementIds, activeFace, setActiveFace]);
 
   return (
     <div
@@ -194,12 +225,11 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
       role="dialog"
       aria-label="Rack Device Editor"
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-[6vh]"
-      onClick={(e) => { if (e.target === e.currentTarget) props.onCancel(); }}
     >
       <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">Rack Device Editor</h2>
-          <button aria-label="Close" onClick={props.onCancel} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
+          <button aria-label="Close" onClick={attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
         </div>
 
         {/* Header fields — Rack units + Width kept narrow so the wider Name/Brand/
@@ -300,7 +330,9 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                         e.dataTransfer.setDragImage(transparentDragImage(), 0, 0); // hide the default ghost
                         const rect = e.currentTarget.getBoundingClientRect();
                         setPaletteDrag({
-                          media: m, x: e.clientX, y: e.clientY,
+                          id: m, media: m,
+                          content: <><span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}</>,
+                          x: e.clientX, y: e.clientY,
                           grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top,
                           width: rect.width, height: rect.height,
                         });
@@ -311,7 +343,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                         e.stopPropagation(); // keep the port selected so its settings stay shown
                         setActiveFace(setPortMedia(activeFace, singleGroupId!, singlePortIndex!, m));
                       }}
-                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 transition-colors ${paletteDrag?.media === m ? "opacity-40" : ""} ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200 hover:bg-neutral-100"}`}
+                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-neutral-800 transition-colors ${paletteDrag?.id === m ? "opacity-40" : ""} ${portSelected ? "cursor-pointer border-neutral-200 hover:border-blue-400 hover:bg-blue-50" : "cursor-grab border-neutral-200 hover:bg-neutral-100"}`}
                       title={portSelected ? `Set selected port to ${MEDIA_LABELS[m]}` : MEDIA_LABELS[m]}>
                       <span className="text-neutral-900"><PortGlyph media={m} /></span>{MEDIA_LABELS[m]}
                     </span>
@@ -326,8 +358,27 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 20l6 -16l2 0l7 16" /><path d="M4 20l3 0" /><path d="M14 20l7 0" /><path d="M6.9 15l6.9 0" /></svg>
                   Text
                 </span>
-                <span data-testid="element-icon" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6.5" cy="6.5" r="3.5" /><path d="M2.5 21h8l-4 -7z" /><path d="M14 3l7 7" /><path d="M14 14h7v7h-7z" /></svg>
+                <span
+                  data-testid="element-icon"
+                  draggable
+                  title="Drag onto the device to place an icon"
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", "element:icon");
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setDragImage(transparentDragImage(), 0, 0); // hide the default ghost
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setPaletteDrag({
+                      id: "element:icon",
+                      content: <><span className="text-neutral-900">{ELEMENT_ICON_GLYPH}</span>Icon</>,
+                      x: e.clientX, y: e.clientY,
+                      grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top,
+                      width: rect.width, height: rect.height,
+                    });
+                  }}
+                  onDragEnd={() => setPaletteDrag(null)}
+                  className={`flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 ${paletteDrag?.id === "element:icon" ? "opacity-40" : ""}`}
+                >
+                  {ELEMENT_ICON_GLYPH}
                   Icon
                 </span>
                 <span data-testid="element-shapes" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
@@ -388,9 +439,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               side={side}
               selectedGroupIds={selectedGroupIds}
               onSelect={selectGroup}
-              onMarqueeSelect={(ids, additive) => {
+              onMarqueeSelect={(groupIds, elementIds, additive) => {
                 setSelectedPortIndices([]);
-                setSelectedGroupIds((prev) => (additive ? [...new Set([...prev, ...ids])] : ids));
+                setSelectedGroupIds((prev) => (additive ? [...new Set([...prev, ...groupIds])] : groupIds));
+                setSelectedElementIds((prev) => (additive ? [...new Set([...prev, ...elementIds])] : elementIds));
               }}
               onCreate={(media, pos) => {
                 const before = activeFace.portGroups.length;
@@ -402,6 +454,21 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               paletteDragMedia={paletteDrag?.media ?? null}
               onMove={(id, target) => setActiveFace(movePortGroup(activeFace, id, target, bounds, { snap: false, allowVertical: (draft.rackUnits >= 1 ? draft.rackUnits : 1) >= 2 }))}
               onMoveGroups={(ids, delta) => setActiveFace(moveGroups(activeFace, ids, delta, bounds))}
+              onDropIcon={(pos) => setIconPickerAt(pos)}
+              paletteDragIcon={paletteDrag?.id === "element:icon"}
+              selectedElementIds={selectedElementIds}
+              onSelectElement={(id, additive) => {
+                if (additive) { setSelectedElementIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); return; }
+                setSelectedElementIds([id]); setSelectedGroupIds([]); setSelectedPortIndices([]);
+              }}
+              onMoveElements={(moves) => setActiveFace((prev) => placeElements(prev, moves))}
+              onResizeElements={(sizes) => setActiveFace((prev) => resizeElements(prev, sizes))}
+              onDuplicateElements={(ids) => {
+                const { face: nf, newIds } = duplicateElements(activeFace, ids);
+                setActiveFace(nf);
+                setSelectedElementIds(newIds); // drag the copies
+                return newIds;
+              }}
               onVerticalMove={(id, yOffset, labelPos) => setActiveFace((prev) => {
                 // Snap the row's offset and set every port's label to the side the snapped position
                 // implies. Functional update so it composes with the spacing commit fired in the
@@ -444,7 +511,19 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           </div>
         </div>
 
-        {multiGroup ? (() => {
+        {selectedIcons.length > 0 ? (
+          <div className="mt-4 rounded-xl border border-neutral-200 p-4">
+            <IconSettings
+              count={selectedIcons.length}
+              color={iconColor}
+              opacity={iconOpacity}
+              onColor={(c) => setActiveFace((prev) => setElementsColor(prev, selectedElementIds, c))}
+              onOpacity={(o) => setActiveFace((prev) => setElementsOpacity(prev, selectedElementIds, o))}
+              onSelectIcon={() => setIconReplaceOpen(true)}
+              onDelete={() => { setActiveFace((prev) => selectedElementIds.reduce((f, id) => deleteElement(f, id), prev)); setSelectedElementIds([]); }}
+            />
+          </div>
+        ) : multiGroup ? (() => {
           const { rotations, labels } = targetState();
           const rotated = rotations.length && rotations.every((r) => r % 360 !== 0) ? "on"
             : rotations.every((r) => r % 360 === 0) ? "off" : "mixed";
@@ -523,7 +602,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         {props.error && <p className="mt-3 text-sm text-red-600">{props.error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" data-testid="editor-cancel" onClick={props.onCancel}
+          <button type="button" data-testid="editor-cancel" onClick={attemptClose}
             className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
           <button
             type="button"
@@ -548,7 +627,57 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           className="pointer-events-none fixed z-[1000] flex items-center gap-1 rounded-md border border-blue-500 bg-white px-2 py-1 text-xs text-neutral-800 opacity-80 shadow-md"
           style={{ left: paletteDrag.x - paletteDrag.grabDX, top: paletteDrag.y - paletteDrag.grabDY, width: paletteDrag.width, height: paletteDrag.height }}
         >
-          <span className="text-neutral-900"><PortGlyph media={paletteDrag.media} /></span>{MEDIA_LABELS[paletteDrag.media]}
+          {paletteDrag.content}
+        </div>
+      )}
+      {(iconPickerAt || iconReplaceOpen) && (
+        <IconPicker
+          onClose={() => { setIconPickerAt(null); setIconReplaceOpen(false); }}
+          onPick={(iconName) => {
+            if (iconReplaceOpen) {
+              const ids = selectedElementIds;
+              setActiveFace((prev) => setElementsIcon(prev, ids, iconName)); // swap the icon on the selection
+              setIconReplaceOpen(false);
+              return;
+            }
+            // land exactly where the drop-preview box showed (centred on the drop point, clamped)
+            const { gridX, gridY } = resolveIconDrop(iconPickerAt!.x, iconPickerAt!.y, ICON_DEFAULT_SIZE, bounds);
+            setActiveFace((prev) => addIconElement(prev, { gridX, gridY, iconName }));
+            setIconPickerAt(null);
+          }}
+        />
+      )}
+      {confirmClose && (
+        <div
+          data-testid="discard-confirm"
+          role="alertdialog"
+          aria-label="Discard changes"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
+            <h3 className="text-base font-bold">Discard this device?</h3>
+            <p className="mt-2 text-sm text-neutral-600">
+              You have unsaved changes. If you close now, your progress will be lost.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="discard-cancel"
+                onClick={() => setConfirmClose(false)}
+                className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100"
+              >
+                Keep editing
+              </button>
+              <button
+                type="button"
+                data-testid="discard-confirm-btn"
+                onClick={() => { setConfirmClose(false); props.onCancel(); }}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

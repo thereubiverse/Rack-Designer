@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { emptyFace, isValidWidthIn, isValidRackUnits, type Face } from "@/domain/faceplate";
 
 export interface DeviceDraft {
@@ -39,6 +39,9 @@ function computeErrors(d: DeviceDraft): DraftErrors {
 
 export function useDeviceDraft(initial?: Partial<DeviceDraft>) {
   const [draft, setDraft] = useState<DeviceDraft>(() => ({ ...emptyDraft(), ...initial }));
+  // Snapshot of the draft as first opened — used to warn before discarding unsaved work.
+  const initialRef = useRef<DeviceDraft | null>(null);
+  if (initialRef.current === null) initialRef.current = { ...emptyDraft(), ...initial };
 
   const setField = useCallback(
     <K extends keyof DeviceDraft>(key: K, value: DeviceDraft[K]) => {
@@ -68,5 +71,12 @@ export function useDeviceDraft(initial?: Partial<DeviceDraft>) {
   const errors = useMemo(() => computeErrors(draft), [draft]);
   const isValid = Object.keys(errors).length === 0;
 
-  return { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid };
+  // Has the user made any real change since opening? `activeSide` is just which face is on
+  // screen (not saved content), so it's ignored — flipping front/back isn't "unsaved work".
+  const isDirty = useMemo(() => {
+    const strip = (d: DeviceDraft) => ({ ...d, activeSide: "front" as const });
+    return JSON.stringify(strip(draft)) !== JSON.stringify(strip(initialRef.current!));
+  }, [draft]);
+
+  return { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid, isDirty };
 }

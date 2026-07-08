@@ -61,6 +61,8 @@ export interface IconElement {
   w: number;
   h: number;
   iconName: string;
+  color?: string;   // CSS color; defaults to the faceplate ink colour when unset
+  opacity?: number; // 0–1; defaults to 1 when unset
 }
 
 export type FaceElement = TextElement | IconElement;

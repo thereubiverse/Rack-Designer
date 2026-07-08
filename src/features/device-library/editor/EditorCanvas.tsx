@@ -6,6 +6,7 @@ import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_P
 import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
+import { resolveIconResize, resolveIconGroupResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
 
 // How close (screen px) a group edge/gap must get before a smart guide snaps.
 const GUIDE_THRESHOLD_PX = 6;
@@ -26,8 +27,20 @@ export interface EditorCanvasProps {
   selectedPortIndices?: number[];
   highlight?: HighlightPort | HighlightPort[] | null;
   onCreate?: (media: Media, pos: Pos) => void;
+  /** Dropping the Icon element chip on the device → open the icon picker at this position. */
+  onDropIcon?: (pos: Pos) => void;
+  /** True while the Icon element chip is being dragged (shows the drop-preview box). */
+  paletteDragIcon?: boolean;
+  // Icon elements: multi-select (marquee + shift+click) / move / resize.
+  selectedElementIds?: string[];
+  onSelectElement?: (id: string, additive: boolean) => void;
+  onMoveElements?: (moves: { id: string; gridX: number; gridY: number }[]) => void;
+  onResizeElements?: (sizes: { id: string; w: number; h: number }[]) => void;
+  /** Alt/Option+drag: duplicate `ids`, select the copies, and return their new ids to drag. */
+  onDuplicateElements?: (ids: string[]) => string[];
   onSelect?: (id: string | null, additive: boolean) => void;
-  onMarqueeSelect?: (ids: string[], additive: boolean) => void;
+  // Marquee reports the groups AND icon elements it swept over.
+  onMarqueeSelect?: (groupIds: string[], elementIds: string[], additive: boolean) => void;
   onSelectPort?: (index: number, additive: boolean) => void;
   onPortMedia?: (groupId: string, index: number, media: Media) => void;
   onAddColumn?: (id: string) => void;
@@ -205,14 +218,19 @@ export function EditorCanvas(props: EditorCanvasProps) {
   // rects (e.g. jsdom) fall back to including the group.
   function marqueeSelect(sx: number, sy: number, ex: number, ey: number, additive: boolean) {
     const ml = Math.min(sx, ex), mr = Math.max(sx, ex), mt = Math.min(sy, ey), mb = Math.max(sy, ey);
-    const ids: string[] = [];
-    overlayRef.current?.querySelectorAll('[data-testid^="glyph-bounds-"]').forEach((el) => {
-      const r = el.getBoundingClientRect();
-      const id = (el.getAttribute("data-testid") || "").replace("glyph-bounds-", "");
-      if (r.width <= 0 || r.height <= 0) { ids.push(id); return; } // unmeasurable (jsdom) → include
-      if (r.left < mr && r.right > ml && r.top < mb && r.bottom > mt) ids.push(id);
-    });
-    props.onMarqueeSelect?.(ids, additive);
+    const hits = (selector: string, prefix: string) => {
+      const out: string[] = [];
+      overlayRef.current?.querySelectorAll(selector).forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const id = (el.getAttribute("data-testid") || "").replace(prefix, "");
+        if (r.width <= 0 || r.height <= 0) { out.push(id); return; } // unmeasurable (jsdom) → include
+        if (r.left < mr && r.right > ml && r.top < mb && r.bottom > mt) out.push(id);
+      });
+      return out;
+    };
+    const groupIds = hits('[data-testid^="glyph-bounds-"]', "glyph-bounds-");
+    const elementIds = hits('[data-testid^="icon-hit-"]', "icon-hit-");
+    props.onMarqueeSelect?.(groupIds, elementIds, additive);
   }
   // Marquee lifecycle: select LIVE as it's dragged (so it never depends on the release point),
   // and deselect on a plain click.
@@ -288,7 +306,40 @@ export function EditorCanvas(props: EditorCanvasProps) {
   }
   const isMulti = !!drag && drag.ids.length > 1;
   const multiDrag = isMulti && drag ? resolveMultiMove(drag.ids, drag.dx, drag.dy) : null;
-  const guideData = isMulti ? multiDrag : activeDrag; // which drag's guides to draw
+  const guideData = isMulti ? multiDrag : activeDrag; // which drag's guides to draw (port groups)
+
+  // Rect (device coords) of an icon-shaped box — icons align by their own edges/centre.
+  const iconRect = (b: { gridX: number; gridY: number; w: number; h: number }): Rect => ({
+    left: b.gridX, right: b.gridX + b.w, top: b.gridY, bottom: b.gridY + b.h,
+    cx: b.gridX + b.w / 2, cy: b.gridY + b.h / 2, w: b.w, h: b.h,
+  });
+  // Resolve an icon-element drag with smart guides: snap the moving set's bounding box against the
+  // other icons AND the port groups (guides win, else grid), clamp it to the body, and return the
+  // final delta + guide lines to draw. Mirrors resolveMultiMove but in 2D and edge-to-edge.
+  function resolveIconDrag(origs: ElBox[], rawDx: number, rawDy: number): { dx: number; dy: number; lines: GuideLine[]; spacings: SpacingGuide[] } {
+    const movingIds = new Set(origs.map((o) => o.id));
+    const cand = origs.map((o) => iconRect({ gridX: o.gridX + rawDx, gridY: o.gridY + rawDy, w: o.w, h: o.h }));
+    const bbox: Rect = {
+      left: Math.min(...cand.map((r) => r.left)), right: Math.max(...cand.map((r) => r.right)),
+      top: Math.min(...cand.map((r) => r.top)), bottom: Math.max(...cand.map((r) => r.bottom)),
+      cx: 0, cy: 0, w: 0, h: 0,
+    };
+    bbox.cx = (bbox.left + bbox.right) / 2; bbox.cy = (bbox.top + bbox.bottom) / 2; bbox.w = bbox.right - bbox.left; bbox.h = bbox.bottom - bbox.top;
+    const others: Rect[] = [];
+    for (const el of face.elements) if (el.kind === "icon" && !movingIds.has(el.id)) others.push(iconRect(el));
+    for (const g of face.portGroups) others.push(rectOf(g, bounds));
+    const gridSnap = (v: number) => (snapStep > 1 ? Math.round(v / snapStep) * snapStep - v : 0);
+    let ddx = 0, ddy = 0, lines: GuideLine[] = [], spacings: SpacingGuide[] = [];
+    const gr = guidesForMovingRect(bbox, others, bounds, { threshold: GUIDE_THRESHOLD_PX / (scaleRef.current || 1), allowVertical: true });
+    if (gr.lines.length || gr.spacings.length) { ddx = gr.ddx; ddy = gr.ddy; lines = gr.lines; spacings = gr.spacings; }
+    else { ddx = gridSnap(bbox.left); ddy = gridSnap(bbox.top); }
+    // clamp the bounding box inside the body (icons may reach the edges — no ear padding)
+    const bl = bbox.left + ddx, br = bbox.right + ddx;
+    if (bl < 0) ddx -= bl; else if (br > bounds.width) ddx -= br - bounds.width;
+    const bt = bbox.top + ddy, bb = bbox.bottom + ddy;
+    if (bt < 0) ddy -= bt; else if (bb > bounds.height) ddy -= bb - bounds.height;
+    return { dx: rawDx + ddx, dy: rawDy + ddy, lines, spacings };
+  }
 
   // The clamped-to-body 1RU slot box for the palette drop-preview, in overlay-local coords. A
   // fresh drop is a single-row group, so the preview matches its 1RU selection box exactly.
@@ -369,6 +420,40 @@ export function EditorCanvas(props: EditorCanvasProps) {
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [vertDrag, props]);
 
+  // Icon element move/resize: commits live (the elements re-render at their new box each move).
+  // A move carries the whole selected set (so they move together); a resize is a single element.
+  type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number };
+  const [elDrag, setElDrag] = useState<
+    { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string } | null
+  >(null);
+  // The icon the cursor is over — its resize handle shows even inside a multi-selection.
+  const [hoverElId, setHoverElId] = useState<string | null>(null);
+  // Smart-guide lines to draw while dragging icon element(s) (mirrors the group-drag guides).
+  const [elGuides, setElGuides] = useState<{ lines: GuideLine[]; spacings: SpacingGuide[] } | null>(null);
+  // Guides to render: a port-group drag's, else the icon drag's (only one runs at a time).
+  const guideDraw = guideData ?? elGuides;
+  useEffect(() => {
+    if (!elDrag) return;
+    function onMove(e: PointerEvent) {
+      const s = scaleRef.current || 1;
+      const d = elDrag!;
+      const dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      if (d.mode === "move") {
+        const res = resolveIconDrag(d.origs, dx, dy); // smart guides → grid → clamped to the body
+        props.onMoveElements?.(d.origs.map((o) => ({ id: o.id, gridX: o.gridX + res.dx, gridY: o.gridY + res.dy })));
+        setElGuides(res.lines.length || res.spacings.length ? { lines: res.lines, spacings: res.spacings } : null);
+      } else {
+        // Resize the whole selection from the anchor handle; Shift forces one uniform size,
+        // otherwise every icon scales by the same factor (kept square + clamped per-icon).
+        props.onResizeElements?.(resolveIconGroupResize(d.origs, d.anchorId ?? d.origs[0].id, dx, dy, bounds, e.shiftKey));
+      }
+    }
+    function onUp() { setElDrag(null); setElGuides(null); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [elDrag, props, bounds]);
+
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
     return toDevicePos({ x: e.clientX, y: e.clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
@@ -378,6 +463,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [dragOverPort, setDragOverPort] = useState<{ groupId: string; index: number } | null>(null);
   // Where a new group would land if the palette chip is dropped on empty space (drop preview).
   const [dropPreview, setDropPreview] = useState<PortGroup | null>(null);
+  // Cursor position (device coords) while the Icon chip is dragged over the device (icon preview).
+  const [iconDropAt, setIconDropAt] = useState<Pos | null>(null);
   function portAt(clientX: number, clientY: number): { groupId: string; index: number } | null {
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect) return null;
@@ -450,6 +537,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move"; // suppress the native "+" copy badge
+            if (props.paletteDragIcon) { // the Icon chip → preview where the icon lands
+              setDragOverPort(null); setDropPreview(null); setIconDropAt(dropPos(e)); return;
+            }
             const p = portAt(e.clientX, e.clientY);
             if (p) {
               // Over a port → it will be re-typed; show the port highlight, not a drop box.
@@ -467,12 +557,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
               }
             }
           }}
-          onDragLeave={() => { setDragOverPort(null); setDropPreview(null); }}
+          onDragLeave={() => { setDragOverPort(null); setDropPreview(null); setIconDropAt(null); }}
           onDrop={(e) => {
             e.preventDefault();
-            const media = e.dataTransfer.getData("text/plain") as Media;
+            const payload = e.dataTransfer.getData("text/plain");
             setDragOverPort(null);
             setDropPreview(null);
+            setIconDropAt(null);
+            if (payload === "element:icon") { props.onDropIcon?.(dropPos(e)); return; } // opens the icon picker
+            const media = payload as Media;
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
             if (p) props.onPortMedia?.(p.groupId, p.index, media); // drop onto a port → change its type
@@ -665,6 +758,66 @@ export function EditorCanvas(props: EditorCanvasProps) {
               </div>
             );
           })}
+          {/* Icon elements — marquee/shift+click select, drag to move, corner handle to resize. */}
+          {props.onSelectElement && face.elements.map((el) => {
+            if (el.kind !== "icon") return null;
+            const selIds = props.selectedElementIds ?? [];
+            const selected = selIds.includes(el.id);
+            const onlySelected = selIds.length === 1 && selIds[0] === el.id;
+            return (
+              <div
+                key={el.id}
+                data-testid={`icon-el-${el.id}`}
+                data-selected={selected ? "true" : "false"}
+                onClick={(e) => { e.stopPropagation(); props.onSelectElement?.(el.id, e.shiftKey); }}
+                onPointerEnter={() => setHoverElId(el.id)}
+                onPointerLeave={() => setHoverElId((cur) => (cur === el.id ? null : cur))}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  // Drag the whole multi-selection together if this icon is part of it, else just this one.
+                  const sel = props.selectedElementIds ?? [];
+                  const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
+                  const picked = face.elements.filter((x) => x.kind === "icon" && ids.includes(x.id));
+                  let dragIds = picked.map((x) => x.id);
+                  if (e.altKey && props.onDuplicateElements) { // Alt/Option+drag → drag fresh copies
+                    const newIds = props.onDuplicateElements(dragIds);
+                    if (newIds.length !== picked.length) return;
+                    dragIds = newIds;
+                  }
+                  const origs = picked.map((x, i) => ({ id: dragIds[i], gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
+                  setElDrag({ ids: dragIds, mode: "move", startX: e.clientX, startY: e.clientY, origs });
+                }}
+                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
+              >
+                {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
+                <div data-testid={`icon-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+                {selected && (
+                  <>
+                    <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none" }} />
+                    {props.onResizeElements && (onlySelected || hoverElId === el.id) && (
+                      <div
+                        data-testid="icon-el-resize"
+                        title="Drag to resize"
+                        onPointerDown={(e) => {
+                          if (e.button !== 0) return;
+                          e.stopPropagation();
+                          // Resize acts on the whole selection (anchored on this icon) if this icon is part of it.
+                          const sel = props.selectedElementIds ?? [];
+                          const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
+                          const origs = face.elements
+                            .filter((x) => x.kind === "icon" && ids.includes(x.id))
+                            .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
+                          setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
+                        }}
+                        style={{ position: "absolute", right: -6, bottom: -6, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 23 }}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
           {dropPreview && (() => {
             const laid = layoutPortGroup(dropPreview, dims.heightPx);
             const box = clampedBox(dropPreview.gridX, laid.width, laid.top, laid.height);
@@ -684,14 +837,26 @@ export function EditorCanvas(props: EditorCanvasProps) {
               />
             );
           })()}
-          {guideData && (guideData.lines.length > 0 || guideData.spacings.length > 0) && (
+          {iconDropAt && (() => {
+            const { gridX, gridY } = resolveIconDrop(iconDropAt.x, iconDropAt.y, ICON_DEFAULT_SIZE, bounds);
+            return (
+              <div
+                data-testid="icon-drop-preview"
+                style={{
+                  position: "absolute", left: earX + gridX, top: gridY, width: ICON_DEFAULT_SIZE, height: ICON_DEFAULT_SIZE,
+                  borderRadius: 4, border: "1px solid #2d5bff", background: "rgba(45,91,255,0.06)", opacity: 0.5, pointerEvents: "none", zIndex: 15,
+                }}
+              />
+            );
+          })()}
+          {guideDraw && (guideDraw.lines.length > 0 || guideDraw.spacings.length > 0) && (
             <>
-              {guideData.lines.map((l, i) => l.axis === "x" ? (
+              {guideDraw.lines.map((l, i) => l.axis === "x" ? (
                 <div key={`gl${i}`} data-testid="align-guide" style={{ position: "absolute", left: earX + l.pos, top: Math.min(l.start, l.end), width: 0, height: Math.abs(l.end - l.start), borderLeft: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
               ) : (
                 <div key={`gl${i}`} data-testid="align-guide" style={{ position: "absolute", left: earX + Math.min(l.start, l.end), top: l.pos, width: Math.abs(l.end - l.start), height: 0, borderTop: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
               ))}
-              {guideData.spacings.map((s, i) => (
+              {guideDraw.spacings.map((s, i) => (
                 <div key={`gs${i}`} data-testid="spacing-guide">
                   <div style={{ position: "absolute", left: earX + Math.min(s.start, s.end), top: s.y, width: Math.abs(s.end - s.start), height: 0, borderTop: "1px dashed #2d5bff", pointerEvents: "none", zIndex: 30 }} />
                   <div style={{ position: "absolute", left: earX + (s.start + s.end) / 2, top: s.y, transform: "translate(-50%,-140%)", background: "#2d5bff", color: "#fff", fontSize: 9, lineHeight: "12px", padding: "0 4px", borderRadius: 3, pointerEvents: "none", zIndex: 31, whiteSpace: "nowrap" }}>{s.gap}px</div>

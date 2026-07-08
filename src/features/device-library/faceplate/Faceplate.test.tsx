@@ -111,3 +111,17 @@ describe("Faceplate — highlight & label position", () => {
     expect(Number(text.getAttribute("y"))).toBeGreaterThan(Number(text1.getAttribute("y")));
   });
 });
+
+describe("Faceplate — icon elements", () => {
+  it("renders a placed icon element (placeholder until the Iconify data loads)", () => {
+    const face: Face = {
+      portGroups: [],
+      elements: [{ id: "e1", kind: "icon", gridX: 40, gridY: 20, w: 36, h: 36, iconName: "tabler:home" }],
+    };
+    const { getByTestId } = render(<Faceplate face={face} widthIn={19} rackUnits={1} rackMounted side="FRONT" />);
+    // jsdom has no cached icon, so the loading placeholder renders at the element's box.
+    const ph = getByTestId("face-icon-loading");
+    expect(ph.getAttribute("x")).toBe("40");
+    expect(ph.getAttribute("width")).toBe("36");
+  });
+});
