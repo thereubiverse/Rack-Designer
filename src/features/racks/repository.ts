@@ -55,6 +55,10 @@ export async function replaceRackDevices(
     if (error) throw new Error(`replaceRackDevices(delete): ${error.message}`);
   }
   if (rows.length > 0) {
+    // The (rack_id, code) unique constraint is deferrable initially deferred, so a single
+    // upsert can swap two kept devices' codes (A: SW01->SW02, B: SW02->SW01) without a
+    // transient duplicate-key violation from mid-statement row ordering; it's only checked
+    // at commit. ON CONFLICT (id) still targets the primary key, so this is unaffected.
     const payload = rows.map((r) => ({ ...r, rack_id: rackId, updated_at: new Date().toISOString() }));
     const { error } = await db.from("rack_devices").upsert(payload, { onConflict: "id" });
     if (error) throw new Error(`replaceRackDevices(upsert): ${error.message}`);

@@ -19,7 +19,8 @@ create table rack_devices (
   operation_start date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (rack_id, code)
+  -- Deferred so a single reconcile statement can SWAP two devices' codes; checked at commit. Not the upsert arbiter (that's the PK), so ON CONFLICT (id) still works.
+  constraint rack_devices_rack_id_code_key unique (rack_id, code) deferrable initially deferred
 );
 
 alter table rack_devices enable row level security;
