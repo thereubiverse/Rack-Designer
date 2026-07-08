@@ -9,6 +9,7 @@ import type { DeviceDraft } from "./useDeviceDraft";
 import {
   saveNewDeviceTemplateAction, saveDeviceTemplateAction,
   getDeviceTemplateAction, createBrandAction, deleteBrandAction,
+  duplicateDeviceTemplateAction, deleteDeviceTemplateAction,
 } from "../actions";
 
 type EditingState =
@@ -23,6 +24,7 @@ export function EditorLauncher({
   const [state, setState] = useState<EditingState>({ mode: "closed" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
 
   function toInput(draft: DeviceDraft) {
     return {
@@ -47,6 +49,25 @@ export function EditorLauncher({
     });
   }
 
+  async function duplicate(id: string) {
+    setError(null);
+    const res = await duplicateDeviceTemplateAction(id);
+    if (!res.ok) { setError(res.error ?? "Duplicate failed"); return; }
+    router.refresh();
+  }
+
+  async function confirmDeleteNow() {
+    if (!confirmDelete) return;
+    setError(null);
+    try {
+      await deleteDeviceTemplateAction(confirmDelete.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    }
+    setConfirmDelete(null);
+    router.refresh();
+  }
+
   async function save(draft: DeviceDraft) {
     setSaving(true);
     setError(null);
@@ -67,6 +88,8 @@ export function EditorLauncher({
         rows={rows}
         title="Custom Rack Devices"
         onEdit={openEdit}
+        onDuplicate={duplicate}
+        onDelete={(id) => setConfirmDelete({ id, name: rows.find((r) => r.id === id)?.name ?? "" })}
         onCreate={() => { setError(null); setState({ mode: "create" }); }}
       />
 
@@ -89,6 +112,22 @@ export function EditorLauncher({
             return res.ok;
           }}
         />
+      )}
+
+      {confirmDelete && (
+        <div data-testid="delete-template-confirm" role="alertdialog" aria-label="Delete device"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
+            <h3 className="text-base font-bold">Delete “{confirmDelete.name}”?</h3>
+            <p className="mt-2 text-sm text-neutral-600">This custom device will be permanently removed from the library.</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmDelete(null)}
+                className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
+              <button type="button" data-testid="delete-template-confirm-btn" onClick={confirmDeleteNow}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700">Delete</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

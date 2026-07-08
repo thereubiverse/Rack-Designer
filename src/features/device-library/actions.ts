@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import {
   createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
-  toEditableTemplate, deleteDeviceTemplate, createBrand, deleteBrand,
+  toEditableTemplate, deleteDeviceTemplate, duplicateDeviceTemplate, createBrand, deleteBrand,
   type EditableTemplate, type BrandRow,
 } from "./repository";
 import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
@@ -92,4 +92,16 @@ export async function deleteDeviceTemplateAction(id: string): Promise<void> {
   const db = createServiceClient();
   await deleteDeviceTemplate(db, id);
   revalidatePath("/device-library");
+}
+
+export async function duplicateDeviceTemplateAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await duplicateDeviceTemplate(db, id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    return { ok: false, error: msg.includes("duplicate key") ? "A copy with that name already exists — rename it first" : msg };
+  }
+  revalidatePath("/device-library");
+  return { ok: true };
 }

@@ -64,3 +64,25 @@ describe("RackDeviceTable edit action", () => {
     expect(onEdit).toHaveBeenCalledWith("1");
   });
 });
+
+describe("RackDeviceTable row actions", () => {
+  it("renders duplicate/edit/delete icons and fires their callbacks", async () => {
+    const user = userEvent.setup();
+    const onDuplicate = vi.fn(), onEdit = vi.fn(), onDelete = vi.fn();
+    render(<RackDeviceTable rows={rows} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete} />);
+    await user.click(screen.getByTestId("duplicate-1"));
+    await user.click(screen.getByTestId("edit-1"));
+    await user.click(screen.getByTestId("delete-1"));
+    expect(onDuplicate).toHaveBeenCalledWith("1");
+    expect(onEdit).toHaveBeenCalledWith("1");
+    expect(onDelete).toHaveBeenCalledWith("1");
+  });
+
+  it("name becomes a view link when onView is provided", async () => {
+    const user = userEvent.setup();
+    const onView = vi.fn();
+    render(<RackDeviceTable rows={rows} onView={onView} />);
+    await user.click(screen.getByTestId("view-1"));
+    expect(onView).toHaveBeenCalledWith("1");
+  });
+});

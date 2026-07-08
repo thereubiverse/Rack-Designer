@@ -134,6 +134,23 @@ export async function deleteDeviceTemplate(db: SupabaseClient, id: string): Prom
   if (error) throw new Error(`deleteDeviceTemplate: ${error.message}`);
 }
 
+/** Copy a template (faces and all) under "<name> (copy)". Unique-name violations surface as errors. */
+export async function duplicateDeviceTemplate(db: SupabaseClient, id: string): Promise<DeviceTemplateRow> {
+  const src = await getDeviceTemplate(db, id);
+  if (!src) throw new Error("duplicateDeviceTemplate: template not found");
+  const org = await getDefaultOrganization(db);
+  const { data, error } = await db.from("device_templates")
+    .insert({
+      organization_id: org.id, name: `${src.name} (copy)`,
+      brand_id: src.brand_id, device_type_id: src.device_type_id,
+      rack_units: src.rack_units, width_in: src.width_in, rack_mounted: src.rack_mounted,
+      front_face: src.front_face, back_face: src.back_face,
+    })
+    .select("*").single();
+  if (error) throw new Error(`duplicateDeviceTemplate: ${error.message}`);
+  return data as DeviceTemplateRow;
+}
+
 export async function getDeviceTemplate(
   db: SupabaseClient, id: string,
 ): Promise<DeviceTemplateRow | null> {

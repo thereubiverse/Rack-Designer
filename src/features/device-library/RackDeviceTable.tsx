@@ -18,11 +18,14 @@ const PAGE_SIZES = [10, 20, 50];
 /** The Custom Rack Devices card: a search + Create toolbar, a sortable table, and a pagination
  *  footer — styled to match the device editor (light card, neutral borders, blue accent). */
 export function RackDeviceTable({
-  rows, onEdit, onCreate, title,
+  rows, onEdit, onCreate, onDuplicate, onDelete, onView, title,
 }: {
   rows: DeviceTemplateListRow[];
   onEdit?: (id: string) => void;
   onCreate?: () => void;
+  onDuplicate?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onView?: (id: string) => void;
   title?: string;
 }) {
   const [query, setQuery] = useState("");
@@ -100,20 +103,39 @@ export function RackDeviceTable({
         <tbody>
           {pageRows.map((r) => (
             <tr key={r.id} className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50">
-              <td className="px-5 py-3 font-medium text-neutral-900">{r.name}</td>
+              <td className="px-5 py-3 font-medium text-neutral-900">
+                {onView ? (
+                  <button
+                    type="button"
+                    data-testid={`view-${r.id}`}
+                    onClick={() => onView(r.id)}
+                    className="font-medium text-blue-700 hover:underline"
+                  >
+                    {r.name}
+                  </button>
+                ) : r.name}
+              </td>
               <td className="px-5 py-3 text-neutral-600">{r.brandName ?? "—"}</td>
               <td className="px-5 py-3 text-neutral-600">{r.typeName}</td>
               <td className="px-5 py-3 text-neutral-600">{r.rackUnits} RU</td>
               <td className="px-5 py-3 text-right">
-                {onEdit && (
-                  <button
-                    data-testid={`edit-${r.id}`}
-                    onClick={() => onEdit(r.id)}
-                    className="rounded-lg border border-neutral-200 px-3 py-1 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100"
-                  >
-                    Edit
-                  </button>
-                )}
+                <div className="flex items-center justify-end gap-1">
+                  {onDuplicate && (
+                    <RowIcon testid={`duplicate-${r.id}`} label="Duplicate" onClick={() => onDuplicate(r.id)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                    </RowIcon>
+                  )}
+                  {onEdit && (
+                    <RowIcon testid={`edit-${r.id}`} label="Edit" onClick={() => onEdit(r.id)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
+                    </RowIcon>
+                  )}
+                  {onDelete && (
+                    <RowIcon testid={`delete-${r.id}`} label="Delete" red onClick={() => onDelete(r.id)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" /></svg>
+                    </RowIcon>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -193,5 +215,24 @@ function PlusIcon() {
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M7 2 V12 M2 7 H12" />
     </svg>
+  );
+}
+
+function RowIcon({ children, testid, label, red, onClick }: {
+  children: React.ReactNode; testid: string; label: string; red?: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testid}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+        red ? "text-neutral-400 hover:bg-red-50 hover:text-red-600" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
