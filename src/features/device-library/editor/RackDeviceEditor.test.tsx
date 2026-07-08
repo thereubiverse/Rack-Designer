@@ -5,7 +5,7 @@ import { RackDeviceEditor } from "./RackDeviceEditor";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import type { Face } from "@/domain/faceplate";
 
-const types: DeviceTypeRow[] = [{ id: "t1", organization_id: "o", name: "Switch", created_at: "" }];
+const types: DeviceTypeRow[] = [{ id: "t1", organization_id: "o", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true }];
 const brands: BrandRow[] = [{ id: "b1", organization_id: "o", name: "Cisco", created_at: "" }];
 
 const oneGroupFace: Face = {

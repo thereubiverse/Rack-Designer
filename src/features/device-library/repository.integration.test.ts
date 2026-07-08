@@ -38,7 +38,7 @@ describe("device-library repository (integration)", () => {
   });
 
   it("creates and lists a template with brand + type names", async () => {
-    const type = await createDeviceType(db, { name: "ZZ Test Type" });
+    const type = await createDeviceType(db, { name: "ZZ Test Type", code: "ZZT", category: "rack" });
     const brand = await createBrand(db, { name: "ZZ Test Brand" });
     const tpl = await createDeviceTemplate(db, {
       name: "ZZ Test Device", deviceTypeId: type.id, brandId: brand.id,
@@ -61,7 +61,7 @@ describe("device-library repository (integration)", () => {
 
 describe("device-library repository — faces (integration)", () => {
   it("round-trips a non-empty front face through create + get", async () => {
-    const type = await createDeviceType(db, { name: "ZZ Test Type" });
+    const type = await createDeviceType(db, { name: "ZZ Test Type", code: "ZZT", category: "rack" });
     const face: Face = {
       portGroups: [{
         id: "g1", media: "copper", connectorType: "RJ45", idPrefix: "Gi",
@@ -86,7 +86,7 @@ describe("device-library repository — faces (integration)", () => {
   });
 
   it("update persists changed fields and both faces", async () => {
-    const type = await createDeviceType(db, { name: "ZZ Test Type" });
+    const type = await createDeviceType(db, { name: "ZZ Test Type", code: "ZZT", category: "rack" });
     const tpl = await createDeviceTemplate(db, {
       name: "ZZ Test Upd", deviceTypeId: type.id, rackUnits: 1, widthIn: 19, rackMounted: true,
     });

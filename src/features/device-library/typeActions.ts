@@ -2,25 +2,65 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
-import { createDeviceType, deleteDeviceType } from "./repository";
+import { createDeviceType, updateDeviceType, deleteDeviceType } from "./repository";
+import { validateCode, validateTypeName } from "./deviceTypeRules";
+
+/** Map raw Postgres/Supabase errors to copy a user can act on. */
+function friendly(e: unknown): string {
+  const msg = e instanceof Error ? e.message : "Unknown error";
+  if (msg.includes("device_types_org_code_key")) return "That ID prefix is already in use";
+  if (msg.includes("device_types_org_category_name_key")) return "A type with that name already exists";
+  if (msg.includes("foreign key constraint")) return "This type is in use by a device template";
+  return msg;
+}
 
 export async function createDeviceTypeAction(
-  formData: FormData,
+  input: { name: string; code: string; category: "floor" | "rack" },
 ): Promise<{ ok: boolean; error?: string }> {
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) return { ok: false, error: "Name is required" };
+  const err = validateTypeName(input.name) ?? validateCode(input.code);
+  if (err) return { ok: false, error: err };
   const db = createServiceClient();
   try {
-    await createDeviceType(db, { name });
+    await createDeviceType(db, { name: input.name.trim(), code: input.code, category: input.category });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: friendly(e) };
   }
   revalidatePath("/device-library/types");
   return { ok: true };
 }
 
-export async function deleteDeviceTypeAction(id: string): Promise<void> {
+/** Batch save from one column's "Save changes" — applied sequentially, first error aborts. */
+export async function saveDeviceTypesAction(
+  changes: { id: string; name?: string; code?: string }[],
+): Promise<{ ok: boolean; error?: string }> {
+  for (const c of changes) {
+    const err =
+      (c.name !== undefined ? validateTypeName(c.name) : null) ??
+      (c.code !== undefined ? validateCode(c.code) : null);
+    if (err) return { ok: false, error: err };
+  }
   const db = createServiceClient();
-  await deleteDeviceType(db, id);
+  try {
+    for (const c of changes) {
+      await updateDeviceType(db, c.id, {
+        ...(c.name !== undefined ? { name: c.name.trim() } : {}),
+        ...(c.code !== undefined ? { code: c.code } : {}),
+      });
+    }
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
   revalidatePath("/device-library/types");
+  return { ok: true };
+}
+
+export async function deleteDeviceTypeAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await deleteDeviceType(db, id);
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
+  revalidatePath("/device-library/types");
+  return { ok: true };
 }
