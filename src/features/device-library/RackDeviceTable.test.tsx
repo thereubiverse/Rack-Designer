@@ -27,6 +27,34 @@ describe("RackDeviceTable", () => {
   });
 });
 
+describe("RackDeviceTable sorting", () => {
+  const dataRows = () => screen.getAllByRole("row").slice(1).map((r) => r.querySelector("td")?.textContent);
+  it("sorts by a column header, toggling asc/desc", async () => {
+    const user = userEvent.setup();
+    render(<RackDeviceTable rows={rows} />);
+    expect(dataRows()).toEqual(["48xCAT 4xSFP", "Mini Patch 12"]); // default name asc
+    await user.click(screen.getByRole("button", { name: /^name/i }));
+    expect(dataRows()).toEqual(["Mini Patch 12", "48xCAT 4xSFP"]); // → desc
+  });
+});
+
+describe("RackDeviceTable pagination", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    id: String(i), name: `Dev ${String(i).padStart(2, "0")}`,
+    brandName: null, typeName: "Switch", rackUnits: 1, widthIn: 19, rackMounted: true,
+  }));
+  it("shows one page of 10 and advances to the next", async () => {
+    const user = userEvent.setup();
+    render(<RackDeviceTable rows={many} />);
+    expect(screen.getAllByRole("row").slice(1)).toHaveLength(10); // page 1
+    expect(screen.getByText("Dev 00")).toBeInTheDocument();
+    expect(screen.queryByText("Dev 11")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /next page/i }));
+    expect(screen.getByText("Dev 11")).toBeInTheDocument(); // page 2
+    expect(screen.queryByText("Dev 00")).not.toBeInTheDocument();
+  });
+});
+
 describe("RackDeviceTable edit action", () => {
   it("calls onEdit with the row id when Edit is clicked", async () => {
     const user = userEvent.setup();

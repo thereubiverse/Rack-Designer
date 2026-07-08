@@ -60,17 +60,15 @@ export function EditorLauncher({
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <button
-          onClick={() => { setError(null); setState({ mode: "create" }); }}
-          className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white"
-        >Create device</button>
-      </div>
+    <div className="space-y-3">
+      {state.mode === "closed" && error && <p className="text-sm text-red-600">{error}</p>}
 
-      {state.mode === "closed" && error && <p className="text-sm text-red-500">{error}</p>}
-
-      <RackDeviceTable rows={rows} onEdit={openEdit} />
+      <RackDeviceTable
+        rows={rows}
+        title="Custom Rack Devices"
+        onEdit={openEdit}
+        onCreate={() => { setError(null); setState({ mode: "create" }); }}
+      />
 
       {state.mode !== "closed" && (
         <RackDeviceEditor
