@@ -112,6 +112,66 @@ Their standard lists (reference only — we keep our own rack list):
 - Fit to width/height toggle, zoom, reset. **Autosave** with visible status + ⌘S manual trigger +
   leave-warning.
 
+## Observed live in the app (Reuben's trial account, 2026-07-08)
+
+Hands-on walkthrough of the rack-building flow — details their docs don't spell out:
+
+- **URLs are tenant-scoped** (`/app/t/<tenantId>/locations/...`); a rack's editor is a page per
+  rack device (`/locations/<locId>/devices/<rackId>`), and a selected deployed device appends
+  `?subDeviceId=…` — deployed devices are *sub-devices* of the rack.
+- **Add-device flow**: dragging a *type* (e.g. Switch) from the palette onto the rack — or
+  clicking a free RU — opens an **"Add device" picker** listing the templates of that type:
+  standard variants ("Switch - 24 Ports - RJ45", "- 48 Ports"; patch panels also SC/UPC variants)
+  AND the user's custom templates. Selecting one shows **front/back faceplate previews, RU height,
+  brand, and a Standard/Custom badge**; custom entries also get **edit + delete icons right in the
+  picker** (edit → Device Editor → destructive-rebuild path). "+ Create Custom Device" jumps to the
+  editor. Insert places it at the drop RU. ⇒ Palette is TYPE-first, templates second.
+- **Auto-ID on insert**: first switch became **SW01** (device-type code + increment) — confirmed
+  live; the full path (`URI/URI/DEFAULT/RK01/SW01/25`) appears as the sidebar title.
+- **Placed devices render their real faceplates** in the rack (our pure Faceplate renderer's job).
+  Patch-panel ports show as empty keystone frames until a Building Connection exists.
+- **Selection granularity**: clicking a port selects the PORT (settings: name, **Speed (Mbps)**,
+  VLAN, connection chain); clicking the device edge selects the DEVICE (settings + full ports list,
+  each row with a connect icon); nothing selected = RACK settings (ID, name, responsible person,
+  **rack units editable here**, manufacturer/model/serial, purchase/operation dates, photos, notes).
+- **Selected device** gets a blue frame with a **grip handle on the right edge** — dragging the
+  handle moves it between RUs, and **existing cables re-route automatically**. Plain dragging on
+  the canvas pans; toolbar has zoom in/out, fit, and **undo/redo** (rack editor has undo; the
+  device editor does not).
+- **Patching**: drag port→port draws the cable. Patching to a keystone-less patch-panel port is a
+  **soft warning**, not a block: "No building connection … chain will be incomplete … Continue
+  anyway?" → creates an incomplete connection. Cables route around the rack's left edge, outside
+  the faceplates. Selecting a connected port highlights the whole run in amber.
+- **Connection Overview in the sidebar port list**: the chain renders inline
+  (`↱ …/SW01/01 ↳ …/PP01/01`) with dashed borders for incomplete state.
+- **Devices & Connections panel** (bottom): Devices tab = ID/Name/Side/Unit/Type/Created (sortable);
+  Connections tab = **From | Via | To** full paths with Front/Back/Front↔Back/External/All filters;
+  VLANs tab.
+- **Building connections overlay**: one row per patch-panel port; per row Location → Floor → Room →
+  Device → Port drill-down dropdowns (pre-scoped to the current location), batch **Save changes**.
+- An **"OUTBOUND" tag** floats at the rack's top edge — anchor for outbound (rack ↔ floor device)
+  connections.
+- **Autosave** with status chip ("Saving changes soon" → "Saved").
+- Floor plan upload is prompted ("upload before adding devices") but devices can be placed on the
+  blank grid anyway — soft, not enforced.
+
+### Their Device Library UI (observed live)
+
+- **Rack Devices tab** ≈ ours: "Custom Rack Devices" card, search + blue "+ Create", sortable
+  Name/Brand/Type/Rack units columns, pagination footer (Page x of y, Show 10). Differences:
+  device **names are links** opening the Rack Device Editor in **read-only mode** ("You are viewing
+  this custom rack device in read-only mode" banner, all inputs disabled, Close only) — inspection
+  without entering the risky edit path; and Actions holds **three icons: duplicate, edit (pencil),
+  delete (red trash)**.
+- **Device Types tab**: exactly the two-column Floor|Rack layout we built (the original reference
+  screenshot was this page). Custom "+ Add" opens a **modal** — "Create Rack Device Type":
+  fields Name* + **"ID prefix"*** with validation copy: *"1–4 characters, uppercase letters and
+  numbers only. Must be unique across all device type ID prefixes."* (⇒ they call the code an
+  ID prefix, cap it at 4, allow A–Z0–9 only, and enforce GLOBAL uniqueness across all types.)
+- Their editor modal (read-only view): same structure as ours — header field row, Port Types +
+  Elements palette (Elements = Text and Icon only), Front/Back switcher, face, two settings
+  boxes below ("Select an element…" / "Select a port to edit its name").
+
 ## Connections (core concept)
 
 - **Building Connections** — permanent links / horizontal cabling (dashed orange). Terminate at

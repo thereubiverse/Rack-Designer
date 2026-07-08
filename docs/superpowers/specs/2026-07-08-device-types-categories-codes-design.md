@@ -1,7 +1,9 @@
 # Device Types: categories, codes, standard vs custom — design
 
-**Date:** 2026-07-08 · **Status:** approved pending Reuben's review · **Preview:** UI already built
-front-end-only in `DeviceTypesManager.tsx` (local state); this spec makes it real.
+**Date:** 2026-07-08 · **Status:** approved (incl. live-app corrections) · **Preview:** UI already
+built front-end-only in `DeviceTypesManager.tsx` (local state); this spec makes it real.
+**Rev 2:** validation + create-modal + table actions aligned with PatchDocs' live app
+(see `docs/reference/patchdocs-notes.md` → "Their Device Library UI").
 
 ## Context & goal
 
@@ -26,7 +28,16 @@ alter table device_types
 alter table device_types drop constraint device_types_organization_id_name_key;
 alter table device_types add constraint device_types_org_category_name_key
   unique (organization_id, category, name);
+
+-- codes are ID prefixes: 1–4 uppercase alphanumerics, unique across ALL types in the org
+-- (added AFTER the backfill below so the seed data satisfies them)
+alter table device_types add constraint device_types_code_format_check
+  check (code ~ '^[A-Z0-9]{1,4}$');
+alter table device_types add constraint device_types_org_code_key
+  unique (organization_id, code);
 ```
+
+(The 24 seeded codes are all ≤4 chars and mutually distinct, so both constraints hold.)
 
 Backfill + seed (default org):
 
@@ -45,7 +56,11 @@ Backfill + seed (default org):
 | Edit code | ✓ | ✓ |
 | Delete | ✗ (server rejects) | ✓ — existing FK `on delete restrict` blocks types in use |
 
-- **Code**: required, trimmed, auto-uppercased, 1–8 chars. Not unique (codes may repeat).
+- **Code ("ID prefix")**: required, trimmed, auto-uppercased, **1–4 chars, A–Z and 0–9 only,
+  unique across ALL device-type prefixes in the org** (both categories — uniqueness is what makes
+  a device ID like SW01 unambiguously parseable back to its type). DB: `unique (organization_id,
+  code)` + a `code ~ '^[A-Z0-9]{1,4}$'` check. UI helper text mirrors PatchDocs: "1–4 characters,
+  uppercase letters and numbers only. Must be unique across all device type ID prefixes."
 - **Name** (custom): required, unique per (org, category) — DB constraint; surface a friendly error.
 - Codes are *default ID prefixes* for future device-ID generation. Adopt PatchDocs' rule when that
   lands: **changing a code affects only newly added devices** (existing IDs keep their prefix).
@@ -72,13 +87,29 @@ Backfill + seed (default org):
 - **Standard panel**: name (read-only) + code input per row, two-column flow; **Save changes**
   enabled only when a code differs from the loaded value; on click, batch-saves changed codes,
   refreshes via `router.refresh()`.
-- **Custom panel**: **+ Add** appends an inline draft row (name + code + delete). Save changes
-  (same button/column) creates drafts and updates edited existing customs. A draft missing its name
-  or code blocks the save with an inline error; an entirely empty draft is discarded silently.
-  Row delete on an *existing* custom calls `deleteDeviceTypeAction` immediately (so FK "in use"
-  errors surface at the point of action); deleting a draft row is local.
+- **Custom panel**: **+ Add** opens a small modal — "Create Floor/Rack Device Type": Name* +
+  ID prefix* (helper text: "1–4 characters, uppercase letters and numbers only. Must be unique
+  across all device type ID prefixes."), Cancel / Create; Create validates then persists
+  immediately (matches PatchDocs' live app). Existing custom rows render inline with editable
+  name + code (batch-saved by the column's Save changes) and a delete button that calls
+  `deleteDeviceTypeAction` immediately so FK "in use" errors surface at the point of action.
 - Empty custom state: “Click "Add" to create your first custom device type.”
-- Errors render inline in the column (existing red-text pattern).
+- Errors render inline in the column (existing red-text pattern); the create modal shows its own.
+
+## Rack Devices tab additions (PatchDocs parity)
+
+- **Row actions become three icons**: duplicate, edit (pencil), delete (red trash) — replacing the
+  lone "Edit" button.
+  - *Duplicate*: copies the template (name gets a " copy" suffix or "(2)") via a new
+    `duplicateDeviceTemplateAction`; lands in the table, opens nothing.
+  - *Delete*: confirm dialog, then `deleteDeviceTemplateAction`; repository gains
+    `deleteDeviceTemplate`. (No FK from racks yet — deployment lands in Phase 2b; revisit the
+    guard then.)
+- **Name becomes a link opening the editor in read-only mode**: banner "You are viewing this
+  custom rack device in read-only mode.", all inputs/palette/canvas interactions disabled, single
+  Close button. Implemented as a `readOnly` prop on `RackDeviceEditor` (skip overlay handlers +
+  disable fields) — the same pure Faceplate render. This is the safe inspection path once
+  deployed-template edits become destructive (Phase 2b).
 
 ## Editor integration
 
@@ -90,8 +121,10 @@ Backfill + seed (default org):
 
 - Component tests (`DeviceTypesManager.test.tsx`): renders both columns from props; code edit
   enables that column's Save only; Save calls the action with only changed rows; standard rows have
-  no name input / no delete; Add → draft row; draft delete is local; existing-custom delete calls
-  the action; error text renders.
+  no name input / no delete; Add → create modal (validates 1–4 A–Z0–9, calls create action);
+  existing-custom delete calls the action; error text renders.
+- Table tests: three actions render; duplicate/delete call their actions; name link opens
+  read-only editor (banner present, inputs disabled).
 - Action/repository guards: standard rename ignored, standard delete rejected (unit-test the guard
   logic; Supabase calls follow the existing thin-wrapper pattern).
 - Update existing tests touched by the `DeviceTypeRow` shape and the rack-only editor filter.
