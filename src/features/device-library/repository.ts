@@ -202,3 +202,20 @@ export function toEditableTemplate(row: DeviceTemplateRow): EditableTemplate {
     backFace: (row.back_face as Face | null) ?? emptyFace(),
   };
 }
+
+export interface PickerTemplate extends EditableTemplate { brandName: string | null; }
+
+/** Templates of one device type, with brand names + faces — feeds the rack builder's picker. */
+export async function listTemplatesForType(
+  db: SupabaseClient, deviceTypeId: string,
+): Promise<PickerTemplate[]> {
+  const { data, error } = await db.from("device_templates")
+    .select("*, brands(name)")
+    .eq("device_type_id", deviceTypeId)
+    .order("name");
+  if (error) throw new Error(`listTemplatesForType: ${error.message}`);
+  return ((data ?? []) as (DeviceTemplateRow & { brands: { name: string } | null })[]).map((r) => ({
+    ...toEditableTemplate(r),
+    brandName: r.brands?.name ?? null,
+  }));
+}
