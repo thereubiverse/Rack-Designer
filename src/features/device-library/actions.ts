@@ -90,7 +90,15 @@ export async function deleteBrandAction(id: string): Promise<{ ok: boolean; erro
 
 export async function deleteDeviceTemplateAction(id: string): Promise<void> {
   const db = createServiceClient();
-  await deleteDeviceTemplate(db, id);
+  try {
+    await deleteDeviceTemplate(db, id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("foreign key constraint")) {
+      throw new Error("This device is placed in a rack — remove it from all racks first");
+    }
+    throw e;
+  }
   revalidatePath("/device-library");
 }
 
