@@ -8,8 +8,16 @@ export async function runDetectPorts(backend: VisionBackend, input: VisionInput)
   let raw: unknown;
   try {
     raw = await backend.detect(input);
-  } catch {
-    return { ok: false, error: "The vision service could not be reached. Try again or upload a clearer photo." };
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error("[detectPorts] vision backend error:", detail);
+    const busy = /\b(503|429|500|overloaded|high demand|Service Unavailable)\b/i.test(detail);
+    return {
+      ok: false,
+      error: busy
+        ? "The vision model is busy right now — please try again in a moment."
+        : "Couldn't reach the vision model. Try again or upload a clearer photo.",
+    };
   }
   try {
     return { ok: true, face: validateDetectedFace(raw) };
