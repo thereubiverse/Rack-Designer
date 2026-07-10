@@ -15,8 +15,7 @@ export function parseDeviceMatch(hit: SearchHit, modelName: string): DeviceMatch
   const brand = KNOWN_BRANDS.find((b) => new RegExp(`\\b${b}\\b`, "i").test(text)) ?? "";
   const ruMatch = text.match(/(\d+)\s?(?:U|RU)\b/i);
   const rackUnits = ruMatch ? clamp(parseInt(ruMatch[1], 10), 1, 4) : 1;
-  // Use title only if it contains a known brand and is not empty; otherwise fall back to model name
-  const name = hit.title.trim() && brand ? hit.title.trim() : modelName;
+  const name = hit.title.trim() || modelName;
   return { name, brand, widthIn: 17.5, rackUnits, imageUrl: hit.imageUrl, source: hit.source };
 }
 

@@ -25,6 +25,11 @@ describe("parseDeviceMatch", () => {
     const m = parseDeviceMatch(hit({ title: "Mystery Box", description: "no size here" }), "MB-1");
     expect(m.widthIn).toBe(17.5);
     expect(m.rackUnits).toBe(1);
-    expect(m.name).toBe("MB-1"); // falls back to the query when no clean title
+    expect(m.name).toBe("Mystery Box"); // prefers title when non-empty
+  });
+
+  it("falls back to model name when title is empty", () => {
+    const m = parseDeviceMatch(hit({ title: "", description: "no size here" }), "MB-1");
+    expect(m.name).toBe("MB-1");
   });
 });
