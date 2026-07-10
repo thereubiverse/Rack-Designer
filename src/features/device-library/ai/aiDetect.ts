@@ -1,4 +1,4 @@
-import { MEDIA, CONNECTORS, type Media, type CountingDirection } from "@/domain/faceplate";
+import { MEDIA, CONNECTORS, MAX_BODY_WIDTH_IN, type Media, type CountingDirection } from "@/domain/faceplate";
 
 export interface BBox { x: number; y: number; w: number; h: number }
 export interface DetectedGroup {
@@ -34,7 +34,6 @@ const ORDERS: CountingDirection[] = ["ltr", "rtl", "ttb", "btt"];
 const CONFIDENCES = ["high", "medium", "low"] as const;
 // Common words the model may return for a media; map to our canonical set.
 const MEDIA_SYNONYMS: Record<string, Media> = { ethernet: "copper", rj45: "copper", sfpplus: "sfp", displayport: "dp" };
-const MAX_BODY_WIDTH_IN = 17.5;
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
@@ -42,9 +41,12 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim
 
 function coerceMedia(v: unknown): Media | null {
   if (typeof v !== "string") return null;
-  const k = v.toLowerCase().replace(/[^a-z]/g, "");
-  if ((MEDIA as string[]).includes(k)) return k as Media;
-  return MEDIA_SYNONYMS[k] ?? null;
+  const direct = v.trim().toLowerCase();
+  if ((MEDIA as string[]).includes(direct)) return direct as Media;
+  // Fuzzy fallback for synonyms like "sfp+" / "display port".
+  const stripped = direct.replace(/[^a-z]/g, "");
+  if ((MEDIA as string[]).includes(stripped)) return stripped as Media;
+  return MEDIA_SYNONYMS[stripped] ?? null;
 }
 
 function coerceBBox(v: unknown): BBox {

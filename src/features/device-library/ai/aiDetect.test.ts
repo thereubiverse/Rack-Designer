@@ -49,4 +49,23 @@ describe("validateDetectedFace", () => {
     expect(() => validateDetectedFace("nope")).toThrow("unreadable");
     expect(() => validateDetectedFace(null)).toThrow("unreadable");
   });
+
+  it("keeps a group with media 'usb_a' unchanged", () => {
+    const f = validateDetectedFace({ groups: [{ media: "usb_a", connector: "USB-A", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 } }], confidence: "high" });
+    expect(f.groups).toHaveLength(1);
+    expect(f.groups[0].media).toBe("usb_a");
+  });
+
+  it("keeps a group with media 'ps2' and coerces invalid connector", () => {
+    const f = validateDetectedFace({ groups: [{ media: "ps2", connector: "invalid", count: 2, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 } }], confidence: "high" });
+    expect(f.groups).toHaveLength(1);
+    expect(f.groups[0].media).toBe("ps2");
+    expect(f.groups[0].connector).toBe("PS/2");
+  });
+
+  it("keeps a group with media 'sfp+' and normalizes to 'sfp'", () => {
+    const f = validateDetectedFace({ groups: [{ media: "sfp+", connector: "SFP", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 } }], confidence: "high" });
+    expect(f.groups).toHaveLength(1);
+    expect(f.groups[0].media).toBe("sfp");
+  });
 });
