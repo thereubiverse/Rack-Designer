@@ -46,9 +46,9 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    const base64 = await fileToBase64(file);
     setPhase("detecting"); setError("");
-    const r = await runDetect({ imageBase64: base64, mimeType: file.type || "image/png" });
+    const { base64, mimeType } = await resizeImage(file);
+    const r = await runDetect({ imageBase64: base64, mimeType });
     if (!r.ok) { setError(r.error); setPhase("error"); return; }
     setDetected(r.face); setPhase("review");
   }
@@ -112,6 +112,29 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
       )}
     </div>
   );
+}
+
+// Downscale a photo before upload: Gemini downscales internally, so full-res just bloats the
+// request (and blows Next's server-action body limit). Cap the longest side and re-encode as JPEG.
+// Falls back to the raw file where canvas/createImageBitmap isn't available (e.g. jsdom in tests).
+async function resizeImage(file: File, maxDim = 1568, quality = 0.85): Promise<{ base64: string; mimeType: string }> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no 2d context");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const base64 = canvas.toDataURL("image/jpeg", quality).split(",")[1] ?? "";
+    if (!base64) throw new Error("empty encode");
+    return { base64, mimeType: "image/jpeg" };
+  } catch {
+    return { base64: await fileToBase64(file), mimeType: file.type || "image/png" };
+  }
 }
 
 function fileToBase64(file: File): Promise<string> {
