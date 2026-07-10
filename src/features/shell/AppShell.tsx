@@ -10,6 +10,7 @@ const STORE_KEY = "dl-sidebar-collapsed";
 const TITLES: [prefix: string, title: string][] = [
   ["/racks", "Racks"],
   ["/device-library", "Device Library"],
+  ["/settings", "Settings"],
 ];
 
 /** Client shell that owns the sidebar collapse state so the hamburger (in the top bar) and the

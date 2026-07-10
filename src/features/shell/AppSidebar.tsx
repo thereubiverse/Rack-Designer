@@ -52,7 +52,7 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
           <NavItem icon="tabler:server-2" label="Racks" href="/racks" active={pathname.startsWith("/racks")} />
           <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
           <NavItem icon="tabler:users" label="Users & Permissions" />
-          <NavItem icon="tabler:settings" label="Settings & Billing" />
+          <NavItem icon="tabler:settings" label="Settings & Billing" href="/settings" active={pathname.startsWith("/settings")} />
         </nav>
 
         {/* Bottom cluster */}
