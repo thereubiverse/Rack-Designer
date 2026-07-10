@@ -16,7 +16,8 @@ export async function updateDeviceWizardSettings(
     revalidatePath("/settings");
     revalidatePath("/device-library");
     return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to save settings" };
+  } catch {
+    // Don't surface raw DB errors to the browser on a write that carries the key.
+    return { ok: false, error: "Failed to save settings" };
   }
 }

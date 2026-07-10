@@ -1,3 +1,4 @@
+import "server-only"; // reads GEMINI_API_KEY / returns the raw key via resolveGeminiKey — never import from the client
 import type { SettingsStore } from "./store";
 
 export const KEY_ENABLED = "device_wizard.enabled";
@@ -7,6 +8,9 @@ export interface DeviceWizardSettings { enabled: boolean; hasKey: boolean }
 
 export async function readDeviceWizardSettings(store: SettingsStore): Promise<DeviceWizardSettings> {
   const [enabled, key] = await Promise.all([store.get(KEY_ENABLED), store.get(KEY_GEMINI)]);
+  // hasKey reflects the DB key only (what the settings UI manages). A GEMINI_API_KEY env var is a
+  // server-side detection fallback (see resolveGeminiKey) but is intentionally NOT surfaced here, so
+  // the in-app "key is set" state and Remove action stay honest about the DB value.
   return { enabled: enabled === "true", hasKey: !!key && key.trim().length > 0 };
 }
 
