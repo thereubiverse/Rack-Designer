@@ -56,6 +56,8 @@ const PROMPT = [
   "(0,0 = panel top-left, 1,1 = panel bottom-right), NOT the whole photo. Group identical adjacent ports into one",
   "group with a count. media is one of: copper, fiber, sfp, usb_a, usb_c, hdmi, dp, vga, ps2, audio.",
   "rows is how the ports are stacked vertically in that block. order is the numbering direction (ltr/rtl/ttb/btt).",
+  "labelPrefix is only the LETTER prefix before the port number (e.g. 'Gi' for 'Gi1/0/1', 'Te', 'Eth') —",
+  "leave it empty if the ports are labeled with numbers only; NEVER put a port number in labelPrefix.",
   "For each group also report rowOrientations: one value per row, either 'up' or 'down', for which way that row's",
   "connector tabs/clips face — the two rows of a switch are often mirrored (one up, one down).",
   "If ports within one block are different types, set the group's media to the dominant type and list the",

@@ -90,6 +90,14 @@ describe("validateDetectedFace", () => {
     const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, portTypes: [{ index: 2, media: "banana" }, { index: 99, media: "sfp" }, { index: 3, media: "fiber", connector: "LC" }] }], confidence: "high" });
     expect(f.groups[0].portTypes).toEqual([{ index: 3, media: "fiber", connector: "LC" }]);
   });
+  it("keeps only the leading letters of labelPrefix (numbers belong to auto-numbering, not the id prefix)", () => {
+    const mk = (lp: unknown) => validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, labelPrefix: lp }], confidence: "high" }).groups[0].labelPrefix;
+    expect(mk("Gi1/0")).toBe("Gi");   // strip the port number
+    expect(mk("GE")).toBe("GE");      // pure letters kept
+    expect(mk("1")).toBeUndefined();  // numbered ports → no prefix
+    expect(mk("24")).toBeUndefined();
+  });
+
   it("omits portTypes when not an array", () => {
     const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, portTypes: "nope" }], confidence: "low" });
     expect(f.groups[0].portTypes).toBeUndefined();

@@ -32,6 +32,9 @@ const MEDIA_SYNONYMS: Record<string, Media> = { ethernet: "copper", rj45: "coppe
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+// idPrefix is the LETTER prefix before a port's auto-number ("Gi" → Gi01). Keep only leading
+// letters so a numeric label ("1", "24", "Gi1/0") doesn't push the port number into the prefix.
+const coercePrefix = (v: unknown): string | undefined => str(v)?.match(/^[A-Za-z]+/)?.[0] || undefined;
 
 function coerceMedia(v: unknown): Media | null {
   if (typeof v !== "string") return null;
@@ -83,7 +86,7 @@ function coerceGroup(raw: unknown): DetectedGroup | null {
     count,
     rows,
     order,
-    labelPrefix: str(r.labelPrefix),
+    labelPrefix: coercePrefix(r.labelPrefix),
     bbox: coerceBBox(r.bbox),
     rowOrientations,
     portTypes,
