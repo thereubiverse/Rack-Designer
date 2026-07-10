@@ -1,19 +1,25 @@
 import type { DetectedFace, DetectedGroup, DetectedLabel } from "./aiDetect";
-import type { Face, PortGroup, TextElement } from "@/domain/faceplate";
+import { CONNECTORS, type Face, type PortGroup, type TextElement } from "@/domain/faceplate";
 import { frameDims, GRID_PX, CELL_W, RU_PX, ROW_H } from "@/domain/faceplate-geometry";
-import { findFreePosition, type GridBounds } from "../editor/portGroupOps";
+import { findFreePosition, resolveYOffset, type GridBounds } from "../editor/portGroupOps";
 
 const snap = (n: number) => Math.round(n / GRID_PX) * GRID_PX;
 
 function toPortGroup(d: DetectedGroup, bounds: GridBounds): PortGroup {
   const cols = Math.max(1, Math.ceil(d.count / d.rows));
-  // Downward offset from centre for a group the model placed low on a tall device.
-  // 1U devices centre a single band, so yOffset stays 0 there.
   const bandCenter = d.bbox.y * bounds.height + (d.bbox.h * bounds.height) / 2;
-  const yOffset = bounds.height > RU_PX ? snap(bandCenter - bounds.height / 2) : 0;
-  // Per-row orientation → port rotation. "up" = flipped (180°); "down"/absent = default (0°).
-  // Only the non-default rows get overrides, so portOverrides stays sparse (and empty when the
-  // model reports no orientation at all — unchanged behavior).
+
+  // Part C — horizontal extent: spread the ports so the group spans the detected block width,
+  // clamped so the spread group still fits the device (a tighter-than-minimum block packs normally).
+  const tightWidth = cols * CELL_W;
+  const targetWidth = d.bbox.w * bounds.width;
+  const maxSpread = cols > 1 ? Math.max(0, (bounds.width - tightWidth) / (cols - 1)) : 0;
+  const colSpacing = cols > 1 && targetWidth > tightWidth
+    ? Math.min((targetWidth - tightWidth) / (cols - 1), maxSpread)
+    : 0;
+
+  // Port overrides (sparse): per-row orientation → rotation ("up" = 180°), then Part A per-port
+  // type exceptions (media + connector). A port can carry both; the type merges over the rotation.
   const portOverrides: PortGroup["portOverrides"] = {};
   if (d.rowOrientations) {
     for (let r = 0; r < d.rows; r++) {
@@ -22,7 +28,13 @@ function toPortGroup(d: DetectedGroup, bounds: GridBounds): PortGroup {
       }
     }
   }
-  return {
+  if (d.portTypes) {
+    for (const pt of d.portTypes) {
+      portOverrides[pt.index] = { ...portOverrides[pt.index], media: pt.media, connectorType: pt.connector ?? CONNECTORS[pt.media][0] };
+    }
+  }
+
+  const g: PortGroup = {
     id: crypto.randomUUID(),
     media: d.media,
     connectorType: d.connector,
@@ -32,11 +44,19 @@ function toPortGroup(d: DetectedGroup, bounds: GridBounds): PortGroup {
     cols,
     gridX: 0,
     gridY: 0,
-    yOffset,
-    colSpacing: 0,
+    yOffset: 0,
+    colSpacing,
     rowSpacing: 0,
     portOverrides,
   };
+
+  // Part B — vertical: a single-row group is positioned by its bbox centre (snapped + clamped in the
+  // device); multi-row groups keep the prior band behaviour (bbox-based on tall devices, else centred).
+  g.yOffset = d.rows === 1
+    ? resolveYOffset(g, bandCenter - bounds.height / 2, bounds, GRID_PX)
+    : bounds.height > RU_PX ? snap(bandCenter - bounds.height / 2) : 0;
+
+  return g;
 }
 
 function toTextElement(l: DetectedLabel, bounds: GridBounds): TextElement {
@@ -57,8 +77,11 @@ export function layoutDetectedFace(face: DetectedFace, dims: { widthIn: number; 
   const fd = frameDims({ widthIn: dims.widthIn, rackUnits: dims.rackUnits, rackMounted: true });
   const bounds: GridBounds = { width: fd.bodyWidthPx, height: fd.heightPx };
 
+  // Part C — place groups left-to-right by their real horizontal position, so overlap-resolution
+  // preserves relative order and only nudges rightward into free space.
+  const groups = [...face.groups].sort((a, b) => a.bbox.x - b.bbox.x);
   let out: Face = { portGroups: [], elements: [] };
-  for (const d of face.groups) {
+  for (const d of groups) {
     const g = toPortGroup(d, bounds);
     const desiredX = d.bbox.x * bounds.width;
     const free = findFreePosition(out, g, { x: desiredX, y: 0 }, bounds, undefined, GRID_PX);

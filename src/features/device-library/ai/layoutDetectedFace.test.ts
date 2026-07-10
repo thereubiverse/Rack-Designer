@@ -83,4 +83,47 @@ describe("layoutDetectedFace", () => {
     );
     expect(out.portGroups[0].portOverrides).toEqual({});
   });
+
+  it("A: applies per-port type overrides, merged with rotation", () => {
+    const out = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 2, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 }, rowOrientations: ["down", "up"], portTypes: [{ index: 4, media: "fiber", connector: "LC" }, { index: 5, media: "sfp" }] }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    const po = out.portGroups[0].portOverrides;
+    expect(po[4]).toMatchObject({ media: "fiber", connectorType: "LC", rotation: 180 }); // type + row-1 rotation merged
+    expect(po[5]).toMatchObject({ media: "sfp", connectorType: "SFP" });                 // connector defaulted
+  });
+
+  it("B: positions a single row low from a high bbox.y", () => {
+    const low = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0.75, w: 0.1, h: 0.1 } }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    expect(low.portGroups[0].yOffset).toBeGreaterThan(0);
+  });
+
+  it("C: places groups left-to-right by bbox.x regardless of input order", () => {
+    const out = layoutDetectedFace(
+      face({ groups: [
+        { media: "copper", connector: "RJ45", count: 4, rows: 1, order: "ltr", bbox: { x: 0.6, y: 0, w: 0.1, h: 0.5 } },
+        { media: "sfp", connector: "SFP", count: 4, rows: 1, order: "ltr", bbox: { x: 0.05, y: 0, w: 0.1, h: 0.5 } },
+      ] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    expect(out.portGroups[0].media).toBe("sfp");                              // leftmost placed first
+    expect(out.portGroups[0].gridX).toBeLessThan(out.portGroups[1].gridX);    // ascending
+  });
+
+  it("C: spreads a wide block via colSpacing, leaves a tight one at 0", () => {
+    const wide = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 0.9, h: 0.5 } }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    expect(wide.portGroups[0].colSpacing).toBeGreaterThan(0);
+    const tight = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 24, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 } }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    expect(tight.portGroups[0].colSpacing).toBe(0);
+  });
 });
