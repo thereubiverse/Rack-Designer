@@ -70,7 +70,10 @@ export function screwHoles(dims: FrameDims, _rackUnits: number): ScrewHole[] {
   const inset = Math.min(SCREW_EDGE_INSET_PX, dims.earWidthPx / 2);
   const leftX = inset;
   const rightX = dims.frameWidthPx - inset;
-  const edge = U_HEIGHT_IN * PX_PER_IN * 0.16; // inset from each edge (matches the 1U look)
+  // Inset from each edge so the screw circle lands dead-centre on the rack's square
+  // mounting point: those sit 7 ref-units (4px offset + 3px half-height on a 50px RU)
+  // below the RU top, i.e. RU_PX*7/50 = 11.76px.
+  const edge = (RU_PX * 7) / 50;
   const holes: ScrewHole[] = [];
   for (const cx of [leftX, rightX]) {
     holes.push({ cx, cy: edge });

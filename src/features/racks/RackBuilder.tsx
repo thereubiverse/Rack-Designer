@@ -3,11 +3,11 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
-import { RackCanvas } from "./RackCanvas";
+import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, updateRackAction } from "./actions";
-import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike } from "./rackOps";
+import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
 import { createHistory, push, undo, redo, canUndo, canRedo, type History } from "./history";
 
 function fromRow(r: RackDeviceRow): PlacementDraft {
@@ -37,17 +37,39 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
   const placements = hist.present;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [side, setSide] = useState<"FRONT" | "BACK">("FRONT");
-  const [picker, setPicker] = useState<{ typeId: string; atU: number | null } | null>(null);
-  const [zoom, setZoom] = useState(1); // passed to RackCanvas (final scale = fit × zoom)
+  // initialTypeId null → picker opens at the "Select type" list (free-RU click); a type id →
+  // opens straight to that type's templates (palette click). atU is the RU the insert lands on.
+  const [picker, setPicker] = useState<{ initialTypeId: string | null; atU: number | null } | null>(null);
+  const canvasRef = useRef<RackCanvasHandle>(null); // zoom in/out drive the canvas imperatively
+  // PatchDocs' Fit toggle: default fits the whole rack (height); each click flips width ↔ height.
+  const [fitMode, setFitMode] = useState<FitMode>("height");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Rack height is local state so the canvas re-renders LIVE as the arrows/input change it; the
+  // persist is debounced. Never below the highest occupied RU (minHeight) or above 60.
+  const [heightU, setHeightU] = useState(rack.height_u);
+  const heightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const allTemplates = useMemo(() => Object.values(templatesByType).flat(), [templatesByType]);
   const templatesById = useMemo(() => Object.fromEntries(allTemplates.map((t) => [t.id, t])), [allTemplates]);
   const ru = useMemo(() => Object.fromEntries(allTemplates.map((t) => [t.id, t.rackUnits])), [allTemplates]);
   const typeCodeByTypeId = useMemo(() => Object.fromEntries(types.map((t) => [t.id, t.code])), [types]);
   const like: PlacementLike[] = placements.map((p) => ({ id: p.id, deviceTemplateId: p.deviceTemplateId, code: p.code, startU: p.startU }));
+  const minHeight = minRackHeight(like, ru); // highest occupied U — the shrink floor
+
+  function changeHeight(v: number) {
+    if (!Number.isFinite(v)) return;
+    const clamped = Math.min(60, Math.max(Math.max(1, minHeight), Math.round(v)));
+    setHeightU(clamped); // live canvas re-render
+    setSaveState("saving"); setError(null);
+    if (heightTimer.current) clearTimeout(heightTimer.current);
+    heightTimer.current = setTimeout(async () => {
+      const res = await updateRackAction(rack.id, { heightU: clamped });
+      if (!res.ok) { setSaveState("error"); setError(res.error ?? "Save failed"); return; }
+      setSaveState("saved");
+    }, 600);
+  }
 
   function queueSave(next: PlacementDraft[]) {
     setSaveState("saving"); setError(null);
@@ -82,7 +104,7 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
 
   function insertTemplate(t: PickerTemplate) {
     const at = picker?.atU ?? undefined;
-    const slot = findFreeSlot(like, ru, t.rackUnits, rack.height_u, at);
+    const slot = findFreeSlot(like, ru, t.rackUnits, heightU, at);
     if (slot === null) { setError("No free slot for that device height"); setPicker(null); return; }
     const typeCode = typeCodeByTypeId[t.deviceTypeId] ?? "DEV";
     const draft: PlacementDraft = {
@@ -103,7 +125,7 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
 
   const canvasPlacements = placements
     .filter((p) => templatesById[p.deviceTemplateId])
-    .map((p) => ({ id: p.id, startU: p.startU, template: templatesById[p.deviceTemplateId] }));
+    .map((p) => ({ id: p.id, startU: p.startU, code: p.code, template: templatesById[p.deviceTemplateId] }));
 
   return (
     <div className="flex gap-4">
@@ -112,7 +134,7 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
         <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</p>
         {types.map((t) => (
           <button key={t.id} type="button" data-testid={`palette-type-${t.code}`}
-            onClick={() => setPicker({ typeId: t.id, atU: null })}
+            onClick={() => setPicker({ initialTypeId: t.id, atU: null })}
             className="block w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-sm font-medium hover:bg-neutral-50">
             {t.name}
           </button>
@@ -134,27 +156,29 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm disabled:opacity-40">↺</button>
           <button type="button" data-testid="rack-redo" disabled={!canRedo(hist)} onClick={doRedo}
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm disabled:opacity-40">↻</button>
-          <button type="button" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.5, +(z / 1.25).toFixed(2)))}
+          <button type="button" aria-label="Zoom out" onClick={() => canvasRef.current?.zoomBy(0.8)}
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm">−</button>
-          <button type="button" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(3, +(z * 1.25).toFixed(2)))}
+          <button type="button" aria-label="Zoom in" onClick={() => canvasRef.current?.zoomBy(1.25)}
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm">+</button>
-          <button type="button" aria-label="Fit" onClick={() => setZoom(1)}
+          <button type="button" aria-label="Fit" title={`Fit to ${fitMode === "height" ? "width" : "height"}`}
+            onClick={() => setFitMode((m) => (m === "height" ? "width" : "height"))}
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm">Fit</button>
           <span className={`ml-auto text-xs font-semibold ${saveState === "error" ? "text-red-600" : saveState === "saving" ? "text-amber-600" : "text-green-600"}`}>
             {saveState === "error" ? error : saveState === "saving" ? "Saving…" : "✓ Saved"}
           </span>
         </div>
-        <div className="max-h-[75vh] overflow-y-auto rounded-2xl border border-neutral-200 bg-white p-4">
+        <div className="h-[72vh] overflow-hidden rounded-2xl border border-neutral-200 bg-white">
           <RackCanvas
-            heightU={rack.height_u}
+            ref={canvasRef}
+            heightU={heightU}
             placements={canvasPlacements}
             side={side}
-            zoom={zoom}
+            fitMode={fitMode}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            onAddAt={(u) => setPicker({ typeId: types[0]?.id ?? "", atU: u })}
+            onAddAt={(u) => setPicker({ initialTypeId: null, atU: u })}
             onMove={(id, targetU) => {
-              const resolved = resolveMove(like, ru, id, targetU, rack.height_u);
+              const resolved = resolveMove(like, ru, id, targetU, heightU);
               const cur = placements.find((p) => p.id === id);
               if (!cur || cur.startU === resolved) return;
               commit(placements.map((p) => (p.id === id ? { ...p, startU: resolved } : p)));
@@ -181,14 +205,15 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
             onDelete={() => { commit(placements.filter((p) => p.id !== selected.id)); setSelectedId(null); }}
           />
         ) : (
-          <RackSettings rack={rack} minHeight={minRackHeight(like, ru)} />
+          <RackSettings rack={rack} minHeight={minHeight} heightU={heightU} onHeightChange={changeHeight} />
         )}
       </div>
 
       {picker && (
         <AddDevicePicker
-          typeName={types.find((t) => t.id === picker.typeId)?.name ?? ""}
-          templates={templatesByType[picker.typeId] ?? []}
+          types={types}
+          templatesByType={templatesByType}
+          initialTypeId={picker.initialTypeId}
           onInsert={insertTemplate}
           onClose={() => setPicker(null)}
         />
@@ -197,14 +222,16 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
   );
 }
 
-/** Rack settings when nothing is selected: name + height (shrink guarded server-side too). */
-function RackSettings({ rack, minHeight }: { rack: RackRow; minHeight: number }) {
+/** Rack settings when nothing is selected: name + height. Height is controlled by the parent so
+ *  the canvas re-renders live as it changes; the name saves on blur (shrink guarded server-side). */
+function RackSettings({ rack, minHeight, heightU, onHeightChange }: {
+  rack: RackRow; minHeight: number; heightU: number; onHeightChange: (v: number) => void;
+}) {
   const [name, setName] = useState(rack.name ?? "");
-  const [heightU, setHeightU] = useState(rack.height_u);
   const [msg, setMsg] = useState<string | null>(null);
-  async function saveField(patch: { name?: string | null; heightU?: number }) {
+  async function saveName() {
     setMsg(null);
-    const res = await updateRackAction(rack.id, patch);
+    const res = await updateRackAction(rack.id, { name: name === "" ? null : name });
     if (!res.ok) setMsg(res.error ?? "Save failed");
   }
   const input = "mt-1 h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal focus:border-neutral-400 focus:outline-none";
@@ -214,12 +241,11 @@ function RackSettings({ rack, minHeight }: { rack: RackRow; minHeight: number })
       <label className="block text-[11px] font-semibold text-neutral-600">Name
         <input value={name} className={input}
           onChange={(e) => setName(e.target.value)}
-          onBlur={() => saveField({ name: name === "" ? null : name })} />
+          onBlur={saveName} />
       </label>
       <label className="block text-[11px] font-semibold text-neutral-600">Rack units
         <input type="number" min={Math.max(1, minHeight)} max={60} value={heightU} className={input}
-          onChange={(e) => setHeightU(Number(e.target.value))}
-          onBlur={() => saveField({ heightU })} />
+          onChange={(e) => onHeightChange(Number(e.target.value))} />
       </label>
       {msg && <p className="text-sm text-red-600">{msg}</p>}
       <p className="text-xs text-neutral-400">Select a device to edit its settings.</p>

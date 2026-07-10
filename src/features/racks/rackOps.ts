@@ -63,6 +63,33 @@ export function validateDeviceCode(code: string): string | null {
     : "IDs are 1–10 characters: uppercase letters, numbers, _ or -";
 }
 
+export type FitMode = "width" | "height";
+
+/** Fit scale for the rack canvas (PatchDocs "fit" toggle). "width" fills the viewport width (the
+ *  rack scrolls vertically); "height" fits the whole rack in the viewport height. `margin` is
+ *  reserved on every side for breathing room. Returns 1 for a degenerate (too-small) box. */
+export function fitScale(
+  mode: FitMode, availW: number, availH: number, rackW: number, rackH: number, margin = 16,
+): number {
+  const w = availW - margin * 2, h = availH - margin * 2;
+  if (rackW <= 0 || rackH <= 0) return 1;
+  if (mode === "width") return w > 0 ? w / rackW : 1;
+  return h > 0 ? h / rackH : 1;
+}
+
+/** Clamp a pan (translate) offset so at least `margin` px of the content stays on-screen in each
+ *  axis — lets the user pan freely in both directions at any zoom without losing the rack. */
+export function clampPan(
+  x: number, y: number, viewW: number, viewH: number, contentW: number, contentH: number, margin = 48,
+): { x: number; y: number } {
+  const axis = (v: number, content: number, view: number) => {
+    let lo = margin - content, hi = view - margin;
+    if (lo > hi) lo = hi = (view - content) / 2; // content smaller than the keep-visible band → centre
+    return Math.max(lo, Math.min(hi, v));
+  };
+  return { x: axis(x, contentW, viewW), y: axis(y, contentH, viewH) };
+}
+
 /** Highest occupied U — the floor for shrinking the rack. */
 export function minRackHeight(placements: PlacementLike[], ru: RuByTemplate): number {
   return placements.reduce((m, p) => Math.max(m, spanOf(p, ru).top), 0);

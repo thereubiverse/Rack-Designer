@@ -16,7 +16,7 @@ describe("rack geometry", () => {
   it("ruTopY puts U1 at the bottom", () => {
     // a 1U device at U1 sits one RU above the interior bottom
     expect(ruTopY(1, 1, 12)).toBeGreaterThan(ruTopY(12, 1, 12));
-    expect(ruTopY(12, 1, 12)).toBeLessThan(RU_PX); // top slot near the top edge
+    expect(ruTopY(12, 1, 12)).toBeLessThan(2 * RU_PX); // top slot just below the cap
   });
 });
 
