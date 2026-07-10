@@ -193,14 +193,20 @@ the vision read disagree, `confidence`/`notes` flag it.
 ## Server actions & dependencies
 
 - **New dependency:** `@anthropic-ai/sdk` and a server-only `ANTHROPIC_API_KEY`
-  env var. Existing `"use server"` action pattern (`actions.ts`) is reused.
-- `detectPorts` uses a current Claude vision model with tool-use/structured
+  env var. This one key powers **both** actions. Existing `"use server"` action
+  pattern (`actions.ts`) is reused. Billed per use via the Anthropic Console,
+  separate from any Claude Code plan; key stays server-side, never in the
+  browser.
+- `detectPorts` uses a current Claude **vision** model with tool-use/structured
   output; validates before returning.
-- `identifyDevice` is a separate action so the two model calls stay isolated,
-  independently testable, and individually skippable (name-fetch can fail
-  without blocking upload).
+- `identifyDevice` uses Claude's built-in **web-search tool** (same SDK/key) to
+  look up the model → return `DeviceMatch` metadata (name/brand/width/RU) plus a
+  candidate product-image URL, which the action fetches server-side and hands to
+  `detectPorts`. It is a separate action so the two model calls stay isolated,
+  independently testable, and individually skippable — name-fetch can fail or
+  return a poor candidate without blocking the upload path.
 - **Image storage** in Supabase (to keep a device's source photo) is optional
-  and off for the MVP.
+  and off for the first slice.
 
 ## Safety
 
@@ -227,13 +233,19 @@ the vision read disagree, `confidence`/`notes` flag it.
 
 ## Staging
 
-The design supports both photo sources, but the reliable core ships first:
+The first slice ships **both** photo sources:
 
-1. **MVP:** icon + slide-out, **upload** path, `detectPorts`,
-   `layoutDetectedFace`, review/apply, metadata auto-fill from the vision read.
-2. **Follow-on:** `identifyDevice` name-fetch + candidate/confirm step.
-3. **Later (optional):** store source photo in Supabase; bounding-box overlay
+1. **First slice:** icon + slide-out; **name-fetch (`identifyDevice`) AND
+   upload**; candidate/confirm step; `detectPorts`; `layoutDetectedFace`;
+   review/apply; metadata auto-fill from both the identify step and the vision
+   read. Upload remains the reliable fallback whenever name-fetch returns a poor
+   or wrong candidate.
+2. **Later (optional):** store source photo in Supabase; bounding-box overlay
    confirmation (brainstorming Approach C) for pixel-accurate placement.
+
+Because name-fetch is in the first slice, `identifyDevice` and `detectPorts` are
+built together; the reliability caveat on auto-fetching a clean panel shot is
+mitigated by the confirm step and the always-available upload fallback.
 
 ## Out of scope
 
