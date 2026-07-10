@@ -13,6 +13,11 @@ export default defineConfig({
   // does not load the project postcss.config.mjs (whose string-plugin form is
   // for Next.js/Turbopack and is rejected by Vite's PostCSS loader).
   css: { postcss: { plugins: [] } },
+  resolve: {
+    alias: {
+      "server-only": new URL("src/server-only-shim.ts", import.meta.url).pathname,
+    },
+  },
   test: {
     environment: "jsdom",
     globals: true,
