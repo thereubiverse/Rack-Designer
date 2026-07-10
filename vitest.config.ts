@@ -15,7 +15,11 @@ export default defineConfig({
   css: { postcss: { plugins: [] } },
   resolve: {
     alias: {
-      // Alias 'server-only' to a no-op in tests: the real package throws on import outside React Server Components, which vitest/jsdom don't set. Our server modules (visionBackend/search) are unit-/pipeline-tested directly; the client-import guard is a build-time safety net not needed here.
+      // Alias 'server-only' to a no-op in tests only: the real 'server-only' package is a normal
+      // dependency and resolves fine in the Next.js app (no Next alias involved). It throws on
+      // import outside React Server Components, which vitest/jsdom don't set. Our server modules
+      // (visionBackend/search) are unit-/pipeline-tested directly; the client-import guard is a
+      // build-time safety net not needed here.
       "server-only": new URL("src/server-only-shim.ts", import.meta.url).pathname,
     },
   },

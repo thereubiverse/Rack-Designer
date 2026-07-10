@@ -37,7 +37,7 @@ describe("DeviceWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /apply/i }));
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
     const arg = onApply.mock.calls[0][0];
-    expect(arg.face.portGroups).toHaveLength(1);
+    expect(arg.detected.groups).toHaveLength(1);
     expect(arg.match.brand).toBe("Cisco");
   });
 

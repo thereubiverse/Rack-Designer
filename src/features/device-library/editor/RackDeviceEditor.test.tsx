@@ -14,15 +14,11 @@ vi.mock("./DeviceWizard", () => ({
       <button
         onClick={() =>
           onApply({
-            face: {
-              portGroups: [{
-                id: "wg1", media: "copper", connectorType: "RJ45", idPrefix: "Gi",
-                countingDirection: "ltr", rows: 1, cols: 4, gridX: 0, gridY: 0,
-                colSpacing: 0, rowSpacing: 0, portOverrides: {},
-              }],
-              elements: [],
+            detected: {
+              groups: [{ media: "copper", connector: "RJ45", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 } }],
+              confidence: "high",
+              modelText: "C9200",
             },
-            detected: { groups: [], confidence: "high", modelText: "C9200" },
             match: { name: "Cisco Catalyst 9200", brand: "Cisco", widthIn: 10, rackUnits: 2, imageUrl: "", source: "duckduckgo" },
           })
         }
@@ -32,7 +28,6 @@ vi.mock("./DeviceWizard", () => ({
       <button
         onClick={() =>
           onApply({
-            face: { portGroups: [], elements: [] },
             detected: { groups: [], confidence: "low", modelText: "Unknown Model" },
           })
         }

@@ -1,12 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { Face } from "@/domain/faceplate";
-import { layoutDetectedFace } from "../ai/layoutDetectedFace";
 import { detectPortsAction, identifyDeviceAction } from "../ai/actions";
 import type { DetectedFace, DeviceMatch } from "../ai/aiDetect";
 
-export interface WizardApply { face: Face; detected: DetectedFace; match?: DeviceMatch }
+export interface WizardApply { detected: DetectedFace; match?: DeviceMatch }
 export interface DeviceWizardProps {
   widthIn: number;
   rackUnits: number;
@@ -17,7 +15,7 @@ export interface DeviceWizardProps {
 
 type Phase = "input" | "candidate" | "detecting" | "review" | "error";
 
-export function DeviceWizard({ widthIn, rackUnits, onApply, runDetect = detectPortsAction, runIdentify = identifyDeviceAction }: DeviceWizardProps) {
+export function DeviceWizard({ onApply, runDetect = detectPortsAction, runIdentify = identifyDeviceAction }: DeviceWizardProps) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("input");
   const [modelName, setModelName] = useState("");
@@ -57,8 +55,7 @@ export function DeviceWizard({ widthIn, rackUnits, onApply, runDetect = detectPo
 
   function apply() {
     if (!detected) return;
-    const face = layoutDetectedFace(detected, { widthIn, rackUnits });
-    onApply({ face, detected, match: match ?? undefined });
+    onApply({ detected, match: match ?? undefined });
     setOpen(false); reset();
   }
 

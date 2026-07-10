@@ -6,6 +6,7 @@ import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
 import { DeviceWizard, type WizardApply } from "./DeviceWizard";
+import { layoutDetectedFace } from "../ai/layoutDetectedFace";
 import { EditorCanvas } from "./EditorCanvas";
 import { frameDims, layoutPortGroup, GRID_PX } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
@@ -61,17 +62,21 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // but only pre-fills metadata that's still empty/default — never overwrites work
   // the user already entered, and never shrinks a device they already sized.
   function applyWizard(a: WizardApply) {
-    setActiveFace(a.face);
+    // Resolve final dimensions BEFORE laying out, so a multi-U device gets the right frame
+    // height and its detected vertical layout isn't collapsed. Only adopt dims when the draft
+    // is still at defaults (never shrink a user-sized device); prefer a confirmed match, else
+    // what vision read off the panel.
+    const finalRackUnits = draft.rackUnits === 1 ? (a.match?.rackUnits ?? a.detected.rackUnits ?? 1) : draft.rackUnits;
+    const finalWidthIn = draft.widthIn === 17.5 ? (a.match?.widthIn ?? a.detected.widthIn ?? 17.5) : draft.widthIn;
+    if (finalRackUnits !== draft.rackUnits) setField("rackUnits", finalRackUnits);
+    if (finalWidthIn !== draft.widthIn) setField("widthIn", finalWidthIn);
+    setActiveFace(layoutDetectedFace(a.detected, { widthIn: finalWidthIn, rackUnits: finalRackUnits }));
     const suggestedName = a.match?.name ?? a.detected.modelText;
     if (!draft.name.trim() && suggestedName) setField("name", suggestedName);
     const brandName = a.match?.brand ?? a.detected.brand;
     if (draft.brandId === null && brandName) {
       const hit = brands.find((b) => b.name.toLowerCase() === brandName.toLowerCase());
       if (hit) setField("brandId", hit.id);
-    }
-    if (a.match) {
-      if (draft.widthIn === 17.5 && a.match.widthIn !== 17.5) setField("widthIn", a.match.widthIn);
-      if (draft.rackUnits === 1 && a.match.rackUnits !== 1) setField("rackUnits", a.match.rackUnits);
     }
   }
   // Selection is a set of groups; ports are a set within a SINGLE selected group.

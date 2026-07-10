@@ -13,9 +13,10 @@ export async function detectPortsAction(input: { imageBase64: string; mimeType: 
 }
 
 async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   const mimeType = res.headers.get("content-type") ?? "image/jpeg";
+  if (!mimeType.startsWith("image/")) throw new Error("not an image");
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.byteLength > MAX_IMAGE_BYTES) throw new Error("image too large");
   return { base64: buf.toString("base64"), mimeType };
