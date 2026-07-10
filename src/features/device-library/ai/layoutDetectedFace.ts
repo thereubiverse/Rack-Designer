@@ -11,6 +11,17 @@ function toPortGroup(d: DetectedGroup, bounds: GridBounds): PortGroup {
   // 1U devices centre a single band, so yOffset stays 0 there.
   const bandCenter = d.bbox.y * bounds.height + (d.bbox.h * bounds.height) / 2;
   const yOffset = bounds.height > RU_PX ? snap(bandCenter - bounds.height / 2) : 0;
+  // Per-row orientation → port rotation. "up" = flipped (180°); "down"/absent = default (0°).
+  // Only the non-default rows get overrides, so portOverrides stays sparse (and empty when the
+  // model reports no orientation at all — unchanged behavior).
+  const portOverrides: PortGroup["portOverrides"] = {};
+  if (d.rowOrientations) {
+    for (let r = 0; r < d.rows; r++) {
+      if (d.rowOrientations[r] === "up") {
+        for (let c = 0; c < cols; c++) portOverrides[r * cols + c] = { rotation: 180 };
+      }
+    }
+  }
   return {
     id: crypto.randomUUID(),
     media: d.media,
@@ -24,7 +35,7 @@ function toPortGroup(d: DetectedGroup, bounds: GridBounds): PortGroup {
     yOffset,
     colSpacing: 0,
     rowSpacing: 0,
-    portOverrides: {},
+    portOverrides,
   };
 }
 

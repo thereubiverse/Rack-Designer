@@ -65,4 +65,22 @@ describe("layoutDetectedFace", () => {
     expect(out.elements[0].kind).toBe("text");
     expect((out.elements[0] as { content: string }).content).toBe("CONSOLE");
   });
+
+  it("mirrors row rotation from rowOrientations", () => {
+    const out = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 2, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 }, rowOrientations: ["down", "up"] }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    const g = out.portGroups[0];
+    expect(g.portOverrides[0]?.rotation ?? 0).toBe(0);   // row 0 (down) → 0
+    expect(g.portOverrides[g.cols]?.rotation).toBe(180); // row 1 (up)  → 180
+  });
+
+  it("leaves rotation unset when no rowOrientations", () => {
+    const out = layoutDetectedFace(
+      face({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 2, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 } }] }),
+      { widthIn: 17.5, rackUnits: 1 },
+    );
+    expect(out.portGroups[0].portOverrides).toEqual({});
+  });
 });
