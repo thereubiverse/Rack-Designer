@@ -3,13 +3,17 @@
 import { runDetectPorts, runIdentifyDevice, type DetectResult, type IdentifyResult } from "./pipeline";
 import { geminiVisionBackend } from "./visionBackend";
 import { duckDuckGoSearcher } from "./search";
+import { resolveGeminiKey } from "@/features/settings/deviceWizardSettings";
+import { dbSettingsStore } from "@/features/settings/store";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // cap uploads / fetched images at 8 MB
 
 export async function detectPortsAction(input: { imageBase64: string; mimeType: string; modelHint?: string }): Promise<DetectResult> {
   if (!input.imageBase64) return { ok: false, error: "No image provided." };
-  if (input.imageBase64.length > MAX_IMAGE_BYTES * 1.4) return { ok: false, error: "Image is too large (max 8 MB)." };
-  return runDetectPorts(geminiVisionBackend, input);
+  if (input.imageBase64.length > MAX_IMAGE_BYTES * (4 / 3)) return { ok: false, error: "Image is too large (max 8 MB)." };
+  const apiKey = await resolveGeminiKey(dbSettingsStore);
+  if (!apiKey) return { ok: false, error: "no-key" };
+  return runDetectPorts(geminiVisionBackend, { ...input, apiKey });
 }
 
 async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {

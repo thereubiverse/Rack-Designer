@@ -1,7 +1,7 @@
 import "server-only";
 import { GoogleGenerativeAI, SchemaType, type ObjectSchema } from "@google/generative-ai";
 
-export interface VisionInput { imageBase64: string; mimeType: string; modelHint?: string }
+export interface VisionInput { imageBase64: string; mimeType: string; modelHint?: string; apiKey: string }
 export interface VisionBackend { detect(input: VisionInput): Promise<unknown> }
 
 // JSON schema the model MUST fill (structured output). Mirrors DetectedFace; the
@@ -52,9 +52,7 @@ const PROMPT = [
 
 export const geminiVisionBackend: VisionBackend = {
   async detect(input) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error("GEMINI_API_KEY is not set");
-    const genAI = new GoogleGenerativeAI(key);
+    const genAI = new GoogleGenerativeAI(input.apiKey);
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       generationConfig: { responseMimeType: "application/json", responseSchema },
