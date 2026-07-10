@@ -81,4 +81,17 @@ describe("validateDetectedFace", () => {
     const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, rowOrientations: "up" }], confidence: "low" });
     expect(f.groups[0].rowOrientations).toBeUndefined();
   });
+
+  it("keeps a valid portTypes entry and coerces its connector", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 24, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, portTypes: [{ index: 22, media: "sfp", connector: "bogus" }] }], confidence: "high" });
+    expect(f.groups[0].portTypes).toEqual([{ index: 22, media: "sfp", connector: undefined }]);
+  });
+  it("drops portTypes entries with unknown media or out-of-range index", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, portTypes: [{ index: 2, media: "banana" }, { index: 99, media: "sfp" }, { index: 3, media: "fiber", connector: "LC" }] }], confidence: "high" });
+    expect(f.groups[0].portTypes).toEqual([{ index: 3, media: "fiber", connector: "LC" }]);
+  });
+  it("omits portTypes when not an array", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, portTypes: "nope" }], confidence: "low" });
+    expect(f.groups[0].portTypes).toBeUndefined();
+  });
 });

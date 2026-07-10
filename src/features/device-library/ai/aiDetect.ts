@@ -10,6 +10,7 @@ export interface DetectedGroup {
   labelPrefix?: string;
   bbox: BBox;
   rowOrientations?: ("up" | "down")[]; // one per row: which way that row's connector tabs face
+  portTypes?: { index: number; media: Media; connector?: string }[]; // per-port type exceptions
 }
 export interface DetectedLabel { text: string; bbox: BBox }
 export interface DetectedFace {
@@ -68,18 +69,32 @@ function coerceGroup(raw: unknown): DetectedGroup | null {
   const connector = typeof r.connector === "string" && allowed.includes(r.connector) ? r.connector : allowed[0];
   const order = ORDERS.includes(r.order as CountingDirection) ? (r.order as CountingDirection) : "ltr";
   const rows = clamp(Math.round(num(r.rows, 1)), 1, 4);
+  const count = clamp(Math.round(num(r.count, 1)), 1, 96);
   const rowOrientations = Array.isArray(r.rowOrientations)
     ? r.rowOrientations.slice(0, rows).map((v) => (v === "up" ? "up" : "down") as "up" | "down")
+    : undefined;
+  const portTypes = Array.isArray(r.portTypes)
+    ? r.portTypes
+        .map((p) => {
+          const pr = (p ?? {}) as Record<string, unknown>;
+          const m = coerceMedia(pr.media);
+          const idx = Math.round(num(pr.index, -1));
+          if (!m || idx < 0 || idx >= count) return null;
+          const connector = typeof pr.connector === "string" && CONNECTORS[m].includes(pr.connector) ? pr.connector : undefined;
+          return { index: idx, media: m, connector };
+        })
+        .filter((p): p is { index: number; media: Media; connector: string | undefined } => p !== null)
     : undefined;
   return {
     media,
     connector,
-    count: clamp(Math.round(num(r.count, 1)), 1, 96),
+    count,
     rows,
     order,
     labelPrefix: str(r.labelPrefix),
     bbox: coerceBBox(r.bbox),
     rowOrientations,
+    portTypes,
   };
 }
 
