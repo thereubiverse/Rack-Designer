@@ -23,14 +23,6 @@ export interface DetectedFace {
   confidence: "high" | "medium" | "low";
   notes?: string;
 }
-export interface DeviceMatch {
-  name: string;
-  brand: string;
-  widthIn: number;
-  rackUnits: number;
-  imageUrl: string;
-  source: string;
-}
 
 const ORDERS: CountingDirection[] = ["ltr", "rtl", "ttb", "btt"];
 const CONFIDENCES = ["high", "medium", "low"] as const;

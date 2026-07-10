@@ -17,9 +17,11 @@ vi.mock("./DeviceWizard", () => ({
             detected: {
               groups: [{ media: "copper", connector: "RJ45", count: 4, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 0.3, h: 0.5 } }],
               confidence: "high",
-              modelText: "C9200",
+              modelText: "Cisco Catalyst 9200",
+              brand: "Cisco",
+              widthIn: 10,
+              rackUnits: 2,
             },
-            match: { name: "Cisco Catalyst 9200", brand: "Cisco", widthIn: 10, rackUnits: 2, imageUrl: "", source: "duckduckgo" },
           })
         }
       >

@@ -2,9 +2,9 @@
 
 import { useRef, useState } from "react";
 import { detectPortsAction, identifyDeviceAction } from "../ai/actions";
-import type { DetectedFace, DeviceMatch } from "../ai/aiDetect";
+import type { DetectedFace } from "../ai/aiDetect";
 
-export interface WizardApply { detected: DetectedFace; match?: DeviceMatch }
+export interface WizardApply { detected: DetectedFace }
 export interface DeviceWizardProps {
   widthIn: number;
   rackUnits: number;
@@ -15,7 +15,7 @@ export interface DeviceWizardProps {
   runIdentify?: typeof identifyDeviceAction;
 }
 
-type Phase = "input" | "candidate" | "detecting" | "review" | "error";
+type Phase = "input" | "detecting" | "review" | "error";
 
 function SettingsPrompt() {
   return (
@@ -31,12 +31,10 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
   const [phase, setPhase] = useState<Phase>("input");
   const [modelName, setModelName] = useState("");
   const [error, setError] = useState("");
-  const [match, setMatch] = useState<DeviceMatch | null>(null);
-  const [image, setImage] = useState<{ base64: string; mimeType: string } | null>(null);
   const [detected, setDetected] = useState<DetectedFace | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const reset = () => { setPhase("input"); setError(""); setMatch(null); setImage(null); setDetected(null); };
+  const reset = () => { setPhase("input"); setError(""); setDetected(null); };
 
   async function search() {
     if (phase === "detecting") return;
@@ -44,7 +42,7 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
     setPhase("detecting"); setError("");
     const r = await runIdentify(modelName);
     if (!r.ok) { setError(r.error); setPhase("error"); return; }
-    setMatch(r.match); setImage({ base64: r.imageBase64, mimeType: r.mimeType }); setPhase("candidate");
+    setDetected(r.face); setPhase("review");
   }
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -52,8 +50,6 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
     e.target.value = "";
     if (!file) return;
     const base64 = await fileToBase64(file);
-    setImage({ base64, mimeType: file.type || "image/png" });
-    setMatch(null);
     await detect(base64, file.type || "image/png");
   }
 
@@ -66,7 +62,7 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
 
   function apply() {
     if (!detected) return;
-    onApply({ detected, match: match ?? undefined });
+    onApply({ detected });
     setOpen(false); reset();
   }
 
@@ -113,15 +109,6 @@ export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPorts
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void onFile(e)} />
               {phase === "detecting" && <span className="text-xs text-neutral-500">Working…</span>}
             </>
-          )}
-
-          {phase === "candidate" && match && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="font-medium">{match.name}</span>
-              <span className="text-neutral-500">{match.brand} · {match.rackUnits}U</span>
-              <button type="button" onClick={() => image && void detect(image.base64, image.mimeType)} className="rounded bg-blue-600 px-2 py-1 text-white">Confirm</button>
-              <button type="button" onClick={reset} className="rounded border border-neutral-300 px-2 py-1">Override</button>
-            </div>
           )}
 
           {phase === "review" && detected && (
