@@ -256,11 +256,14 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
     >
       <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold">Rack Device Editor</h2>
-            {!ro && <DeviceWizard enabled={props.wizardEnabled} hasKey={props.wizardHasKey} widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />}
-          </div>
-          <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
+          <h2 className="text-lg font-bold">Rack Device Editor</h2>
+          {/* Top-right: the Device Wizard (upload) when editable + enabled; otherwise the ✕ close.
+              Editing closes via the bottom Cancel button when the wizard occupies this slot. */}
+          {!ro && props.wizardEnabled ? (
+            <DeviceWizard enabled hasKey={props.wizardHasKey} widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />
+          ) : (
+            <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
+          )}
         </div>
 
         {ro && (

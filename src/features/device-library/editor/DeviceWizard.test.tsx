@@ -4,74 +4,55 @@ import { DeviceWizard } from "./DeviceWizard";
 
 const detected = { groups: [{ media: "copper" as const, connector: "RJ45", count: 24, rows: 2, order: "ltr" as const, bbox: { x: 0, y: 0, w: 1, h: 1 } }], confidence: "high" as const };
 const okDetect = vi.fn().mockResolvedValue({ ok: true, face: detected });
-const okIdentify = vi.fn().mockResolvedValue({ ok: true, face: detected });
 
 const base = { widthIn: 17.5, rackUnits: 1, onApply: vi.fn(), enabled: true, hasKey: true };
 
 describe("DeviceWizard", () => {
-  it("has an icon button with a tooltip and no text label", () => {
-    render(<DeviceWizard {...base} runDetect={okDetect} runIdentify={okIdentify} />);
+  it("renders nothing when the feature is disabled", () => {
+    const { container } = render(<DeviceWizard {...base} enabled={false} runDetect={okDetect} />);
+    expect(container.querySelector('button[aria-label="Device Wizard"]')).toBeNull();
+  });
+
+  it("shows an icon-only button with a tooltip", () => {
+    render(<DeviceWizard {...base} runDetect={okDetect} />);
     const btn = screen.getByRole("button", { name: "Device Wizard" });
     expect(btn.textContent).toBe(""); // icon only
+    expect(btn).toHaveAttribute("title", "Device Wizard");
   });
 
-  it("reveals the search + upload controls when the icon is clicked", () => {
-    render(<DeviceWizard {...base} runDetect={okDetect} runIdentify={okIdentify} />);
-    expect(screen.queryByPlaceholderText(/model/i)).not.toBeVisible();
+  it("clicking the icon turns it into an Upload control", () => {
+    render(<DeviceWizard {...base} runDetect={okDetect} />);
     fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
-    expect(screen.getByPlaceholderText(/model/i)).toBeVisible();
-    expect(screen.getByTestId("wizard-upload")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload a photo" })).toBeInTheDocument();
   });
 
-  it("search → review → Apply calls onApply with the detected face", async () => {
+  it("clicking the icon with no key shows a Settings prompt (not upload)", () => {
+    render(<DeviceWizard {...base} hasKey={false} runDetect={okDetect} />);
+    fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
+    expect(screen.queryByRole("button", { name: "Upload a photo" })).toBeNull();
+    const link = screen.getByRole("link", { name: /settings/i });
+    expect(link).toHaveAttribute("href", "/settings");
+  });
+
+  it("upload → review → Apply calls onApply with the detected face", async () => {
     const onApply = vi.fn();
-    render(<DeviceWizard {...base} onApply={onApply} runDetect={okDetect} runIdentify={okIdentify} />);
+    const { container } = render(<DeviceWizard {...base} onApply={onApply} runDetect={okDetect} />);
     fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
-    fireEvent.change(screen.getByPlaceholderText(/model/i), { target: { value: "C9200-24T" } });
-    fireEvent.click(screen.getByRole("button", { name: /search/i }));
-    // straight to review — no image candidate step
-    await screen.findByRole("button", { name: /apply/i });
-    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["x"], "sw.png", { type: "image/png" })] } });
+    fireEvent.click(await screen.findByRole("button", { name: /apply/i }));
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
     const arg = onApply.mock.calls[0][0];
     expect(arg.detected.groups).toHaveLength(1);
     expect(arg.match).toBeUndefined();
   });
 
-  it("shows an error when the lookup fails", async () => {
-    const failIdentify = vi.fn().mockResolvedValue({ ok: false, error: "Couldn't identify this model — try a different name or upload a photo." });
-    render(<DeviceWizard {...base} onApply={vi.fn()} runDetect={okDetect} runIdentify={failIdentify} />);
+  it("shows an error when detection fails", async () => {
+    const failDetect = vi.fn().mockResolvedValue({ ok: false, error: "The vision model is busy right now — please try again in a moment." });
+    const { container } = render(<DeviceWizard {...base} onApply={vi.fn()} runDetect={failDetect} />);
     fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
-    fireEvent.change(screen.getByPlaceholderText(/model/i), { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: /search/i }));
-    expect(await screen.findByText(/couldn't identify this model/i)).toBeInTheDocument();
-  });
-
-  it("disables search + upload while a request is in flight", async () => {
-    let resolveIdentify: (v: unknown) => void;
-    const slowIdentify = vi.fn().mockReturnValue(new Promise((r) => { resolveIdentify = r; }));
-    render(<DeviceWizard {...base} runDetect={okDetect} runIdentify={slowIdentify} />);
-    fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
-    fireEvent.change(screen.getByPlaceholderText(/model/i), { target: { value: "C9200-24T" } });
-    fireEvent.click(screen.getByRole("button", { name: /search/i }));
-    // now in "detecting" — controls disabled
-    expect(screen.getByRole("button", { name: /search/i })).toBeDisabled();
-    expect(screen.getByTestId("wizard-upload")).toBeDisabled();
-    // resolve so the test doesn't leak a pending promise
-    resolveIdentify!({ ok: true, face: detected });
-    await screen.findByRole("button", { name: /apply/i });
-  });
-
-  it("renders nothing when the feature is disabled", () => {
-    const { container } = render(<DeviceWizard {...base} enabled={false} hasKey={true} runDetect={okDetect} runIdentify={okIdentify} />);
-    expect(container.querySelector('button[aria-label="Device Wizard"]')).toBeNull();
-  });
-
-  it("shows a Settings prompt (not search/upload) when enabled without a key", () => {
-    render(<DeviceWizard {...base} enabled={true} hasKey={false} runDetect={okDetect} runIdentify={okIdentify} />);
-    fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
-    expect(screen.queryByPlaceholderText(/model/i)).toBeNull();
-    const link = screen.getByRole("link", { name: /settings/i });
-    expect(link).toHaveAttribute("href", "/settings");
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["x"], "sw.png", { type: "image/png" })] } });
+    expect(await screen.findByText(/vision model is busy/i)).toBeInTheDocument();
   });
 });
