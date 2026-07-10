@@ -5,6 +5,7 @@ import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement } fr
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
+import { DeviceWizard, type WizardApply } from "./DeviceWizard";
 import { EditorCanvas } from "./EditorCanvas";
 import { frameDims, layoutPortGroup, GRID_PX } from "@/domain/faceplate-geometry";
 import { PortGroupSettings } from "./PortGroupSettings";
@@ -55,6 +56,24 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // Every close path routes through here: warn first if there's unsaved work, else close.
   function attemptClose() { if (isDirty) setConfirmClose(true); else props.onCancel(); }
   const [brands, setBrands] = useState(props.brands);
+
+  // Applies a wizard result to the draft: replaces the current side's face outright,
+  // but only pre-fills metadata that's still empty/default — never overwrites work
+  // the user already entered, and never shrinks a device they already sized.
+  function applyWizard(a: WizardApply) {
+    setActiveFace(a.face);
+    const suggestedName = a.match?.name ?? a.detected.modelText;
+    if (!draft.name.trim() && suggestedName) setField("name", suggestedName);
+    const brandName = a.match?.brand ?? a.detected.brand;
+    if (draft.brandId === null && brandName) {
+      const hit = brands.find((b) => b.name.toLowerCase() === brandName.toLowerCase());
+      if (hit) setField("brandId", hit.id);
+    }
+    if (a.match) {
+      if (draft.widthIn === 17.5 && a.match.widthIn !== 17.5) setField("widthIn", a.match.widthIn);
+      if (draft.rackUnits === 1 && a.match.rackUnits !== 1) setField("rackUnits", a.match.rackUnits);
+    }
+  }
   // Selection is a set of groups; ports are a set within a SINGLE selected group.
   // Port-multi and group-multi are mutually exclusive.
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
@@ -231,7 +250,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
     >
       <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Rack Device Editor</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold">Rack Device Editor</h2>
+            {!ro && <DeviceWizard widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />}
+          </div>
           <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
         </div>
 

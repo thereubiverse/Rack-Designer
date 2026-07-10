@@ -5,6 +5,44 @@ import { RackDeviceEditor } from "./RackDeviceEditor";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import type { Face } from "@/domain/faceplate";
 
+// Mock the wizard so these tests drive onApply directly — DeviceWizard has its own
+// test file (DeviceWizard.test.tsx). Two buttons cover the "match found" and
+// "no match" paths without needing per-test mock reconfiguration.
+vi.mock("./DeviceWizard", () => ({
+  DeviceWizard: ({ onApply }: { onApply: (a: unknown) => void }) => (
+    <div>
+      <button
+        onClick={() =>
+          onApply({
+            face: {
+              portGroups: [{
+                id: "wg1", media: "copper", connectorType: "RJ45", idPrefix: "Gi",
+                countingDirection: "ltr", rows: 1, cols: 4, gridX: 0, gridY: 0,
+                colSpacing: 0, rowSpacing: 0, portOverrides: {},
+              }],
+              elements: [],
+            },
+            detected: { groups: [], confidence: "high", modelText: "C9200" },
+            match: { name: "Cisco Catalyst 9200", brand: "Cisco", widthIn: 10, rackUnits: 2, imageUrl: "", source: "duckduckgo" },
+          })
+        }
+      >
+        apply-wizard-match
+      </button>
+      <button
+        onClick={() =>
+          onApply({
+            face: { portGroups: [], elements: [] },
+            detected: { groups: [], confidence: "low", modelText: "Unknown Model" },
+          })
+        }
+      >
+        apply-wizard-no-match
+      </button>
+    </div>
+  ),
+}));
+
 const types: DeviceTypeRow[] = [{ id: "t1", organization_id: "o", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true }];
 const brands: BrandRow[] = [{ id: "b1", organization_id: "o", name: "Cisco", created_at: "" }];
 
@@ -441,6 +479,58 @@ describe("RackDeviceEditor — multi-select (shift+click)", () => {
     fireEvent.keyDown(window, { key: "Delete" });
     expect(screen.queryByTestId("group-box-g1")).toBeNull();
     expect(screen.getByTestId("group-box-g2")).toBeInTheDocument(); // untouched
+  });
+});
+
+describe("RackDeviceEditor + Device Wizard", () => {
+  it("applies the wizard result: replaces the active face, fills empty name/brand, and adopts match dimensions when the draft is still at defaults", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    fireEvent.click(screen.getByText("apply-wizard-match"));
+    // active face replaced with the detected/laid-out layout (4 ports)
+    expect(screen.getAllByTestId("port-cell")).toHaveLength(4);
+    // name was empty → pre-filled from the match
+    expect(screen.getByLabelText(/name/i)).toHaveValue("Cisco Catalyst 9200");
+    // brandId was null and "Cisco" matches an existing brand (case-insensitive)
+    expect(screen.getByTestId("brand-trigger")).toHaveTextContent("Cisco");
+    // width/rackUnits were still at defaults (17.5 / 1) → adopted from the match
+    expect(screen.getByLabelText(/width \(in\)/i)).toHaveValue(10);
+    expect(screen.getByTestId("rack-units-trigger")).toHaveTextContent("2 RU");
+  });
+
+  it("does not overwrite a user-entered name, brand, width, or rack units", () => {
+    render(
+      <RackDeviceEditor
+        mode="edit"
+        types={types}
+        brands={brands}
+        initial={{ name: "My Switch", brandId: "b1", widthIn: 12, rackUnits: 3 }}
+        onSave={noop}
+        onCancel={noop}
+      />,
+    );
+    fireEvent.click(screen.getByText("apply-wizard-match"));
+    expect(screen.getByLabelText(/name/i)).toHaveValue("My Switch");
+    expect(screen.getByTestId("brand-trigger")).toHaveTextContent("Cisco"); // unchanged (was already b1)
+    expect(screen.getByLabelText(/width \(in\)/i)).toHaveValue(12);
+    expect(screen.getByTestId("rack-units-trigger")).toHaveTextContent("3 RU");
+  });
+
+  it("falls back to the detected modelText for the name when there is no match", () => {
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    fireEvent.click(screen.getByText("apply-wizard-no-match"));
+    expect(screen.getByLabelText(/name/i)).toHaveValue("Unknown Model");
+    // no match → width/rackUnits stay at defaults
+    expect(screen.getByLabelText(/width \(in\)/i)).toHaveValue(17.5);
+    expect(screen.getByTestId("rack-units-trigger")).toHaveTextContent("1 RU");
+  });
+
+  it("hides the wizard in read-only mode", () => {
+    render(
+      <RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+        initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />,
+    );
+    expect(screen.queryByText("apply-wizard-match")).not.toBeInTheDocument();
+    expect(screen.queryByText("apply-wizard-no-match")).not.toBeInTheDocument();
   });
 });
 
