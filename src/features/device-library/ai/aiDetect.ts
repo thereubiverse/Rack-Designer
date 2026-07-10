@@ -9,6 +9,7 @@ export interface DetectedGroup {
   order: CountingDirection;
   labelPrefix?: string;
   bbox: BBox;
+  rowOrientations?: ("up" | "down")[]; // one per row: which way that row's connector tabs face
 }
 export interface DetectedLabel { text: string; bbox: BBox }
 export interface DetectedFace {
@@ -66,14 +67,19 @@ function coerceGroup(raw: unknown): DetectedGroup | null {
   const allowed = CONNECTORS[media];
   const connector = typeof r.connector === "string" && allowed.includes(r.connector) ? r.connector : allowed[0];
   const order = ORDERS.includes(r.order as CountingDirection) ? (r.order as CountingDirection) : "ltr";
+  const rows = clamp(Math.round(num(r.rows, 1)), 1, 4);
+  const rowOrientations = Array.isArray(r.rowOrientations)
+    ? r.rowOrientations.slice(0, rows).map((v) => (v === "up" ? "up" : "down") as "up" | "down")
+    : undefined;
   return {
     media,
     connector,
     count: clamp(Math.round(num(r.count, 1)), 1, 96),
-    rows: clamp(Math.round(num(r.rows, 1)), 1, 4),
+    rows,
     order,
     labelPrefix: str(r.labelPrefix),
     bbox: coerceBBox(r.bbox),
+    rowOrientations,
   };
 }
 

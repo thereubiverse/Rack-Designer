@@ -68,4 +68,17 @@ describe("validateDetectedFace", () => {
     expect(f.groups).toHaveLength(1);
     expect(f.groups[0].media).toBe("sfp");
   });
+
+  it("keeps valid rowOrientations and clamps to the row count", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 24, rows: 2, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, rowOrientations: ["down", "up", "up"] }], confidence: "high" });
+    expect(f.groups[0].rowOrientations).toEqual(["down", "up"]); // clamped to rows=2
+  });
+  it("coerces unknown orientation values to 'down'", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 2, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, rowOrientations: ["sideways", "up"] }], confidence: "low" });
+    expect(f.groups[0].rowOrientations).toEqual(["down", "up"]);
+  });
+  it("omits rowOrientations when not an array", () => {
+    const f = validateDetectedFace({ groups: [{ media: "copper", connector: "RJ45", count: 8, rows: 1, order: "ltr", bbox: { x: 0, y: 0, w: 1, h: 1 }, rowOrientations: "up" }], confidence: "low" });
+    expect(f.groups[0].rowOrientations).toBeUndefined();
+  });
 });
