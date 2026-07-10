@@ -33,6 +33,11 @@ has the final say.
   description; our own deterministic code does the *geometry*. This is the most
   testable, the safest against bad model output, and keeps AI-built devices
   identical in structure to hand-built ones.
+- **Free-leaning stack.** Vision = **Gemini Flash free tier** (behind a
+  pluggable `visionBackend`, so a fine-tuned in-code ONNX model can replace it
+  later — no accurate off-the-shelf in-code port detector exists today). Search =
+  self-hosted **SearXNG** running as a background Docker Compose service (keyless).
+  Both free; the only host requirement (Docker) is already met by local Supabase.
 
 ## Architecture & data flow
 
@@ -43,7 +48,7 @@ has the final say.
   Device Wizard panel (inline, slides out from behind the icon)
         │  model name  +/or  uploaded image
         ▼
-  identifyDevice()  ── "use server"  (name-fetch / identify; best-effort, skippable)
+  identifyDevice()  ── "use server"  (queries local SearXNG; best-effort, skippable)
         │  DeviceMatch { name, brand, widthIn, rackUnits, imageUrl, source }
         ▼
   detectPorts()     ── "use server"  (the ONLY unit that calls the vision model)
@@ -61,8 +66,9 @@ has the final say.
 | Unit | Kind | Responsibility |
 | --- | --- | --- |
 | `DeviceWizard.tsx` | client | Icon entry point + slide-out panel; drives the states below. Acts on the current face. |
-| `identifyDevice` | server action | Given a model name, best-effort find a `DeviceMatch` (image + metadata). Isolated so it can fail/skip independently. |
-| `detectPorts` | server action | Given an image (+ optional model hint), call the vision model with structured output, validate, return a `DetectedFace`. Only place that talks to the model. |
+| `identifyDevice` | server action | Given a model name, query the local **SearXNG** JSON API (keyless) for a `DeviceMatch` (image URL + parsed metadata). Isolated so it can fail/skip independently. |
+| `detectPorts` | server action | Given an image (+ optional model hint), call the vision backend (**Gemini Flash**) with structured output, validate, return a `DetectedFace`. Only place that talks to the model. |
+| `visionBackend` | server iface | Thin pluggable interface behind `detectPorts` (`detect(image, hint) → DetectedFace`). First impl = Gemini; a local ONNX/fine-tuned impl can drop in later with no caller changes. |
 | `layoutDetectedFace.ts` | pure fn | `DetectedFace + dims → Face`. All geometry, deterministic, unit-tested (mirrors `rackOps`). |
 | `aiDetect` types + validation | shared | The `DetectedGroup` / `DetectedFace` / `DeviceMatch` contract and validators. |
 
@@ -108,8 +114,10 @@ interface DeviceMatch {           // from the name-search/identify step
 }
 ```
 
-Enforced at the model boundary via **tool-use / structured output**, so the
-reply must match this shape — we do not parse free text.
+Enforced at the model boundary via **structured output** (Gemini
+`responseSchema` JSON mode), so the reply must match this shape — we do not
+parse free text. We still validate the parsed result (below), since a free-tier
+model can return schema-valid-but-wrong values.
 
 ### Validation (in `detectPorts`, before anything reaches the client)
 
@@ -192,19 +200,30 @@ the vision read disagree, `confidence`/`notes` flag it.
 
 ## Server actions & dependencies
 
-- **New dependency:** `@anthropic-ai/sdk` and a server-only `ANTHROPIC_API_KEY`
-  env var. This one key powers **both** actions. Existing `"use server"` action
-  pattern (`actions.ts`) is reused. Billed per use via the Anthropic Console,
-  separate from any Claude Code plan; key stays server-side, never in the
-  browser.
-- `detectPorts` uses a current Claude **vision** model with tool-use/structured
-  output; validates before returning.
-- `identifyDevice` uses Claude's built-in **web-search tool** (same SDK/key) to
-  look up the model → return `DeviceMatch` metadata (name/brand/width/RU) plus a
-  candidate product-image URL, which the action fetches server-side and hands to
-  `detectPorts`. It is a separate action so the two model calls stay isolated,
-  independently testable, and individually skippable — name-fetch can fail or
-  return a poor candidate without blocking the upload path.
+**Vision — `detectPorts` (Gemini free tier, pluggable):**
+- **New dependency:** `@google/generative-ai` and a server-only `GEMINI_API_KEY`
+  (free Google AI Studio key). Uses a Gemini Flash **vision** model with JSON
+  structured output (`responseSchema`) so the reply matches the `DetectedFace`
+  contract. Key stays server-side, never in the browser. Free tier is rate-
+  limited but ample for an internal tool.
+- Sits behind a thin `visionBackend` interface, so a future **in-code** model
+  (fine-tuned Florence-2 / YOLO via `onnxruntime-node`, no external service) can
+  replace Gemini without touching `detectPorts`' callers, validation, or the UI.
+  No off-the-shelf in-code model classifies network ports accurately today, so
+  Gemini is the first backend.
+
+**Search — `identifyDevice` (SearXNG, free & keyless):**
+- Runs **SearXNG** as a background service in the existing **Docker Compose**
+  stack (alongside local Supabase); no API key, no per-engine limits. The action
+  calls its JSON API (`/search?format=json`) with the model name, takes the top
+  product-image URL + result title/snippet, parses `DeviceMatch` metadata
+  (name/brand, best-effort width/RU), fetches the image server-side, and hands
+  it to `detectPorts`.
+- Separate action so search and vision stay isolated, independently testable,
+  and individually skippable — name-fetch can fail or return a poor candidate
+  without blocking the upload path. (If SearXNG is unreachable, the wizard
+  degrades to upload-only.)
+
 - **Image storage** in Supabase (to keep a device's source photo) is optional
   and off for the first slice.
 
@@ -225,8 +244,9 @@ the vision read disagree, `confidence`/`notes` flag it.
   `yOffset` on multi-RU, de-overlap, identity seeding, labels → elements.
 - Validation — unit tests for enum coercion/dropping, clamping, over-width
   flagging, malformed-input → typed error.
-- Server actions — tested against a mocked model client (fixture `DetectedFace`
-  / `DeviceMatch` responses); no live API calls in tests.
+- Server actions — tested against a mocked `visionBackend` and a mocked SearXNG
+  HTTP response (fixture `DetectedFace` / `DeviceMatch`); no live API calls or
+  network in tests. Includes the SearXNG-unreachable → upload-only degrade path.
 - `DeviceWizard` — component tests for the slide-out reveal, state transitions
   (input → candidate → detecting → review → apply/discard), Confirm/Override,
   and that Apply mutates only the draft (never triggers a save).
@@ -253,7 +273,11 @@ mitigated by the confirm step and the always-available upload fallback.
 - A curated device database / offline model catalog.
 - Auto-saving or bulk import of many devices at once.
 
-## Prerequisite / open item
+## Prerequisites
 
-- Confirm approval to add `@anthropic-ai/sdk` + `ANTHROPIC_API_KEY` to the
-  project (flagged; assumed yes for the plan).
+- Add `@google/generative-ai` + a free server-only `GEMINI_API_KEY` (Google AI
+  Studio) for the vision backend.
+- Add a **SearXNG** service to the Docker Compose stack (with JSON output
+  enabled) for keyless search; the app reaches it over the Compose network.
+- Both are free; no per-use billing. The only host requirement (Docker) is
+  already met by the local Supabase setup.
