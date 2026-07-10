@@ -33,11 +33,16 @@ has the final say.
   description; our own deterministic code does the *geometry*. This is the most
   testable, the safest against bad model output, and keeps AI-built devices
   identical in structure to hand-built ones.
-- **Free-leaning stack.** Vision = **Gemini Flash free tier** (behind a
-  pluggable `visionBackend`, so a fine-tuned in-code ONNX model can replace it
-  later — no accurate off-the-shelf in-code port detector exists today). Search =
-  self-hosted **SearXNG** running as a background Docker Compose service (keyless).
-  Both free; the only host requirement (Docker) is already met by local Supabase.
+- **Free, container-free, deploy-anywhere stack.** Vision = **Gemini Flash free
+  tier** (a hosted API call from the server; behind a pluggable `visionBackend`
+  so a fine-tuned in-code ONNX model can replace it later — no accurate
+  off-the-shelf in-code port detector exists today). Search = the **DuckDuckGo**
+  npm library (`duck-duck-scrape`) running *inside* the server action — keyless,
+  no container. Nothing in the pipeline needs Docker, so the app stays fully
+  browser-accessible and deployable to any host, including serverless. (Docker
+  today is only for *local* Supabase dev; production uses managed Supabase.)
+  SearXNG remains an optional self-hosted upgrade for cleaner results if a
+  container-capable host is later available.
 
 ## Architecture & data flow
 
@@ -48,7 +53,7 @@ has the final say.
   Device Wizard panel (inline, slides out from behind the icon)
         │  model name  +/or  uploaded image
         ▼
-  identifyDevice()  ── "use server"  (queries local SearXNG; best-effort, skippable)
+  identifyDevice()  ── "use server"  (DuckDuckGo search in-process; best-effort, skippable)
         │  DeviceMatch { name, brand, widthIn, rackUnits, imageUrl, source }
         ▼
   detectPorts()     ── "use server"  (the ONLY unit that calls the vision model)
@@ -66,7 +71,7 @@ has the final say.
 | Unit | Kind | Responsibility |
 | --- | --- | --- |
 | `DeviceWizard.tsx` | client | Icon entry point + slide-out panel; drives the states below. Acts on the current face. |
-| `identifyDevice` | server action | Given a model name, query the local **SearXNG** JSON API (keyless) for a `DeviceMatch` (image URL + parsed metadata). Isolated so it can fail/skip independently. |
+| `identifyDevice` | server action | Given a model name, use the **DuckDuckGo** npm library (`duck-duck-scrape`, keyless, in-process) to find a `DeviceMatch` (image URL + parsed metadata). Isolated so it can fail/skip independently. |
 | `detectPorts` | server action | Given an image (+ optional model hint), call the vision backend (**Gemini Flash**) with structured output, validate, return a `DetectedFace`. Only place that talks to the model. |
 | `visionBackend` | server iface | Thin pluggable interface behind `detectPorts` (`detect(image, hint) → DetectedFace`). First impl = Gemini; a local ONNX/fine-tuned impl can drop in later with no caller changes. |
 | `layoutDetectedFace.ts` | pure fn | `DetectedFace + dims → Face`. All geometry, deterministic, unit-tested (mirrors `rackOps`). |
@@ -212,17 +217,20 @@ the vision read disagree, `confidence`/`notes` flag it.
   No off-the-shelf in-code model classifies network ports accurately today, so
   Gemini is the first backend.
 
-**Search — `identifyDevice` (SearXNG, free & keyless):**
-- Runs **SearXNG** as a background service in the existing **Docker Compose**
-  stack (alongside local Supabase); no API key, no per-engine limits. The action
-  calls its JSON API (`/search?format=json`) with the model name, takes the top
-  product-image URL + result title/snippet, parses `DeviceMatch` metadata
-  (name/brand, best-effort width/RU), fetches the image server-side, and hands
-  it to `detectPorts`.
+**Search — `identifyDevice` (DuckDuckGo, free, keyless, no container):**
+- **New dependency:** `duck-duck-scrape` (npm) — runs *inside* the server action,
+  no API key, no external service, no Docker. The action does web + image search
+  on the model name, takes the top product-image URL + result title/snippet,
+  parses `DeviceMatch` metadata (name/brand, best-effort width/RU), fetches the
+  image server-side, and hands it to `detectPorts`.
 - Separate action so search and vision stay isolated, independently testable,
   and individually skippable — name-fetch can fail or return a poor candidate
-  without blocking the upload path. (If SearXNG is unreachable, the wizard
-  degrades to upload-only.)
+  without blocking the upload path. (If search errors or returns nothing, the
+  wizard degrades to upload-only.)
+- Because it's a plain library call, the whole app stays container-free and
+  deployable to any host (including serverless). **SearXNG** (self-hosted, JSON
+  API) is documented as an optional swap-in for cleaner results *if* a
+  container-capable host is later available — same `identifyDevice` interface.
 
 - **Image storage** in Supabase (to keep a device's source photo) is optional
   and off for the first slice.
@@ -244,9 +252,10 @@ the vision read disagree, `confidence`/`notes` flag it.
   `yOffset` on multi-RU, de-overlap, identity seeding, labels → elements.
 - Validation — unit tests for enum coercion/dropping, clamping, over-width
   flagging, malformed-input → typed error.
-- Server actions — tested against a mocked `visionBackend` and a mocked SearXNG
-  HTTP response (fixture `DetectedFace` / `DeviceMatch`); no live API calls or
-  network in tests. Includes the SearXNG-unreachable → upload-only degrade path.
+- Server actions — tested against a mocked `visionBackend` and a mocked
+  DuckDuckGo library response (fixture `DetectedFace` / `DeviceMatch`); no live
+  API calls or network in tests. Includes the search-fails → upload-only degrade
+  path.
 - `DeviceWizard` — component tests for the slide-out reveal, state transitions
   (input → candidate → detecting → review → apply/discard), Confirm/Override,
   and that Apply mutates only the draft (never triggers a save).
@@ -277,7 +286,7 @@ mitigated by the confirm step and the always-available upload fallback.
 
 - Add `@google/generative-ai` + a free server-only `GEMINI_API_KEY` (Google AI
   Studio) for the vision backend.
-- Add a **SearXNG** service to the Docker Compose stack (with JSON output
-  enabled) for keyless search; the app reaches it over the Compose network.
-- Both are free; no per-use billing. The only host requirement (Docker) is
-  already met by the local Supabase setup.
+- Add `duck-duck-scrape` (npm) for keyless search — a plain library, no service.
+- Both are free (no per-use billing) and **require no Docker or extra
+  infrastructure**. The app stays fully browser-accessible and deployable to any
+  host, including serverless.
