@@ -50,4 +50,19 @@ describe("DeviceWizard", () => {
     fireEvent.click(await screen.findByRole("button", { name: /confirm/i }));
     expect(await screen.findByText(/couldn't read a device/i)).toBeInTheDocument();
   });
+
+  it("disables search + upload while a request is in flight", async () => {
+    let resolveIdentify: (v: unknown) => void;
+    const slowIdentify = vi.fn().mockReturnValue(new Promise((r) => { resolveIdentify = r; }));
+    render(<DeviceWizard {...base} runDetect={okDetect} runIdentify={slowIdentify} />);
+    fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
+    fireEvent.change(screen.getByPlaceholderText(/model/i), { target: { value: "C9200-24T" } });
+    fireEvent.click(screen.getByRole("button", { name: /search/i }));
+    // now in "detecting" — controls disabled
+    expect(screen.getByRole("button", { name: /search/i })).toBeDisabled();
+    expect(screen.getByTestId("wizard-upload")).toBeDisabled();
+    // resolve so the test doesn't leak a pending promise
+    resolveIdentify!({ ok: true, match: { name: "X", brand: "Cisco", widthIn: 17.5, rackUnits: 1, imageUrl: "", source: "duckduckgo" }, imageBase64: "AAAA", mimeType: "image/png" });
+    await screen.findByRole("button", { name: /confirm/i });
+  });
 });

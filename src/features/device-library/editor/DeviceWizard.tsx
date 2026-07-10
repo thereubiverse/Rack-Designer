@@ -30,6 +30,7 @@ export function DeviceWizard({ widthIn, rackUnits, onApply, runDetect = detectPo
   const reset = () => { setPhase("input"); setError(""); setMatch(null); setImage(null); setDetected(null); };
 
   async function search() {
+    if (phase === "detecting") return;
     if (!modelName.trim()) return;
     setPhase("detecting"); setError("");
     const r = await runIdentify(modelName);
@@ -39,6 +40,7 @@ export function DeviceWizard({ widthIn, rackUnits, onApply, runDetect = detectPo
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
     const base64 = await fileToBase64(file);
     setImage({ base64, mimeType: file.type || "image/png" });
@@ -90,11 +92,12 @@ export function DeviceWizard({ widthIn, rackUnits, onApply, runDetect = detectPo
                 value={modelName}
                 onChange={(e) => setModelName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") void search(); }}
+                disabled={phase === "detecting"}
                 className="w-48 rounded border border-neutral-300 px-2 py-1 text-sm"
               />
-              <button type="button" onClick={() => void search()} className="rounded bg-blue-600 px-2 py-1 text-sm text-white">Search</button>
+              <button type="button" onClick={() => void search()} disabled={phase === "detecting"} className="rounded bg-blue-600 px-2 py-1 text-sm text-white">Search</button>
               <span className="text-xs text-neutral-400">or</span>
-              <button type="button" data-testid="wizard-upload" onClick={() => fileRef.current?.click()} className="rounded border border-neutral-300 px-2 py-1 text-sm">Upload</button>
+              <button type="button" data-testid="wizard-upload" onClick={() => fileRef.current?.click()} disabled={phase === "detecting"} className="rounded border border-neutral-300 px-2 py-1 text-sm">Upload</button>
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void onFile(e)} />
               {phase === "detecting" && <span className="text-xs text-neutral-500">Working…</span>}
             </>
