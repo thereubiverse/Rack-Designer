@@ -8,6 +8,8 @@ export interface WizardApply { detected: DetectedFace; match?: DeviceMatch }
 export interface DeviceWizardProps {
   widthIn: number;
   rackUnits: number;
+  enabled: boolean;
+  hasKey: boolean;
   onApply: (a: WizardApply) => void;
   runDetect?: typeof detectPortsAction;
   runIdentify?: typeof identifyDeviceAction;
@@ -15,7 +17,16 @@ export interface DeviceWizardProps {
 
 type Phase = "input" | "candidate" | "detecting" | "review" | "error";
 
-export function DeviceWizard({ onApply, runDetect = detectPortsAction, runIdentify = identifyDeviceAction }: DeviceWizardProps) {
+function SettingsPrompt() {
+  return (
+    <div className="flex items-center gap-2 whitespace-nowrap text-sm text-neutral-600">
+      <span>Add your Gemini API key in</span>
+      <a href="/settings" className="font-medium text-blue-600 hover:underline">Settings →</a>
+    </div>
+  );
+}
+
+export function DeviceWizard({ enabled, hasKey, onApply, runDetect = detectPortsAction, runIdentify = identifyDeviceAction }: DeviceWizardProps) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("input");
   const [modelName, setModelName] = useState("");
@@ -63,6 +74,8 @@ export function DeviceWizard({ onApply, runDetect = detectPortsAction, runIdenti
     ? detected.groups.map((g) => `${g.count}× ${g.connector}`).join(", ") || "no ports detected"
     : "";
 
+  if (!enabled) return null;
+
   return (
     <div className="flex items-center">
       <button
@@ -82,7 +95,9 @@ export function DeviceWizard({ onApply, runDetect = detectPortsAction, runIdenti
         style={{ maxWidth: open ? 520 : 0, opacity: open ? 1 : 0 }}
       >
         <div className="ml-2 flex items-center gap-2 whitespace-nowrap">
-          {(phase === "input" || phase === "detecting") && (
+          {phase === "input" && !hasKey && <SettingsPrompt />}
+
+          {(phase === "input" || phase === "detecting") && hasKey && (
             <>
               <input
                 placeholder="Search a model…"
@@ -118,10 +133,12 @@ export function DeviceWizard({ onApply, runDetect = detectPortsAction, runIdenti
           )}
 
           {phase === "error" && (
-            <div className="flex items-center gap-2 text-sm text-red-600">
-              <span>{error}</span>
-              <button type="button" onClick={reset} className="rounded border border-neutral-300 px-2 py-1 text-neutral-700">Try again</button>
-            </div>
+            error === "no-key" ? <SettingsPrompt /> : (
+              <div className="flex items-center gap-2 text-sm text-red-600">
+                <span>{error}</span>
+                <button type="button" onClick={reset} className="rounded border border-neutral-300 px-2 py-1 text-neutral-700">Try again</button>
+              </div>
+            )
           )}
         </div>
       </div>

@@ -40,6 +40,8 @@ export interface RackDeviceEditorProps {
   initial?: Partial<DeviceDraft>;
   types: DeviceTypeRow[];
   brands: BrandRow[];
+  wizardEnabled: boolean;
+  wizardHasKey: boolean;
   saving?: boolean;
   error?: string | null;
   readOnly?: boolean;
@@ -257,7 +259,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold">Rack Device Editor</h2>
-            {!ro && <DeviceWizard widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />}
+            {!ro && <DeviceWizard enabled={props.wizardEnabled} hasKey={props.wizardHasKey} widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />}
           </div>
           <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
         </div>

@@ -54,7 +54,7 @@ function noop() {}
 
 describe("RackDeviceEditor", () => {
   it("renders header fields and a faceplate preview", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     expect(screen.getByLabelText(/name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/device type/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/width \(in\)/i)).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe("RackDeviceEditor", () => {
   it("Save is disabled until the draft is valid, then calls onSave", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={onSave} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={onSave} onCancel={noop} />);
     const save = screen.getByTestId("editor-save");
     expect(save).toBeDisabled();
     await user.type(screen.getByLabelText(/name/i), "48-port");
@@ -78,7 +78,7 @@ describe("RackDeviceEditor", () => {
 
   it("Front/Back toggle switches the previewed side", async () => {
     const user = userEvent.setup();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     expect(screen.getByText("FRONT")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /back/i }));
     expect(screen.getByText("BACK")).toBeInTheDocument();
@@ -90,7 +90,7 @@ describe("RackDeviceEditor", () => {
       <RackDeviceEditor
         mode="create"
         types={types}
-        brands={brands}
+        brands={brands} wizardEnabled wizardHasKey
         initial={{ widthIn: 10.6 }}
         onSave={noop}
         onCancel={noop}
@@ -106,7 +106,7 @@ describe("RackDeviceEditor", () => {
       <RackDeviceEditor
         mode="edit"
         types={types}
-        brands={brands}
+        brands={brands} wizardEnabled wizardHasKey
         initial={{ name: "Core-SW", deviceTypeId: "t1", brandId: "b1", widthIn: 10.6, frontFace: oneGroupFace }}
         onSave={noop}
         onCancel={noop}
@@ -124,7 +124,7 @@ describe("RackDeviceEditor", () => {
       id: "b2", organization_id: "o", name, created_at: "",
     }));
     render(
-      <RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} onCreateBrand={onCreateBrand} />,
+      <RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} onCreateBrand={onCreateBrand} />,
     );
     await user.click(screen.getByTestId("brand-trigger")); // open dropdown
     await user.click(screen.getByTestId("brand-add"));      // reveal the inline input
@@ -137,7 +137,7 @@ describe("RackDeviceEditor", () => {
     const user = userEvent.setup();
     const onDeleteBrand = vi.fn(async () => true);
     render(
-      <RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} onDeleteBrand={onDeleteBrand} />,
+      <RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} onDeleteBrand={onDeleteBrand} />,
     );
     await user.click(screen.getByTestId("brand-trigger")); // open dropdown
     expect(screen.getByRole("option", { name: "Cisco" })).toBeInTheDocument();
@@ -154,7 +154,7 @@ describe("RackDeviceEditor", () => {
       { id: "bg", organization_id: "o", name: "Generic", created_at: "" },
     ];
     render(
-      <RackDeviceEditor mode="create" types={types} brands={withGeneric} onSave={noop} onCancel={noop} onDeleteBrand={vi.fn(async () => true)} />,
+      <RackDeviceEditor mode="create" types={types} brands={withGeneric} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} onDeleteBrand={vi.fn(async () => true)} />,
     );
     await user.click(screen.getByTestId("brand-trigger"));
     expect(screen.getByRole("option", { name: "Generic" })).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe("RackDeviceEditor", () => {
   it("Cancel calls onCancel", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.click(screen.getByTestId("editor-cancel"));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -173,7 +173,7 @@ describe("RackDeviceEditor", () => {
   it("clicking the backdrop does NOT close the editor (guards against stray drag-releases)", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.click(screen.getByTestId("rack-device-editor")); // the backdrop root itself
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -181,7 +181,7 @@ describe("RackDeviceEditor", () => {
   it("closing a device with unsaved work asks to confirm instead of closing", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.type(screen.getByLabelText(/name/i), "Switch"); // make it dirty
     await user.click(screen.getByTestId("editor-cancel"));
     expect(onCancel).not.toHaveBeenCalled();               // held back by the warning
@@ -193,7 +193,7 @@ describe("RackDeviceEditor", () => {
   it("'Keep editing' dismisses the warning without closing", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.type(screen.getByLabelText(/name/i), "Switch"); // make it dirty
     await user.click(screen.getByTestId("editor-cancel"));
     await user.click(screen.getByTestId("discard-cancel"));
@@ -204,7 +204,7 @@ describe("RackDeviceEditor", () => {
   it("does not close when clicking inside the dialog panel", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.click(screen.getByLabelText(/name/i));
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -212,7 +212,7 @@ describe("RackDeviceEditor", () => {
   it("pressing Escape calls onCancel", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={onCancel} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -220,14 +220,14 @@ describe("RackDeviceEditor", () => {
 
 describe("RackDeviceEditor — port-group building", () => {
   it("dropping a palette media creates a group and selects it (settings appear)", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 60, clientY: 12 });
     expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
     expect(screen.getAllByTestId("port-cell").length).toBe(1);
   });
 
   it("chevron adds a column (preview gains a port cell)", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
     expect(screen.getAllByTestId("port-cell").length).toBe(1);
     fireEvent.pointerDown(screen.getByTestId("chevron-col"), { clientX: 10, clientY: 10 });
@@ -237,7 +237,7 @@ describe("RackDeviceEditor — port-group building", () => {
 
   it("deleting the selected group removes it and hides settings", () => {
     const user = userEvent.setup();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
     expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
     return user.click(screen.getByTestId("pg-delete")).then(() => {
@@ -248,7 +248,7 @@ describe("RackDeviceEditor — port-group building", () => {
 
   it("switching Front/Back deselects the group", async () => {
     const user = userEvent.setup();
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey initial={{ name: "S", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     fireEvent.drop(screen.getByTestId("editor-overlay"), { dataTransfer: { getData: () => "copper" }, clientX: 40, clientY: 12 });
     expect(screen.getByTestId("pg-settings")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /back/i }));
@@ -266,7 +266,7 @@ describe("RackDeviceEditor — per-port editing", () => {
       }],
       elements: [],
     };
-    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: face }} onSave={noop} onCancel={noop} />);
   }
 
@@ -337,7 +337,7 @@ describe("RackDeviceEditor — 3d refinements", () => {
       }],
       elements: [],
     };
-    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: face }} onSave={noop} onCancel={noop} />);
   }
 
@@ -361,7 +361,7 @@ describe("RackDeviceEditor — 3d refinements", () => {
 
 describe("RackDeviceEditor — palette sections (3e)", () => {
   it("renders Port Types and Elements sections; Icon is draggable, Text still inert", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     expect(screen.getByText("Port Types")).toBeInTheDocument();
     expect(screen.getByText("Elements")).toBeInTheDocument();
     expect(screen.getByTestId("element-text")).not.toHaveAttribute("draggable", "true");
@@ -374,7 +374,7 @@ describe("RackDeviceEditor — palette sections (3e)", () => {
 describe("RackDeviceEditor — palette drag ghost", () => {
   const dt = { setData() {}, setDragImage() {}, effectAllowed: "" };
   it("shows a floating chip clone while dragging and removes it on drop/end", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     const chip = screen.getByTitle("Copper");
     expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
     fireEvent.dragStart(chip, { clientX: 100, clientY: 100, dataTransfer: dt });
@@ -386,7 +386,7 @@ describe("RackDeviceEditor — palette drag ghost", () => {
   });
 
   it("the Icon chip drags with a follow-cursor ghost like the media chips (dims source, clears on end)", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     const chip = screen.getByTestId("element-icon");
     expect(screen.queryByTestId("palette-drag-ghost")).toBeNull();
     fireEvent.dragStart(chip, { clientX: 100, clientY: 100, dataTransfer: dt });
@@ -400,7 +400,7 @@ describe("RackDeviceEditor — palette drag ghost", () => {
   it("the Icon chip drag uses a 'move' effect so real drops aren't rejected by the overlay", () => {
     // The overlay's onDragOver forces dropEffect='move'; the chip's effectAllowed must include it
     // or the browser rejects the drop and the picker never opens.
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     const d = { setData() {}, setDragImage() {}, effectAllowed: "" };
     fireEvent.dragStart(screen.getByTestId("element-icon"), { dataTransfer: d });
     expect(d.effectAllowed).toBe("move");
@@ -417,7 +417,7 @@ describe("RackDeviceEditor — multi-select (shift+click)", () => {
     elements: [],
   };
   function render2() {
-    render(<RackDeviceEditor mode="edit" types={types} brands={brands}
+    render(<RackDeviceEditor mode="edit" types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "S", deviceTypeId: "t1", widthIn: 19, frontFace: twoGroupFace }} onSave={noop} onCancel={noop} />);
   }
   const rotated = () => screen.getAllByTestId("port-cell").filter((c) => (c.querySelector("g[transform]")?.getAttribute("transform") ?? "").includes("rotate(180"));
@@ -479,7 +479,7 @@ describe("RackDeviceEditor — multi-select (shift+click)", () => {
 
 describe("RackDeviceEditor + Device Wizard", () => {
   it("applies the wizard result: replaces the active face, fills empty name/brand, and adopts match dimensions when the draft is still at defaults", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     fireEvent.click(screen.getByText("apply-wizard-match"));
     // active face replaced with the detected/laid-out layout (4 ports)
     expect(screen.getAllByTestId("port-cell")).toHaveLength(4);
@@ -497,7 +497,7 @@ describe("RackDeviceEditor + Device Wizard", () => {
       <RackDeviceEditor
         mode="edit"
         types={types}
-        brands={brands}
+        brands={brands} wizardEnabled wizardHasKey
         initial={{ name: "My Switch", brandId: "b1", widthIn: 12, rackUnits: 3 }}
         onSave={noop}
         onCancel={noop}
@@ -511,7 +511,7 @@ describe("RackDeviceEditor + Device Wizard", () => {
   });
 
   it("falls back to the detected modelText for the name when there is no match", () => {
-    render(<RackDeviceEditor mode="create" types={types} brands={brands} onSave={noop} onCancel={noop} />);
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     fireEvent.click(screen.getByText("apply-wizard-no-match"));
     expect(screen.getByLabelText(/name/i)).toHaveValue("Unknown Model");
     // no match → width/rackUnits stay at defaults
@@ -521,7 +521,7 @@ describe("RackDeviceEditor + Device Wizard", () => {
 
   it("hides the wizard in read-only mode", () => {
     render(
-      <RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+      <RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
         initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />,
     );
     expect(screen.queryByText("apply-wizard-match")).not.toBeInTheDocument();
@@ -533,7 +533,7 @@ describe("RackDeviceEditor read-only mode", () => {
   it("shows the banner, disables fields, and offers only Close", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
     expect(screen.getByText(/read-only mode/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/name/i)).toBeDisabled();
@@ -546,7 +546,7 @@ describe("RackDeviceEditor read-only mode", () => {
   it("Escape closes immediately in read-only mode (no discard warning)", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -554,7 +554,7 @@ describe("RackDeviceEditor read-only mode", () => {
   });
 
   it("marks the palette and canvas inert so keyboard/programmatic activation is blocked", () => {
-    const { container } = render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands}
+    const { container } = render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
     expect(container.querySelectorAll("[inert]").length).toBeGreaterThanOrEqual(2);
   });

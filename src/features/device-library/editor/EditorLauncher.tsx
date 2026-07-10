@@ -19,8 +19,8 @@ type EditingState =
   | { mode: "view"; id: string; initial: Partial<DeviceDraft> };
 
 export function EditorLauncher({
-  rows, types, brands,
-}: { rows: DeviceTemplateListRow[]; types: DeviceTypeRow[]; brands: BrandRow[] }) {
+  rows, types, brands, wizard,
+}: { rows: DeviceTemplateListRow[]; types: DeviceTypeRow[]; brands: BrandRow[]; wizard: { enabled: boolean; hasKey: boolean } }) {
   const router = useRouter();
   const [state, setState] = useState<EditingState>({ mode: "closed" });
   const [saving, setSaving] = useState(false);
@@ -117,6 +117,8 @@ export function EditorLauncher({
           initial={state.mode === "edit" || state.mode === "view" ? state.initial : undefined}
           types={types}
           brands={brands}
+          wizardEnabled={wizard.enabled}
+          wizardHasKey={wizard.hasKey}
           saving={saving}
           error={error}
           onSave={save}

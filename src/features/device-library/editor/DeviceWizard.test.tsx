@@ -6,7 +6,7 @@ const detected = { groups: [{ media: "copper" as const, connector: "RJ45", count
 const okDetect = vi.fn().mockResolvedValue({ ok: true, face: detected });
 const okIdentify = vi.fn().mockResolvedValue({ ok: true, match: { name: "Cisco Catalyst 9200", brand: "Cisco", widthIn: 17.5, rackUnits: 1, imageUrl: "http://img/x.png", source: "duckduckgo" }, imageBase64: "AAAA", mimeType: "image/png" });
 
-const base = { widthIn: 17.5, rackUnits: 1, onApply: vi.fn() };
+const base = { widthIn: 17.5, rackUnits: 1, onApply: vi.fn(), enabled: true, hasKey: true };
 
 describe("DeviceWizard", () => {
   it("has an icon button with a tooltip and no text label", () => {
@@ -64,5 +64,18 @@ describe("DeviceWizard", () => {
     // resolve so the test doesn't leak a pending promise
     resolveIdentify!({ ok: true, match: { name: "X", brand: "Cisco", widthIn: 17.5, rackUnits: 1, imageUrl: "", source: "duckduckgo" }, imageBase64: "AAAA", mimeType: "image/png" });
     await screen.findByRole("button", { name: /confirm/i });
+  });
+
+  it("renders nothing when the feature is disabled", () => {
+    const { container } = render(<DeviceWizard {...base} enabled={false} hasKey={true} runDetect={okDetect} runIdentify={okIdentify} />);
+    expect(container.querySelector('button[aria-label="Device Wizard"]')).toBeNull();
+  });
+
+  it("shows a Settings prompt (not search/upload) when enabled without a key", () => {
+    render(<DeviceWizard {...base} enabled={true} hasKey={false} runDetect={okDetect} runIdentify={okIdentify} />);
+    fireEvent.click(screen.getByRole("button", { name: "Device Wizard" }));
+    expect(screen.queryByPlaceholderText(/model/i)).toBeNull();
+    const link = screen.getByRole("link", { name: /settings/i });
+    expect(link).toHaveAttribute("href", "/settings");
   });
 });
