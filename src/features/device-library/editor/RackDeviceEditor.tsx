@@ -610,7 +610,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                     title={`${selectedPortIndices.length} ports selected`}
                     rotated={rotated}
                     labelPos={labelPos}
-                    hideLabel
+                    hideLabel={selectedGroup.rows === 1}
                     onFlip={() => setActiveFace(patchPorts(activeFace, targetRefs(), { rotation: rotated === "on" ? 0 : 180 }))}
                     onLabel={() => setActiveFace(patchPorts(activeFace, targetRefs(), { labelPos: labelPos === "bottom" ? "top" : "bottom" }))}
                   />
@@ -621,7 +621,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 return (
                   <PortSettings
                     embedded
-                    hideLabel
+                    hideLabel={selectedGroup.rows === 1}
                     portLabel={cell ? cell.label : String(singlePortIndex + 1)}
                     name={ov.name ?? ""}
                     rotation={ov.rotation ?? 0}

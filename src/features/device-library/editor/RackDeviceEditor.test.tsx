@@ -259,11 +259,11 @@ describe("RackDeviceEditor — port-group building", () => {
 });
 
 describe("RackDeviceEditor — per-port editing", () => {
-  function withGroup() {
+  function withGroup(rows = 1) {
     const face: Face = {
       portGroups: [{
         id: "g", media: "copper", connectorType: "RJ45", idPrefix: "",
-        countingDirection: "ltr", rows: 1, cols: 3, gridX: 0, gridY: 0,
+        countingDirection: "ltr", rows, cols: 3, gridX: 0, gridY: 0,
         colSpacing: 0, rowSpacing: 0, portOverrides: {},
       }],
       elements: [],
@@ -330,11 +330,11 @@ describe("RackDeviceEditor — per-port editing", () => {
 });
 
 describe("RackDeviceEditor — 3d refinements", () => {
-  function withGroup() {
+  function withGroup(rows = 1) {
     const face: Face = {
       portGroups: [{
         id: "g", media: "copper", connectorType: "RJ45", idPrefix: "",
-        countingDirection: "ltr", rows: 1, cols: 3, gridX: 0, gridY: 0,
+        countingDirection: "ltr", rows, cols: 3, gridX: 0, gridY: 0,
         colSpacing: 0, rowSpacing: 0, portOverrides: {},
       }],
       elements: [],
@@ -358,6 +358,13 @@ describe("RackDeviceEditor — 3d refinements", () => {
     fireEvent.click(screen.getByTestId("port-target-0"));
     expect(screen.getByTestId("port-settings")).toBeInTheDocument(); // panel still shows (name/flip)
     expect(screen.queryByTestId("port-labelpos")).toBeNull();        // but no standalone label toggle
+  });
+
+  it("shows the per-port label toggle for a multi-row group", () => {
+    withGroup(2); // 2×3 group — a port's label side is overridable (not owned by the single-row snap)
+    fireEvent.click(screen.getByTestId("group-box-g"));
+    fireEvent.click(screen.getByTestId("port-target-0"));
+    expect(screen.getByTestId("port-labelpos")).toBeInTheDocument();
   });
 });
 
