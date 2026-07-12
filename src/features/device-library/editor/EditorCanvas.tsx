@@ -33,10 +33,15 @@ export interface EditorCanvasProps {
   onCreateText?: (pos: Pos) => void;
   /** Dropping the Shape element chip on the device → create a shape element at this position. */
   onCreateShape?: (pos: Pos) => void;
+  /** Dropping the Line element chip on the device → create a line element at this position. */
+  onCreateLine?: (pos: Pos) => void;
   /** True while the Icon element chip is being dragged (shows the drop-preview box). */
   paletteDragIcon?: boolean;
   /** Which non-icon element chip (Text/Shape) is being dragged (shows the drop-preview box). */
   paletteDragElement?: "text" | "shape" | null;
+  // Line elements: move an endpoint, or translate the whole line.
+  onMoveLineEndpoint?: (id: string, which: "a" | "b", pos: { x: number; y: number }) => void;
+  onTranslateLine?: (id: string, dx: number, dy: number) => void;
   // Icon elements: multi-select (marquee + shift+click) / move / resize.
   selectedElementIds?: string[];
   onSelectElement?: (id: string, additive: boolean) => void;
@@ -464,6 +469,39 @@ export function EditorCanvas(props: EditorCanvasProps) {
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [elDrag, props, bounds]);
 
+  // Line element move/reshape: a separate drag state from the box-element `elDrag` above since a
+  // line has no gridX/gridY/w/h box — it's two endpoints. "move" translates both endpoints by the
+  // same delta; "a"/"b" drags just that endpoint (device px, snapped to GRID_PX when enabled).
+  type LineDrag = { kind: "line"; id: string; mode: "move" | "a" | "b"; startX: number; startY: number; ox1: number; oy1: number; ox2: number; oy2: number };
+  const [lineDrag, setLineDrag] = useState<LineDrag | null>(null);
+  useEffect(() => {
+    if (!lineDrag) return;
+    const d = lineDrag;
+    // `translateLine` is delta-based (adds to whatever the face currently holds), unlike the
+    // absolute-set box ops, so a "move" drag must send only the INCREMENT since the last event —
+    // sending the full since-drag-start delta on every move would re-apply already-applied motion.
+    let lastDx = 0, lastDy = 0;
+    function onMove(e: PointerEvent) {
+      const s = scaleRef.current || 1;
+      const dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      if (d.mode === "move") {
+        props.onTranslateLine?.(d.id, dx - lastDx, dy - lastDy);
+        lastDx = dx; lastDy = dy;
+      } else {
+        // Endpoint drags are absolute (mirrors the box move/resize pattern): recompute from the
+        // original endpoint each event, so out-of-order/duplicate events can't drift.
+        const snap = (v: number) => (props.snapToGrid ? Math.round(v / GRID_PX) * GRID_PX : v);
+        const x = snap((d.mode === "a" ? d.ox1 : d.ox2) + dx);
+        const y = snap((d.mode === "a" ? d.oy1 : d.oy2) + dy);
+        props.onMoveLineEndpoint?.(d.id, d.mode, { x, y });
+      }
+    }
+    function onUp() { setLineDrag(null); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [lineDrag, props]);
+
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
     return toDevicePos({ x: e.clientX, y: e.clientY }, { left: rect?.left ?? 0, top: rect?.top ?? 0 }, scaleRef.current, earX);
@@ -577,6 +615,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
             if (payload === "element:icon") { props.onDropIcon?.(dropPos(e)); return; } // opens the icon picker
             if (payload === "element:text") { props.onCreateText?.(dropPos(e)); return; }
             if (payload === "element:shape") { props.onCreateShape?.(dropPos(e)); return; }
+            if (payload === "element:line") { props.onCreateLine?.(dropPos(e)); return; }
             const media = payload as Media;
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
@@ -828,6 +867,47 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     )}
                   </>
                 )}
+              </div>
+            );
+          })}
+          {/* Line elements: a separate overlay from the box elements above — a line has no
+              gridX/gridY/w/h box, just two endpoints, so it gets its own hit-area (a fat
+              transparent stroke along the segment) and its own pair of endpoint handles. */}
+          {props.onSelectElement && face.elements.map((el) => {
+            if (el.kind !== "line") return null;
+            const sel = (props.selectedElementIds ?? []).includes(el.id);
+            const mkHandle = (which: "a" | "b", x: number, y: number) => (
+              <div
+                key={which}
+                data-testid={`line-handle-${which}-${el.id}`}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  setLineDrag({ kind: "line", id: el.id, mode: which, startX: e.clientX, startY: e.clientY, ox1: el.x1, oy1: el.y1, ox2: el.x2, oy2: el.y2 });
+                }}
+                style={{ position: "absolute", left: earX + x - 5, top: y - 5, width: 10, height: 10, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "grab", zIndex: 24 }}
+              />
+            );
+            return (
+              <div key={el.id} data-testid={`line-el-${el.id}`}>
+                {/* invisible fat hit line for click/drag along the segment (also the marquee's hit target) */}
+                <svg style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none", zIndex: 21 }}>
+                  <line
+                    data-testid={`el-hit-${el.id}`}
+                    x1={earX + el.x1} y1={el.y1} x2={earX + el.x2} y2={el.y2}
+                    stroke="transparent" strokeWidth={12} strokeLinecap="round"
+                    style={{ pointerEvents: "stroke", cursor: "move" }}
+                    onClick={(e) => { e.stopPropagation(); props.onSelectElement?.(el.id, e.shiftKey); }}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      setLineDrag({ kind: "line", id: el.id, mode: "move", startX: e.clientX, startY: e.clientY, ox1: el.x1, oy1: el.y1, ox2: el.x2, oy2: el.y2 });
+                    }}
+                  />
+                  {sel && <line x1={earX + el.x1} y1={el.y1} x2={earX + el.x2} y2={el.y2} stroke="#2d5bff" strokeWidth={1} pointerEvents="none" />}
+                </svg>
+                {sel && mkHandle("a", el.x1, el.y1)}
+                {sel && mkHandle("b", el.x2, el.y2)}
               </div>
             );
           })}

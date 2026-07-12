@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement, type TextElement, type ShapeElement } from "@/domain/faceplate";
+import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement, type TextElement, type ShapeElement, type LineElement } from "@/domain/faceplate";
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
@@ -17,7 +17,8 @@ import { IconPicker } from "./IconPicker";
 import { IconSettings } from "./IconSettings";
 import { TextSettings } from "./TextSettings";
 import { ShapeSettings } from "./ShapeSettings";
-import { addIconElement, addTextElement, addShapeElement, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W, SHAPE_DEFAULT_SIZE } from "./elementOps";
+import { LineSettings } from "./LineSettings";
+import { addIconElement, addTextElement, addShapeElement, addLineElement, translateLine, moveLineEndpoint, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W, SHAPE_DEFAULT_SIZE } from "./elementOps";
 import {
   addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices, setGroupYOffset, setRowLabels,
@@ -40,6 +41,11 @@ const ELEMENT_TEXT_GLYPH = (
 // The Shape element chip's glyph — shared by the palette chip and its drag ghost.
 const ELEMENT_SHAPE_GLYPH = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l4.5 8h-9z" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1" /><circle cx="17" cy="17.2" r="3.8" /></svg>
+);
+
+// The Line element chip's glyph — shared by the palette chip and its drag ghost.
+const ELEMENT_LINE_GLYPH = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18l12 -12" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="5" r="2" /></svg>
 );
 
 const MEDIA_LABELS: Record<Media, string> = {
@@ -174,6 +180,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // The selected shape elements → drive the shape-settings panel.
   const selectedShapes = activeFace.elements.filter(
     (e): e is ShapeElement => e.kind === "shape" && selectedElementIds.includes(e.id),
+  );
+  // The selected line elements → drive the line-settings panel.
+  const selectedLines = activeFace.elements.filter(
+    (e): e is LineElement => e.kind === "line" && selectedElementIds.includes(e.id),
   );
 
   function clearSelection() {
@@ -506,8 +516,27 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   {ELEMENT_SHAPE_GLYPH}
                   Shapes
                 </span>
-                <span data-testid="element-lines" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18l12 -12" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="5" r="2" /></svg>
+                <span
+                  data-testid="element-lines"
+                  draggable
+                  title="Drag onto the device to place a line"
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", "element:line");
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setDragImage(transparentDragImage(), 0, 0); // hide the default ghost
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setPaletteDrag({
+                      id: "element:line",
+                      content: <><span className="text-neutral-900">{ELEMENT_LINE_GLYPH}</span>Lines</>,
+                      x: e.clientX, y: e.clientY,
+                      grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top,
+                      width: rect.width, height: rect.height,
+                    });
+                  }}
+                  onDragEnd={() => setPaletteDrag(null)}
+                  className={`flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 ${paletteDrag?.id === "element:line" ? "opacity-40" : ""}`}
+                >
+                  {ELEMENT_LINE_GLYPH}
                   Lines
                 </span>
               </div>
@@ -602,6 +631,16 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 setSelectedGroupIds([]);
                 setSelectedPortIndices([]);
               }}
+              onCreateLine={(pos) => {
+                const f = addLineElement(activeFace, { gridX: pos.x, gridY: pos.y });
+                setActiveFace(f);
+                const id = f.elements[f.elements.length - 1].id;
+                setSelectedElementIds([id]);
+                setSelectedGroupIds([]);
+                setSelectedPortIndices([]);
+              }}
+              onTranslateLine={(id, dx, dy) => setActiveFace((p) => translateLine(p, id, dx, dy))}
+              onMoveLineEndpoint={(id, which, pos) => setActiveFace((p) => moveLineEndpoint(p, id, which, pos))}
               selectedElementIds={selectedElementIds}
               onSelectElement={(id, additive) => {
                 if (additive) { setSelectedElementIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); return; }
@@ -699,6 +738,17 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               strokeWidth={selectedShapes[0].strokeWidth ?? 1.5}
               onShape={(s) => setActiveFace(updateElements(activeFace, selectedElementIds, { shape: s }))}
               onFill={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { fill: v }))}
+              onStroke={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { stroke: v }))}
+              onStrokeWidth={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { strokeWidth: v }))}
+              onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
+            />
+          </div>
+        ) : selectedLines.length > 0 ? (
+          <div className="mt-4 rounded-xl border border-neutral-200 p-4">
+            <LineSettings
+              count={selectedLines.length}
+              stroke={selectedLines[0].stroke}
+              strokeWidth={selectedLines[0].strokeWidth}
               onStroke={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { stroke: v }))}
               onStrokeWidth={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { strokeWidth: v }))}
               onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
