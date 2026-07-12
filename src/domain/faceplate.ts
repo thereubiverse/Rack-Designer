@@ -32,9 +32,13 @@ export interface PortGroup {
   cols: number;
   gridX: number;
   gridY: number;
+  // Signed vertical offset (px) from the auto-centered position. Undefined/0 = centered
+  // (default; every existing device). Only set on 2RU+ devices where the group can be
+  // dragged up/down. Clamped by layout so the port stack stays inside the device.
+  yOffset?: number;
   colSpacing: number;
   rowSpacing: number;
-  portOverrides: Record<number, { name?: string; flipped?: boolean }>;
+  portOverrides: Record<number, { name?: string; flipped?: boolean; labelPos?: "top" | "bottom"; rotation?: number; media?: Media; connectorType?: string }>;
 }
 
 export interface TextElement {
@@ -57,6 +61,8 @@ export interface IconElement {
   w: number;
   h: number;
   iconName: string;
+  color?: string;   // CSS color; defaults to the faceplate ink colour when unset
+  opacity?: number; // 0–1; defaults to 1 when unset
 }
 
 export type FaceElement = TextElement | IconElement;
@@ -70,8 +76,11 @@ export function emptyFace(): Face {
   return { portGroups: [], elements: [] };
 }
 
+/** Max device body width — a rack device never exceeds this (rails are 19", ears fill the rest). */
+export const MAX_BODY_WIDTH_IN = 17.5;
+
 export function isValidWidthIn(n: number): boolean {
-  return typeof n === "number" && n > 0 && n <= 30;
+  return typeof n === "number" && n > 0 && n <= MAX_BODY_WIDTH_IN;
 }
 
 export function isValidRackUnits(n: number): boolean {

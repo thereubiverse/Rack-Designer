@@ -2,38 +2,114 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isValidWidthIn, isValidRackUnits } from "@/domain/faceplate";
-import { createDeviceTemplate, deleteDeviceTemplate } from "./repository";
+import {
+  createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
+  toEditableTemplate, deleteDeviceTemplate, duplicateDeviceTemplate, createBrand, deleteBrand,
+  type EditableTemplate, type BrandRow,
+} from "./repository";
+import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
 
-export async function createDeviceTemplateAction(
-  formData: FormData,
-): Promise<{ ok: boolean; error?: string }> {
-  const name = String(formData.get("name") ?? "").trim();
-  const deviceTypeId = String(formData.get("deviceTypeId") ?? "");
-  const brandId = String(formData.get("brandId") ?? "");
-  const rackUnits = Number(formData.get("rackUnits") ?? 1);
-  const widthIn = Number(formData.get("widthIn") ?? 19);
-  const rackMounted = formData.get("rackMounted") === "on";
-
-  if (!name) return { ok: false, error: "Name is required" };
-  if (!deviceTypeId) return { ok: false, error: "Device type is required" };
-  if (!isValidRackUnits(rackUnits)) return { ok: false, error: "Invalid rack units" };
-  if (!isValidWidthIn(widthIn)) return { ok: false, error: "Invalid width" };
-
+export async function saveNewDeviceTemplateAction(
+  input: DeviceTemplateInput,
+): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const err = validateDeviceTemplateInput(input);
+  if (err) return { ok: false, error: err };
   const db = createServiceClient();
   try {
-    await createDeviceTemplate(db, {
-      name, deviceTypeId, brandId: brandId || undefined, rackUnits, widthIn, rackMounted,
+    const row = await createDeviceTemplate(db, {
+      name: input.name.trim(), deviceTypeId: input.deviceTypeId,
+      brandId: input.brandId ?? undefined, rackUnits: input.rackUnits,
+      widthIn: input.widthIn, rackMounted: input.rackMounted,
+      frontFace: input.frontFace, backFace: input.backFace,
     });
+    revalidatePath("/device-library");
+    return { ok: true, id: row.id };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-  revalidatePath("/device-library");
-  return { ok: true };
+}
+
+export async function saveDeviceTemplateAction(
+  id: string, input: DeviceTemplateInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const err = validateDeviceTemplateInput(input);
+  if (err) return { ok: false, error: err };
+  const db = createServiceClient();
+  try {
+    await updateDeviceTemplate(db, id, {
+      name: input.name.trim(), deviceTypeId: input.deviceTypeId,
+      brandId: input.brandId, rackUnits: input.rackUnits,
+      widthIn: input.widthIn, rackMounted: input.rackMounted,
+      frontFace: input.frontFace, backFace: input.backFace,
+    });
+    revalidatePath("/device-library");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function getDeviceTemplateAction(
+  id: string,
+): Promise<{ ok: boolean; template?: EditableTemplate; error?: string }> {
+  const db = createServiceClient();
+  try {
+    const row = await getDeviceTemplate(db, id);
+    if (!row) return { ok: false, error: "Template not found" };
+    return { ok: true, template: toEditableTemplate(row) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function createBrandAction(
+  name: string,
+): Promise<{ ok: boolean; brand?: BrandRow; error?: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) return { ok: false, error: "Brand name is required" };
+  const db = createServiceClient();
+  try {
+    const brand = await createBrand(db, { name: trimmed });
+    revalidatePath("/device-library");
+    return { ok: true, brand };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function deleteBrandAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await deleteBrand(db, id);
+    revalidatePath("/device-library");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
 }
 
 export async function deleteDeviceTemplateAction(id: string): Promise<void> {
   const db = createServiceClient();
-  await deleteDeviceTemplate(db, id);
+  try {
+    await deleteDeviceTemplate(db, id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    if (msg.includes("foreign key constraint")) {
+      throw new Error("This device is placed in a rack — remove it from all racks first");
+    }
+    throw e;
+  }
   revalidatePath("/device-library");
+}
+
+export async function duplicateDeviceTemplateAction(id: string): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await duplicateDeviceTemplate(db, id);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    return { ok: false, error: msg.includes("duplicate key") ? "A copy with that name already exists — rename it first" : msg };
+  }
+  revalidatePath("/device-library");
+  return { ok: true };
 }

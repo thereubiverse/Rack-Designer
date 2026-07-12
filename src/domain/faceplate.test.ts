@@ -15,11 +15,11 @@ describe("faceplate domain", () => {
   it("emptyFace has no groups or elements", () => {
     expect(emptyFace()).toEqual({ portGroups: [], elements: [] });
   });
-  it("validates width in inches (0 < w <= 30)", () => {
-    expect(isValidWidthIn(19)).toBe(true);
+  it("validates width in inches (0 < w <= 17.5 max body width)", () => {
+    expect(isValidWidthIn(17.5)).toBe(true);
     expect(isValidWidthIn(10.6)).toBe(true);
     expect(isValidWidthIn(0)).toBe(false);
-    expect(isValidWidthIn(31)).toBe(false);
+    expect(isValidWidthIn(19)).toBe(false);
   });
   it("validates rack units (int, 1..60)", () => {
     expect(isValidRackUnits(1)).toBe(true);
