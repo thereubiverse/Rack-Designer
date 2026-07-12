@@ -71,6 +71,43 @@ export function resolveIconGroupResize(
   });
 }
 
+/** Resolve a corner-handle resize for text/shape boxes, which — unlike icons — are not locked to a
+ *  square: each axis grows independently by its own drag delta. Non-uniform (default) scales every
+ *  box in the selection by the anchor's per-axis growth factor, so a single selection simply becomes
+ *  `orig.w+dx x orig.h+dy` and a multi-selection keeps every box's relative proportions. `uniform`
+ *  (Shift held) mirrors `resolveIconGroupResize`'s Shift behaviour but forces a square on BOTH axes:
+ *  the anchor's larger new side (clamped to the anchor's own room) is broadcast to every box's w AND
+ *  h. Every result is clamped to the minimum size and to that box's own room in the body. */
+export function resolveElementsResize(
+  boxes: { id: string; gridX: number; gridY: number; w: number; h: number }[],
+  anchorId: string, dx: number, dy: number,
+  bounds: { width: number; height: number }, uniform: boolean,
+): { id: string; w: number; h: number }[] {
+  const anchor = boxes.find((b) => b.id === anchorId);
+  if (!anchor) return boxes.map((b) => ({ id: b.id, w: b.w, h: b.h }));
+
+  const clamp = (raw: number, gridPos: number, boundSize: number) =>
+    Math.max(ICON_MIN_SIZE, Math.min(raw, boundSize - gridPos));
+
+  if (uniform) {
+    const anchorMax = Math.min(bounds.width - anchor.gridX, bounds.height - anchor.gridY);
+    const anchorSide = Math.max(ICON_MIN_SIZE, Math.min(Math.max(anchor.w + dx, anchor.h + dy), anchorMax));
+    return boxes.map((b) => {
+      const maxSize = Math.min(bounds.width - b.gridX, bounds.height - b.gridY);
+      const size = Math.max(ICON_MIN_SIZE, Math.min(anchorSide, maxSize));
+      return { id: b.id, w: size, h: size };
+    });
+  }
+
+  const wFactor = (anchor.w + dx) / anchor.w;
+  const hFactor = (anchor.h + dy) / anchor.h;
+  return boxes.map((b) => ({
+    id: b.id,
+    w: clamp(b.w * wFactor, b.gridX, bounds.width),
+    h: clamp(b.h * hFactor, b.gridY, bounds.height),
+  }));
+}
+
 /** Set sizes on several elements at once (used by the multi-element resize). */
 export function resizeElements(face: Face, sizes: { id: string; w: number; h: number }[]): Face {
   const byId = new Map(sizes.map((s) => [s.id, s]));

@@ -6,7 +6,7 @@ import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_P
 import { MEDIA, type Face, type Media, type PortGroup, type FaceElement, type BoxElement } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
-import { resolveIconResize, resolveIconGroupResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
+import { resolveIconResize, resolveIconGroupResize, resolveElementsResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
 
 // How close (screen px) a group edge/gap must get before a smart guide snaps.
 const GUIDE_THRESHOLD_PX = 6;
@@ -439,7 +439,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   // A move carries the whole selected set (so they move together); a resize is a single element.
   type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number };
   const [elDrag, setElDrag] = useState<
-    { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string } | null
+    { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string; anchorKind?: BoxElement["kind"] } | null
   >(null);
   // The icon the cursor is over — its resize handle shows even inside a multi-selection.
   const [hoverElId, setHoverElId] = useState<string | null>(null);
@@ -459,8 +459,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
         setElGuides(res.lines.length || res.spacings.length ? { lines: res.lines, spacings: res.spacings } : null);
       } else {
         // Resize the whole selection from the anchor handle; Shift forces one uniform size,
-        // otherwise every icon scales by the same factor (kept square + clamped per-icon).
-        props.onResizeElements?.(resolveIconGroupResize(d.origs, d.anchorId ?? d.origs[0].id, dx, dy, bounds, e.shiftKey));
+        // otherwise every box scales by the same factor, clamped per-box to its own room.
+        // Icons stay locked to a square (their existing behavior); text/shape resize each
+        // axis independently so a rectangle can actually become wide/tall, not just bigger.
+        const resolve = d.anchorKind === "icon" ? resolveIconGroupResize : resolveElementsResize;
+        props.onResizeElements?.(resolve(d.origs, d.anchorId ?? d.origs[0].id, dx, dy, bounds, e.shiftKey));
       }
     }
     function onUp() { setElDrag(null); setElGuides(null); }
@@ -874,7 +877,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           const origs = face.elements
                             .filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id))
                             .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
-                          setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
+                          setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id, anchorKind: el.kind });
                         }}
                         style={{ position: "absolute", right: -6, bottom: -6, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 23 }}
                       />

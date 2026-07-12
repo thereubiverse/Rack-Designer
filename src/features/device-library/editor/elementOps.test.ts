@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
+import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resolveElementsResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
 import {
   addTextElement, addShapeElement, addLineElement, updateElements,
   translateLine, moveLineEndpoint, LINE_MIN_LEN,
@@ -94,6 +94,49 @@ describe("resolveIconGroupResize", () => {
   it("clamps each icon to its own room in the body", () => {
     const near = [{ id: "e", gridX: 380, gridY: 10, w: 20, h: 20 }];
     expect(resolveIconGroupResize(near, "e", 200, 200, bounds, false)).toEqual([{ id: "e", w: 20, h: 20 }]);
+  });
+});
+
+describe("resolveElementsResize", () => {
+  const bounds = { width: 400, height: 84 };
+  it("single element, non-uniform: grows w by dx and leaves h unchanged when dy=0 (no square-lock)", () => {
+    const boxes = [{ id: "a", gridX: 10, gridY: 10, w: 40, h: 20 }];
+    expect(resolveElementsResize(boxes, "a", 20, 0, bounds, false)).toEqual([
+      { id: "a", w: 60, h: 20 },
+    ]);
+  });
+  it("multi-element, non-uniform: scales every box by the anchor's per-axis factor (keeps relative sizes)", () => {
+    const boxes = [
+      { id: "a", gridX: 0, gridY: 10, w: 40, h: 20 },
+      { id: "b", gridX: 100, gridY: 10, w: 20, h: 10 },
+    ];
+    // anchor a: w 40->60 (factor 1.5), h 20->30 (factor 1.5) -> b scales same factors: 20->30, 10->15
+    expect(resolveElementsResize(boxes, "a", 20, 10, bounds, false)).toEqual([
+      { id: "a", w: 60, h: 30 },
+      { id: "b", w: 30, h: 15 },
+    ]);
+  });
+  it("uniform (Shift): forces every box to a square of the anchor's larger new side", () => {
+    const boxes = [
+      { id: "a", gridX: 0, gridY: 10, w: 40, h: 20 },
+      { id: "b", gridX: 100, gridY: 10, w: 20, h: 10 },
+    ];
+    // anchor a: w 40->60, h 20->25 -> larger side 60 -> broadcast 60x60 to all (clamped per box)
+    expect(resolveElementsResize(boxes, "a", 20, 5, bounds, true)).toEqual([
+      { id: "a", w: 60, h: 60 },
+      { id: "b", w: 60, h: 60 },
+    ]);
+  });
+  it("clamps each result to ICON_MIN_SIZE and to the body per-axis", () => {
+    const boxes = [{ id: "a", gridX: 380, gridY: 10, w: 20, h: 20 }];
+    // w would grow past the body edge (maxW = 400-380 = 20); h stays within room (maxH = 84-10 = 74)
+    expect(resolveElementsResize(boxes, "a", 200, 5, bounds, false)).toEqual([
+      { id: "a", w: 20, h: 25 },
+    ]);
+    // shrinking past the minimum clamps to ICON_MIN_SIZE on both axes
+    expect(resolveElementsResize(boxes, "a", -100, -100, bounds, false)).toEqual([
+      { id: "a", w: ICON_MIN_SIZE, h: ICON_MIN_SIZE },
+    ]);
   });
 });
 
