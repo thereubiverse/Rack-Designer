@@ -12,6 +12,7 @@ import {
 import { PORT_GLYPHS } from "./portGlyphs";
 import { FaceIcon } from "./FaceIcon";
 import { FaceText } from "./FaceText";
+import { FaceShape } from "./FaceShape";
 
 export interface FaceplateOptions {
   widthIn: number;
@@ -146,6 +147,7 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
         {face.elements.map((el) =>
           el.kind === "icon" ? <FaceIcon key={el.id} el={el} />
           : el.kind === "text" ? <FaceText key={el.id} el={el} />
+          : el.kind === "shape" ? <FaceShape key={el.id} el={el} />
           : null,
         )}
       </g>
