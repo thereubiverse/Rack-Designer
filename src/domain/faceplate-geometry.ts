@@ -143,7 +143,38 @@ function pad2(n: number): string {
 
 export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGroup {
   const seq = portSequence(group.rows, group.cols, group.countingDirection);
-  const height = group.rows * ROW_H + Math.max(0, group.rows - 1) * group.rowSpacing;
+
+  // Resolve each cell's label side up front — the inter-row gaps depend on which labels face
+  // inward (a label is drawn LABEL_H tall in the gap next to its cell).
+  const labelPosFor = (index: number): "top" | "bottom" => {
+    const row = Math.floor(index / group.cols);
+    // Default label side: a 2-row group keeps the common top/bottom split; a dense (3+ row)
+    // group puts every label on the bottom so they don't collide. A single row labels on top.
+    const defaultLabelPos: "top" | "bottom" =
+      group.rows >= 3 ? "bottom" : group.rows === 2 && row === group.rows - 1 ? "bottom" : "top";
+    return group.portOverrides[index]?.labelPos ?? defaultLabelPos;
+  };
+
+  // Per row: does any port's label face up / down? (Ports in a row can be toggled individually.)
+  const rowHasTop: boolean[] = Array.from({ length: group.rows }, () => false);
+  const rowHasBottom: boolean[] = Array.from({ length: group.rows }, () => false);
+  for (let index = 0; index < group.rows * group.cols; index++) {
+    const row = Math.floor(index / group.cols);
+    if (labelPosFor(index) === "top") rowHasTop[row] = true;
+    else rowHasBottom[row] = true;
+  }
+
+  // Gap above row r (r >= 1): reserve a label's height for every label that lands in that gap —
+  // the row above's bottom label and this row's top label — so an inward-facing label never
+  // overlaps the neighbouring glyph. Never smaller than the group's own rowSpacing.
+  const gapAbove = (r: number): number =>
+    Math.max(group.rowSpacing, (rowHasBottom[r - 1] ? LABEL_H : 0) + (rowHasTop[r] ? LABEL_H : 0));
+
+  // Cumulative y-offset of each row from the top of the stack.
+  const rowY: number[] = [0];
+  for (let r = 1; r < group.rows; r++) rowY[r] = rowY[r - 1] + ROW_H + gapAbove(r);
+  const height = (rowY[group.rows - 1] ?? 0) + ROW_H;
+
   // Vertical origin: centered in the device (when heightPx is provided) plus an optional
   // yOffset for groups dragged up/down on 2RU+ devices, clamped so the stack stays inside
   // the device. Falls back to legacy gridY when no device height is given.
@@ -161,21 +192,15 @@ export function layoutPortGroup(group: PortGroup, heightPx?: number): LaidOutGro
     const override = group.portOverrides[index];
     const number = seq[index];
     const label = override?.name ?? `${group.idPrefix}${pad2(number)}`;
-    // Default label side: a 2-row group keeps the common top/bottom split; a dense
-    // (3+ row) group puts every label on the bottom so they don't collide — spacing
-    // (added on the third row) gives each one room. A single row labels on top.
-    const defaultLabelPos: "top" | "bottom" =
-      group.rows >= 3 ? "bottom" : group.rows === 2 && row === group.rows - 1 ? "bottom" : "top";
-    const labelPos: "top" | "bottom" = override?.labelPos ?? defaultLabelPos;
     cells.push({
       index,
       row,
       col,
       x: group.gridX + col * (CELL_W + group.colSpacing),
-      y: top + row * (ROW_H + group.rowSpacing),
+      y: top + rowY[row],
       number,
       label,
-      labelPos,
+      labelPos: labelPosFor(index),
       flipped: override?.flipped ?? false,
       rotation: override?.rotation ?? 0,
       media: override?.media ?? group.media,

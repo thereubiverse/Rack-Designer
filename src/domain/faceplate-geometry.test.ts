@@ -104,7 +104,7 @@ describe("faceplate geometry — screw holes", () => {
   });
 });
 
-import { portSequence, layoutPortGroup } from "./faceplate-geometry";
+import { portSequence, layoutPortGroup, ROW_H, LABEL_H } from "./faceplate-geometry";
 import type { PortGroup } from "./faceplate";
 
 describe("faceplate geometry — port numbering", () => {
@@ -225,5 +225,26 @@ describe("layoutPortGroup — vertical centering & labelPos", () => {
     const laid = layoutPortGroup(g({ gridY: 10 }));
     expect(laid.cells[0].y).toBe(10);
     expect(laid.top).toBe(10);
+  });
+
+  // A label is drawn in the gap next to its cell (Faceplate: LABEL_H tall). When a row's label
+  // faces inward, the inter-row gap must reserve LABEL_H per inward label so it never lands on
+  // the neighbouring row's glyph. The default outer/outer split needs no reservation.
+  it("keeps the tight default gap when both labels face outward", () => {
+    const laid = layoutPortGroup(g({ rows: 2, cols: 1 }), 84);
+    expect(laid.cells[1].y - (laid.cells[0].y + ROW_H)).toBeCloseTo(0, 5);
+  });
+  it("reserves a label's height in the gap when the bottom row's label faces up (inward)", () => {
+    const laid = layoutPortGroup(g({ rows: 2, cols: 1, portOverrides: { 1: { labelPos: "top" } } }), 84);
+    const gap = laid.cells[1].y - (laid.cells[0].y + ROW_H);
+    expect(gap).toBeGreaterThanOrEqual(LABEL_H);
+  });
+  it("reserves two label heights when both rows' labels face into the gap", () => {
+    const laid = layoutPortGroup(
+      g({ rows: 2, cols: 1, portOverrides: { 0: { labelPos: "bottom" }, 1: { labelPos: "top" } } }),
+      84,
+    );
+    const gap = laid.cells[1].y - (laid.cells[0].y + ROW_H);
+    expect(gap).toBeGreaterThanOrEqual(2 * LABEL_H);
   });
 });
