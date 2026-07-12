@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement, type TextElement } from "@/domain/faceplate";
+import { MEDIA, MAX_BODY_WIDTH_IN, CONNECTORS, type Media, type IconElement, type TextElement, type ShapeElement } from "@/domain/faceplate";
 import { PortGlyph } from "@/features/device-library/faceplate/portGlyphs";
 import type { DeviceTypeRow, BrandRow } from "../repository";
 import { useDeviceDraft, type DeviceDraft } from "./useDeviceDraft";
@@ -16,7 +16,8 @@ import { Select } from "./Select";
 import { IconPicker } from "./IconPicker";
 import { IconSettings } from "./IconSettings";
 import { TextSettings } from "./TextSettings";
-import { addIconElement, addTextElement, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W } from "./elementOps";
+import { ShapeSettings } from "./ShapeSettings";
+import { addIconElement, addTextElement, addShapeElement, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W, SHAPE_DEFAULT_SIZE } from "./elementOps";
 import {
   addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices, setGroupYOffset, setRowLabels,
@@ -34,6 +35,11 @@ const ELEMENT_ICON_GLYPH = (
 // The Text element chip's glyph — shared by the palette chip and its drag ghost.
 const ELEMENT_TEXT_GLYPH = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 20l6 -16l2 0l7 16" /><path d="M4 20l3 0" /><path d="M14 20l7 0" /><path d="M6.9 15l6.9 0" /></svg>
+);
+
+// The Shape element chip's glyph — shared by the palette chip and its drag ghost.
+const ELEMENT_SHAPE_GLYPH = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l4.5 8h-9z" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1" /><circle cx="17" cy="17.2" r="3.8" /></svg>
 );
 
 const MEDIA_LABELS: Record<Media, string> = {
@@ -164,6 +170,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // The selected text elements → drive the text-settings panel.
   const selectedTexts = activeFace.elements.filter(
     (e): e is TextElement => e.kind === "text" && selectedElementIds.includes(e.id),
+  );
+  // The selected shape elements → drive the shape-settings panel.
+  const selectedShapes = activeFace.elements.filter(
+    (e): e is ShapeElement => e.kind === "shape" && selectedElementIds.includes(e.id),
   );
 
   function clearSelection() {
@@ -473,8 +483,27 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   {ELEMENT_ICON_GLYPH}
                   Icon
                 </span>
-                <span data-testid="element-shapes" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l4.5 8h-9z" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="1" /><circle cx="17" cy="17.2" r="3.8" /></svg>
+                <span
+                  data-testid="element-shapes"
+                  draggable
+                  title="Drag onto the device to place a shape"
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", "element:shape");
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setDragImage(transparentDragImage(), 0, 0); // hide the default ghost
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setPaletteDrag({
+                      id: "element:shape",
+                      content: <><span className="text-neutral-900">{ELEMENT_SHAPE_GLYPH}</span>Shapes</>,
+                      x: e.clientX, y: e.clientY,
+                      grabDX: e.clientX - rect.left, grabDY: e.clientY - rect.top,
+                      width: rect.width, height: rect.height,
+                    });
+                  }}
+                  onDragEnd={() => setPaletteDrag(null)}
+                  className={`flex cursor-grab items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 ${paletteDrag?.id === "element:shape" ? "opacity-40" : ""}`}
+                >
+                  {ELEMENT_SHAPE_GLYPH}
                   Shapes
                 </span>
                 <span data-testid="element-lines" className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-400">
@@ -565,6 +594,14 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 setSelectedGroupIds([]);
                 setSelectedPortIndices([]);
               }}
+              onCreateShape={(pos) => {
+                const f = addShapeElement(activeFace, "rect", resolveIconDrop(pos.x, pos.y, SHAPE_DEFAULT_SIZE, bounds));
+                setActiveFace(f);
+                const id = f.elements[f.elements.length - 1].id;
+                setSelectedElementIds([id]);
+                setSelectedGroupIds([]);
+                setSelectedPortIndices([]);
+              }}
               selectedElementIds={selectedElementIds}
               onSelectElement={(id, additive) => {
                 if (additive) { setSelectedElementIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); return; }
@@ -649,6 +686,21 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               onAlignment={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { alignment: v }))}
               onFontSize={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { fontSize: v }))}
               onColor={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { color: v }))}
+              onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
+            />
+          </div>
+        ) : selectedShapes.length > 0 ? (
+          <div className="mt-4 rounded-xl border border-neutral-200 p-4">
+            <ShapeSettings
+              count={selectedShapes.length}
+              shape={selectedShapes[0].shape}
+              fill={selectedShapes[0].fill}
+              stroke={selectedShapes[0].stroke}
+              strokeWidth={selectedShapes[0].strokeWidth ?? 1.5}
+              onShape={(s) => setActiveFace(updateElements(activeFace, selectedElementIds, { shape: s }))}
+              onFill={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { fill: v }))}
+              onStroke={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { stroke: v }))}
+              onStrokeWidth={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { strokeWidth: v }))}
               onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
             />
           </div>

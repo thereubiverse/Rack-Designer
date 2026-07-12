@@ -31,6 +31,8 @@ export interface EditorCanvasProps {
   onDropIcon?: (pos: Pos) => void;
   /** Dropping the Text element chip on the device → create a text element at this position. */
   onCreateText?: (pos: Pos) => void;
+  /** Dropping the Shape element chip on the device → create a shape element at this position. */
+  onCreateShape?: (pos: Pos) => void;
   /** True while the Icon element chip is being dragged (shows the drop-preview box). */
   paletteDragIcon?: boolean;
   /** Which non-icon element chip (Text/Shape) is being dragged (shows the drop-preview box). */
@@ -574,6 +576,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
             setIconDropAt(null);
             if (payload === "element:icon") { props.onDropIcon?.(dropPos(e)); return; } // opens the icon picker
             if (payload === "element:text") { props.onCreateText?.(dropPos(e)); return; }
+            if (payload === "element:shape") { props.onCreateShape?.(dropPos(e)); return; }
             const media = payload as Media;
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
