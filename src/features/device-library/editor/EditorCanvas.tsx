@@ -857,7 +857,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   const origs = picked.map((x, i) => ({ id: dragIds[i], gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                   setElDrag({ ids: dragIds, mode: "move", startX: e.clientX, startY: e.clientY, origs });
                 }}
-                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
+                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22, transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }}
               >
                 {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
                 <div data-testid={`el-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
