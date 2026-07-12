@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
+import {
+  addTextElement, addShapeElement, addLineElement, updateElements,
+  translateLine, moveLineEndpoint, LINE_MIN_LEN,
+} from "./elementOps";
 import type { Face } from "@/domain/faceplate";
+import { emptyFace } from "@/domain/faceplate";
 
 const empty: Face = { portGroups: [], elements: [] };
 
@@ -154,4 +159,46 @@ describe("placeElements", () => {
     const out = placeElements(f, [{ id: f.elements[0].id, gridX: 40, gridY: 20 }]).elements[0];
     expect(out).toMatchObject({ gridX: 40, gridY: 20 });
   });
+});
+
+it("addTextElement appends a text element at the drop point", () => {
+  const f = addTextElement(emptyFace(), { gridX: 10, gridY: 20 });
+  expect(f.elements[0]).toMatchObject({ kind: "text", gridX: 10, gridY: 20, content: "Text", alignment: "center" });
+});
+
+it("addShapeElement appends the requested shape", () => {
+  const f = addShapeElement(emptyFace(), "ellipse", { gridX: 5, gridY: 5 });
+  expect(f.elements[0]).toMatchObject({ kind: "shape", shape: "ellipse", gridX: 5, gridY: 5 });
+});
+
+it("addLineElement appends a horizontal line centred on the drop point", () => {
+  const f = addLineElement(emptyFace(), { gridX: 50, gridY: 30 });
+  const l = f.elements[0] as Extract<typeof f.elements[number], { kind: "line" }>;
+  expect(l.kind).toBe("line");
+  expect(l.y1).toBe(30); expect(l.y2).toBe(30);
+  expect(l.x2 - l.x1).toBeGreaterThan(0);
+});
+
+it("updateElements shallow-merges a patch into listed elements of any kind", () => {
+  const f0 = addTextElement(emptyFace(), { gridX: 0, gridY: 0 });
+  const id = f0.elements[0].id;
+  const f1 = updateElements(f0, [id], { content: "Hi", alignment: "left" });
+  expect(f1.elements[0]).toMatchObject({ content: "Hi", alignment: "left" });
+});
+
+it("translateLine shifts both endpoints", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 });
+  const id = f0.elements[0].id;
+  const f1 = translateLine(f0, id, 5, -10);
+  const l = f1.elements[0] as any;
+  expect(l.y1).toBe(20); expect(l.y2).toBe(20);
+});
+
+it("moveLineEndpoint moves one end, never collapsing below LINE_MIN_LEN", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 }); // x1<x2, same y
+  const id = f0.elements[0].id;
+  const l0 = f0.elements[0] as any;
+  const f1 = moveLineEndpoint(f0, id, "b", { x: l0.x1 + 2, y: l0.y1 }); // try to collapse b onto a
+  const l1 = f1.elements[0] as any;
+  expect(Math.hypot(l1.x2 - l1.x1, l1.y2 - l1.y1)).toBeGreaterThanOrEqual(LINE_MIN_LEN - 0.001);
 });
