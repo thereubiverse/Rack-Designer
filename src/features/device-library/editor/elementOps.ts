@@ -146,7 +146,27 @@ export function setElementsColor(face: Face, ids: string[], color: string): Face
 export function setElementsOpacity(face: Face, ids: string[], opacity: number): Face {
   const o = Math.max(0, Math.min(1, opacity));
   const set = new Set(ids);
-  return { ...face, elements: face.elements.map((e) => (set.has(e.id) && e.kind === "icon" ? { ...e, opacity: o } : e)) };
+  return { ...face, elements: face.elements.map((e) => (set.has(e.id) ? { ...e, opacity: o } : e)) };
+}
+
+/** Rotate the listed elements 90° clockwise. Box elements (icon/text/shape) bump their `rotation`
+ *  (about the box centre); a line rotates its two endpoints 90° CW about the line's own midpoint.
+ *  Screen y points down, so clockwise maps a vector (dx,dy) → (-dy, dx). */
+export function rotateElements90(face: Face, ids: string[]): Face {
+  const set = new Set(ids);
+  return {
+    ...face,
+    elements: face.elements.map((e) => {
+      if (!set.has(e.id)) return e;
+      if (e.kind === "line") {
+        const mx = (e.x1 + e.x2) / 2, my = (e.y1 + e.y2) / 2;
+        const rot = (x: number, y: number) => ({ x: mx - (y - my), y: my + (x - mx) });
+        const a = rot(e.x1, e.y1), b = rot(e.x2, e.y2);
+        return { ...e, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+      }
+      return { ...e, rotation: ((e.rotation ?? 0) + 90) % 360 };
+    }),
+  };
 }
 
 /** Duplicate the listed elements (fresh ids, same position). Returns the new face + new ids so the

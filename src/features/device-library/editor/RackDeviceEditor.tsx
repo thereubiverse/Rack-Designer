@@ -18,7 +18,7 @@ import { IconSettings } from "./IconSettings";
 import { TextSettings } from "./TextSettings";
 import { ShapeSettings } from "./ShapeSettings";
 import { LineSettings } from "./LineSettings";
-import { addIconElement, addTextElement, addShapeElement, addLineElement, translateLine, moveLineEndpoint, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W, SHAPE_DEFAULT_SIZE } from "./elementOps";
+import { addIconElement, addTextElement, addShapeElement, addLineElement, translateLine, moveLineEndpoint, resizeElements, deleteElement, resolveIconDrop, duplicateElements, placeElements, setElementsColor, setElementsOpacity, setElementsIcon, updateElements, rotateElements90, ICON_DEFAULT_SIZE, TEXT_DEFAULT_W, SHAPE_DEFAULT_SIZE } from "./elementOps";
 import {
   addPortGroup, movePortGroup, moveGroups, duplicateGroups, addColumn, addRow, removeColumn, removeRow, updatePortGroup, deletePortGroup,
   setPortOverride, setPortMedia, setSpacing, patchPorts, rotatePorts, deletePortGroups, allPortIndices, setGroupYOffset, setRowLabels,
@@ -256,10 +256,12 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
 
   const side = draft.activeSide === "front" ? "FRONT" : "BACK";
 
-  // Rotate the current selection 180° per click — one port, many ports, or every port in
-  // the selected groups. Disabled when nothing rotatable is selected.
-  const canRotate = targetRefs().some((r) => r.indices.length > 0);
+  // Rotate the current selection per click: selected elements turn 90° clockwise; otherwise
+  // selected ports flip 180° (one port, many ports, or every port in the selected groups).
+  // Disabled when nothing rotatable is selected.
+  const canRotate = selectedElementIds.length > 0 || targetRefs().some((r) => r.indices.length > 0);
   function rotateSelection() {
+    if (selectedElementIds.length > 0) { setActiveFace(rotateElements90(activeFace, selectedElementIds)); return; }
     const refs = targetRefs();
     if (refs.every((r) => r.indices.length === 0)) return;
     setActiveFace(rotatePorts(activeFace, refs, 180));
@@ -721,10 +723,12 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               alignment={selectedTexts[0].alignment}
               fontSize={selectedTexts[0].fontSize}
               color={selectedTexts[0].color}
+              opacity={selectedTexts[0].opacity}
               onContent={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { content: v }))}
               onAlignment={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { alignment: v }))}
               onFontSize={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { fontSize: v }))}
               onColor={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { color: v }))}
+              onOpacity={(v) => setActiveFace(setElementsOpacity(activeFace, selectedElementIds, v))}
               onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
             />
           </div>
@@ -736,10 +740,12 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               fill={selectedShapes[0].fill}
               stroke={selectedShapes[0].stroke}
               strokeWidth={selectedShapes[0].strokeWidth ?? 1.5}
+              opacity={selectedShapes[0].opacity}
               onShape={(s) => setActiveFace(updateElements(activeFace, selectedElementIds, { shape: s }))}
               onFill={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { fill: v }))}
               onStroke={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { stroke: v }))}
               onStrokeWidth={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { strokeWidth: v }))}
+              onOpacity={(v) => setActiveFace(setElementsOpacity(activeFace, selectedElementIds, v))}
               onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
             />
           </div>
@@ -749,8 +755,10 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               count={selectedLines.length}
               stroke={selectedLines[0].stroke}
               strokeWidth={selectedLines[0].strokeWidth}
+              opacity={selectedLines[0].opacity}
               onStroke={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { stroke: v }))}
               onStrokeWidth={(v) => setActiveFace(updateElements(activeFace, selectedElementIds, { strokeWidth: v }))}
+              onOpacity={(v) => setActiveFace(setElementsOpacity(activeFace, selectedElementIds, v))}
               onDelete={() => { setActiveFace((p) => selectedElementIds.reduce((f, id) => deleteElement(f, id), p)); setSelectedElementIds([]); }}
             />
           </div>

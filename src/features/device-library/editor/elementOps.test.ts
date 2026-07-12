@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resolveElementsResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
 import {
-  addTextElement, addShapeElement, addLineElement, updateElements,
+  addTextElement, addShapeElement, addLineElement, updateElements, rotateElements90,
   translateLine, moveLineEndpoint, LINE_MIN_LEN,
 } from "./elementOps";
 import type { Face } from "@/domain/faceplate";
@@ -244,4 +244,34 @@ it("moveLineEndpoint moves one end, never collapsing below LINE_MIN_LEN", () => 
   const f1 = moveLineEndpoint(f0, id, "b", { x: l0.x1 + 2, y: l0.y1 }); // try to collapse b onto a
   const l1 = f1.elements[0] as any;
   expect(Math.hypot(l1.x2 - l1.x1, l1.y2 - l1.y1)).toBeGreaterThanOrEqual(LINE_MIN_LEN - 0.001);
+});
+
+it("rotateElements90 bumps a box element's rotation by 90° (mod 360)", () => {
+  const f0 = addShapeElement(emptyFace(), "rect", { gridX: 0, gridY: 0 });
+  const id = f0.elements[0].id;
+  const f1 = rotateElements90(f0, [id]);
+  expect((f1.elements[0] as { rotation?: number }).rotation).toBe(90);
+  const f4 = rotateElements90(rotateElements90(rotateElements90(f1, [id]), [id]), [id]);
+  expect((f4.elements[0] as { rotation?: number }).rotation).toBe(0);
+});
+
+it("rotateElements90 turns a horizontal line vertical about its midpoint", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 }); // horizontal, y=30
+  const id = f0.elements[0].id;
+  const l0 = f0.elements[0] as { x1: number; y1: number; x2: number; y2: number };
+  const f1 = rotateElements90(f0, [id]);
+  const l1 = f1.elements[0] as { x1: number; y1: number; x2: number; y2: number };
+  const mx = (l0.x1 + l0.x2) / 2;
+  expect(l1.x1).toBeCloseTo(mx, 5); // both x's collapse to the midpoint x (now vertical)
+  expect(l1.x2).toBeCloseTo(mx, 5);
+  expect(Math.abs(l1.y2 - l1.y1)).toBeCloseTo(Math.abs(l0.x2 - l0.x1), 5); // length preserved
+});
+
+it("setElementsOpacity applies to text/shape/line, not just icons", () => {
+  let f = addTextElement(emptyFace(), { gridX: 0, gridY: 0 });
+  f = addShapeElement(f, "rect", { gridX: 0, gridY: 0 });
+  f = addLineElement(f, { gridX: 0, gridY: 0 });
+  const ids = f.elements.map((e) => e.id);
+  const out = setElementsOpacity(f, ids, 0.5);
+  expect(out.elements.map((e) => (e as { opacity?: number }).opacity)).toEqual([0.5, 0.5, 0.5]);
 });

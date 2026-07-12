@@ -1,18 +1,20 @@
 "use client";
 
 export function TextSettings({
-  count, content, alignment, fontSize, color,
-  onContent, onAlignment, onFontSize, onColor, onDelete,
+  count, content, alignment, fontSize, color, opacity,
+  onContent, onAlignment, onFontSize, onColor, onOpacity, onDelete,
 }: {
   count: number;
   content: string;
   alignment: "left" | "center" | "right";
   fontSize: number;
   color?: string;
+  opacity?: number;
   onContent: (v: string) => void;
   onAlignment: (v: "left" | "center" | "right") => void;
   onFontSize: (v: number) => void;
   onColor: (v: string) => void;
+  onOpacity: (v: number) => void;
   onDelete: () => void;
 }) {
   const aligns: ("left" | "center" | "right")[] = ["left", "center", "right"];
@@ -41,6 +43,11 @@ export function TextSettings({
       <label className="mt-2 flex items-center justify-between text-[11px] font-semibold text-neutral-600">Colour
         <input data-testid="text-color" type="color" value={color ?? "#4b5563"} onChange={(e) => onColor(e.target.value)}
           className="ml-2 h-8 w-10 rounded border border-neutral-200" />
+      </label>
+      <label className="mt-2 flex flex-col text-[11px] font-semibold text-neutral-600">
+        <span className="flex items-center justify-between">Opacity<span className="tabular-nums text-neutral-400">{Math.round((opacity ?? 1) * 100)}%</span></span>
+        <input data-testid="text-opacity" type="range" min={0} max={100} value={Math.round((opacity ?? 1) * 100)}
+          onChange={(e) => onOpacity(Number(e.target.value) / 100)} className="mt-1 w-full accent-blue-600" />
       </label>
       <button type="button" data-testid="text-delete" onClick={onDelete} className="mt-3 text-left text-xs text-red-600">🗑 Delete</button>
     </div>

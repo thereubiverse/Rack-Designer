@@ -51,7 +51,9 @@ export interface TextElement {
   content: string;
   alignment: "left" | "center" | "right";
   fontSize: number;
-  color?: string;   // defaults to faceplate ink when unset
+  color?: string;    // defaults to faceplate ink when unset
+  rotation?: number; // degrees clockwise about the box centre; defaults to 0
+  opacity?: number;  // 0–1; defaults to 1
 }
 
 export interface IconElement {
@@ -64,6 +66,7 @@ export interface IconElement {
   iconName: string;
   color?: string;
   opacity?: number;
+  rotation?: number; // degrees clockwise about the box centre; defaults to 0
 }
 
 export interface ShapeElement {
@@ -77,6 +80,8 @@ export interface ShapeElement {
   fill?: string;        // defaults to "none"
   stroke?: string;      // defaults to faceplate ink
   strokeWidth?: number; // defaults to 1.5
+  rotation?: number;    // degrees clockwise about the box centre; defaults to 0
+  opacity?: number;     // 0–1; defaults to 1
 }
 
 export interface LineElement {
@@ -88,6 +93,7 @@ export interface LineElement {
   y2: number;
   stroke: string;
   strokeWidth: number;
+  opacity?: number; // 0–1; defaults to 1 (lines rotate via their endpoints, so no rotation field)
 }
 
 export type BoxElement = TextElement | IconElement | ShapeElement;
