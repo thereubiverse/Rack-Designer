@@ -369,12 +369,14 @@ describe("RackDeviceEditor — 3d refinements", () => {
 });
 
 describe("RackDeviceEditor — palette sections (3e)", () => {
-  it("renders Port Types and Elements sections; Icon is draggable, Text still inert", () => {
+  it("renders Port Types and Elements sections; Icon and Text are draggable, Shapes/Lines still inert", () => {
     render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);
     expect(screen.getByText("Port Types")).toBeInTheDocument();
     expect(screen.getByText("Elements")).toBeInTheDocument();
-    expect(screen.getByTestId("element-text")).not.toHaveAttribute("draggable", "true");
+    expect(screen.getByTestId("element-text").getAttribute("draggable")).toBe("true"); // Text is now live
     expect(screen.getByTestId("element-icon").getAttribute("draggable")).toBe("true"); // Icon is now live
+    expect(screen.getByTestId("element-shapes")).not.toHaveAttribute("draggable", "true");
+    expect(screen.getByTestId("element-lines")).not.toHaveAttribute("draggable", "true");
     // a media chip is still draggable
     expect(screen.getByTitle("Copper").getAttribute("draggable")).toBe("true");
   });

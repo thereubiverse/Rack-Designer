@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX, RU_PX } from "@/domain/faceplate-geometry";
-import { MEDIA, type Face, type Media, type PortGroup, type IconElement } from "@/domain/faceplate";
+import { MEDIA, type Face, type Media, type PortGroup, type FaceElement, type BoxElement } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
 import { resolveIconResize, resolveIconGroupResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
@@ -29,8 +29,12 @@ export interface EditorCanvasProps {
   onCreate?: (media: Media, pos: Pos) => void;
   /** Dropping the Icon element chip on the device → open the icon picker at this position. */
   onDropIcon?: (pos: Pos) => void;
+  /** Dropping the Text element chip on the device → create a text element at this position. */
+  onCreateText?: (pos: Pos) => void;
   /** True while the Icon element chip is being dragged (shows the drop-preview box). */
   paletteDragIcon?: boolean;
+  /** Which non-icon element chip (Text/Shape) is being dragged (shows the drop-preview box). */
+  paletteDragElement?: "text" | "shape" | null;
   // Icon elements: multi-select (marquee + shift+click) / move / resize.
   selectedElementIds?: string[];
   onSelectElement?: (id: string, additive: boolean) => void;
@@ -63,6 +67,10 @@ export interface EditorCanvasProps {
   /** Media of the palette chip currently being dragged (for the drop-preview box). */
   paletteDragMedia?: Media | null;
 }
+
+// A "box" element (icon/text/shape) sits in a gridX/gridY/w/h box and shares the generic
+// select/move/resize overlay below; lines are a separate future overlay.
+const isBoxEl = (e: FaceElement): e is BoxElement => e.kind === "icon" || e.kind === "text" || e.kind === "shape";
 
 export function EditorCanvas(props: EditorCanvasProps) {
   const { face, widthIn, rackUnits, rackMounted, side } = props;
@@ -229,7 +237,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
       return out;
     };
     const groupIds = hits('[data-testid^="glyph-bounds-"]', "glyph-bounds-");
-    const elementIds = hits('[data-testid^="icon-hit-"]', "icon-hit-");
+    const elementIds = hits('[data-testid^="el-hit-"]', "el-hit-");
     props.onMarqueeSelect?.(groupIds, elementIds, additive);
   }
   // Marquee lifecycle: select LIVE as it's dragged (so it never depends on the release point),
@@ -537,7 +545,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move"; // suppress the native "+" copy badge
-            if (props.paletteDragIcon) { // the Icon chip → preview where the icon lands
+            if (props.paletteDragIcon || props.paletteDragElement) { // Icon/Text/Shape chip → preview where it lands
               setDragOverPort(null); setDropPreview(null); setIconDropAt(dropPos(e)); return;
             }
             const p = portAt(e.clientX, e.clientY);
@@ -565,6 +573,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
             setDropPreview(null);
             setIconDropAt(null);
             if (payload === "element:icon") { props.onDropIcon?.(dropPos(e)); return; } // opens the icon picker
+            if (payload === "element:text") { props.onCreateText?.(dropPos(e)); return; }
             const media = payload as Media;
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
@@ -758,9 +767,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
               </div>
             );
           })}
-          {/* Icon elements — marquee/shift+click select, drag to move, corner handle to resize. */}
+          {/* Box elements (icon/text/shape) — marquee/shift+click select, drag to move, corner
+              handle to resize. Lines are a separate future overlay. */}
           {props.onSelectElement && face.elements.map((el) => {
-            if (el.kind !== "icon") return null;
+            if (!isBoxEl(el)) return null;
             const selIds = props.selectedElementIds ?? [];
             const selected = selIds.includes(el.id);
             const onlySelected = selIds.length === 1 && selIds[0] === el.id;
@@ -778,7 +788,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   // Drag the whole multi-selection together if this icon is part of it, else just this one.
                   const sel = props.selectedElementIds ?? [];
                   const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                  const picked = face.elements.filter((x): x is IconElement => x.kind === "icon" && ids.includes(x.id));
+                  const picked = face.elements.filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id));
                   let dragIds = picked.map((x) => x.id);
                   if (e.altKey && props.onDuplicateElements) { // Alt/Option+drag → drag fresh copies
                     const newIds = props.onDuplicateElements(dragIds);
@@ -791,7 +801,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                 style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
               >
                 {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
-                <div data-testid={`icon-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+                <div data-testid={`el-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
                 {selected && (
                   <>
                     <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none" }} />
@@ -806,7 +816,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           const sel = props.selectedElementIds ?? [];
                           const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
                           const origs = face.elements
-                            .filter((x): x is IconElement => x.kind === "icon" && ids.includes(x.id))
+                            .filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id))
                             .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                           setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
                         }}
