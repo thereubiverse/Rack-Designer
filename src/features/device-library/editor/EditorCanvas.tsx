@@ -857,13 +857,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   const origs = picked.map((x, i) => ({ id: dragIds[i], gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                   setElDrag({ ids: dragIds, mode: "move", startX: e.clientX, startY: e.clientY, origs });
                 }}
-                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22, transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }}
+                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
               >
                 {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
                 <div data-testid={`el-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
                 {selected && (
                   <>
-                    <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none" }} />
+                    <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none", transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }} />
                     {props.onResizeElements && (onlySelected || hoverElId === el.id) && (
                       <div
                         data-testid="icon-el-resize"
