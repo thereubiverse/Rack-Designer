@@ -778,7 +778,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   // Drag the whole multi-selection together if this icon is part of it, else just this one.
                   const sel = props.selectedElementIds ?? [];
                   const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                  const picked = face.elements.filter((x) => x.kind === "icon" && ids.includes(x.id)) as IconElement[];
+                  const picked = face.elements.filter((x): x is IconElement => x.kind === "icon" && ids.includes(x.id));
                   let dragIds = picked.map((x) => x.id);
                   if (e.altKey && props.onDuplicateElements) { // Alt/Option+drag → drag fresh copies
                     const newIds = props.onDuplicateElements(dragIds);
@@ -805,8 +805,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           // Resize acts on the whole selection (anchored on this icon) if this icon is part of it.
                           const sel = props.selectedElementIds ?? [];
                           const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                          const origs = (face.elements
-                            .filter((x) => x.kind === "icon" && ids.includes(x.id)) as IconElement[])
+                          const origs = face.elements
+                            .filter((x): x is IconElement => x.kind === "icon" && ids.includes(x.id))
                             .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                           setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
                         }}
