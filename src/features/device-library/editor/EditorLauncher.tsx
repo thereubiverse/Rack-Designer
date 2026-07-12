@@ -114,6 +114,7 @@ export function EditorLauncher({
         <RackDeviceEditor
           mode={state.mode === "create" ? "create" : "edit"}
           readOnly={state.mode === "view"}
+          onEnterEdit={state.mode === "view" ? () => setState({ mode: "edit", id: state.id, initial: state.initial }) : undefined}
           initial={state.mode === "edit" || state.mode === "view" ? state.initial : undefined}
           types={types}
           brands={brands}

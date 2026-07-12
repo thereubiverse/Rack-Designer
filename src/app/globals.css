@@ -19,6 +19,68 @@ body {
   font-size: 0.875rem;
 }
 
+/* Editor controls sliding in when entering the editor from the read-only preview: each section
+   grows its height (grid-rows 0fr -> 1fr) so the faceplate eases down into place instead of
+   jumping. Overflow is toggled to visible once settled so Brand/Select dropdowns aren't clipped. */
+.rde-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .55s cubic-bezier(.4, 0, .2, 1), opacity .5s ease;
+}
+.rde-collapse.rde-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.rde-collapse > .rde-collapse-inner {
+  min-height: 0;
+}
+
+/* Editable-only affordances (dropdown chevrons, the width stepper) fade out when their field is
+   disabled — i.e. in the read-only preview — and fade back in when entering the editor, so the
+   preview reads as static fields that morph into editable ones. */
+.rde-editable-affordance {
+  transition: opacity .35s ease;
+}
+fieldset:disabled .rde-editable-affordance {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Keep disabled fields looking like normal (read-only) boxes rather than greyed-out. */
+fieldset:disabled input,
+fieldset:disabled [data-testid$="-trigger"] {
+  opacity: 1;
+  color: #262626;
+  -webkit-text-fill-color: #262626;
+  cursor: default;
+}
+
+/* Modal open animation: the backdrop fades in and the card eases up with a subtle scale. Plays
+   once on mount (the modal is only mounted while open), so it doesn't replay on the preview->editor
+   morph, which keeps the same element mounted. */
+@keyframes rde-backdrop-in {
+  from { background-color: rgba(0, 0, 0, 0); }
+  to { background-color: rgba(0, 0, 0, .4); }
+}
+@keyframes rde-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(.99); }
+  to { opacity: 1; transform: none; }
+}
+.rde-modal-backdrop { animation: rde-backdrop-in .3s ease both; }
+.rde-modal-card { animation: rde-card-in .5s cubic-bezier(.22, .61, .36, 1) both; }
+
+/* Close: reverse of the open — card eases down and fades, backdrop fades out — before unmounting. */
+@keyframes rde-backdrop-out {
+  from { background-color: rgba(0, 0, 0, .4); }
+  to { background-color: rgba(0, 0, 0, 0); }
+}
+@keyframes rde-card-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(8px) scale(.99); }
+}
+.rde-modal-backdrop-out { animation: rde-backdrop-out .26s ease both; }
+.rde-modal-card-out { animation: rde-card-out .26s cubic-bezier(.4, 0, 1, 1) both; }
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

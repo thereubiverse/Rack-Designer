@@ -44,7 +44,7 @@ export function Select({
         className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800 transition-colors hover:bg-neutral-100"
       >
         <span className={`truncate ${selected ? "" : "text-neutral-400"}`}>{selected ? selected.label : placeholder}</span>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-neutral-400"><path d="M6 9l6 6l6 -6" /></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="rde-editable-affordance shrink-0 text-neutral-400"><path d="M6 9l6 6l6 -6" /></svg>
       </button>
 
       {open && (

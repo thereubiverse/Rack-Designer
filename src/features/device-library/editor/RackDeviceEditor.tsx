@@ -45,6 +45,9 @@ export interface RackDeviceEditorProps {
   saving?: boolean;
   error?: string | null;
   readOnly?: boolean;
+  /** Called from the read-only preview's "Editor" button to switch this same modal into edit
+   *  mode (parent flips readOnly off). Undefined when there's nothing to switch into. */
+  onEnterEdit?: () => void;
   onSave: (draft: DeviceDraft) => void;
   onCancel: () => void;
   onCreateBrand?: (name: string) => Promise<BrandRow | null>;
@@ -53,11 +56,28 @@ export interface RackDeviceEditorProps {
 
 export function RackDeviceEditor(props: RackDeviceEditorProps) {
   const ro = props.readOnly === true;
+  // Whether this modal opened as a preview that can enter the editor. Captured once so the "Editor"
+  // button keeps rendering (and fades out) through the transition, even though onEnterEdit becomes
+  // undefined the moment the parent switches to edit mode.
+  const canEnterEdit = useRef(!!props.onEnterEdit).current;
+  // The read-only preview and the editor are one and the same DOM: the editor-only sections stay
+  // collapsed (grid-rows 0fr) while `ro` is true and grow open when it flips false, so the preview
+  // literally morphs into the editor. `settled` flips overflow back to visible once the grow
+  // finishes so dropdowns aren't clipped mid-animation.
+  const [settled, setSettled] = useState(!ro);
+  useEffect(() => {
+    if (ro) { setSettled(false); return; }
+    const timer = setTimeout(() => setSettled(true), 620);
+    return () => clearTimeout(timer);
+  }, [ro]);
   const { draft, activeFace, setField, setActiveSide, setActiveFace, errors, isValid, isDirty } = useDeviceDraft(props.initial);
   // Shown when the user tries to close a device that has unsaved work (Cancel / ✕ / Escape).
   const [confirmClose, setConfirmClose] = useState(false);
+  // Play the close animation, then actually dismiss (unmount) once it finishes — mirrors the open.
+  const [closing, setClosing] = useState(false);
+  const closeNow = () => { setClosing(true); window.setTimeout(() => props.onCancel(), 260); };
   // Every close path routes through here: warn first if there's unsaved work, else close.
-  function attemptClose() { if (isDirty) setConfirmClose(true); else props.onCancel(); }
+  function attemptClose() { if (isDirty) setConfirmClose(true); else closeNow(); }
   const [brands, setBrands] = useState(props.brands);
 
   // Applies a wizard result to the draft: replaces the current side's face outright,
@@ -226,8 +246,8 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
   // (on macOS the "delete" key reports as Backspace, so handle both).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (ro) { if (e.key === "Escape") props.onCancel(); return; }
-      if (e.key === "Escape") { if (isDirty) setConfirmClose(true); else props.onCancel(); return; }
+      if (ro) { if (e.key === "Escape") closeNow(); return; }
+      if (e.key === "Escape") { if (isDirty) setConfirmClose(true); else closeNow(); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const t = e.target as HTMLElement | null;
         const tag = t?.tagName;
@@ -252,33 +272,27 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
       data-testid="rack-device-editor"
       role="dialog"
       aria-label="Rack Device Editor"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-[6vh]"
+      className={`${closing ? "rde-modal-backdrop-out" : "rde-modal-backdrop"} fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-[6vh]`}
     >
-      <div className="no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
+      <div data-testid={ro ? "device-preview" : undefined} className={`${closing ? "rde-modal-card-out" : "rde-modal-card"} no-select-ui w-full max-w-[1000px] rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl`}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Rack Device Editor</h2>
-          {/* Top-right: the Device Wizard (upload) when editable + enabled; otherwise the ✕ close.
-              Editing closes via the bottom Cancel button when the wizard occupies this slot. */}
-          {!ro && props.wizardEnabled ? (
+          {/* The heading cross-fades "Preview" -> "Editor" in place as the modal morphs. */}
+          <h2 className="relative whitespace-nowrap text-lg font-bold">
+            <span style={{ opacity: ro ? 0 : 1, transition: "opacity .4s ease" }}>Rack Device Editor</span>
+            <span className="absolute inset-0 whitespace-nowrap" style={{ opacity: ro ? 1 : 0, transition: "opacity .4s ease" }}>Rack Device Preview</span>
+          </h2>
+          {/* Device Wizard (upload) only while editable; the preview has no top-right control. */}
+          {!ro && props.wizardEnabled && (
             <DeviceWizard enabled hasKey={props.wizardHasKey} widthIn={draft.widthIn} rackUnits={draft.rackUnits} onApply={applyWizard} />
-          ) : (
-            <button aria-label="Close" onClick={ro ? props.onCancel : attemptClose} className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100">✕</button>
           )}
         </div>
-
-        {ro && (
-          <div data-testid="readonly-banner" className="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 8h.01M11 12h1v4h1" /></svg>
-            You are viewing this custom rack device in read-only mode.
-          </div>
-        )}
 
         {/* Header fields — Rack units + Width kept narrow so the wider Name/Brand/
             Device type columns have room (e.g. the brand "＋" edit row). */}
         <fieldset disabled={ro} className="contents">
         <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-[1.6fr_1.2fr_1.2fr_0.7fr_0.9fr]">
           <label className="flex flex-col text-xs font-semibold text-neutral-600">
-            Name *
+            <span>Name <span style={{ opacity: ro ? 0 : 1, transition: "opacity .4s ease" }}>*</span></span>
             <input
               className="mt-1 h-10 rounded-lg border border-neutral-200 px-3 text-sm font-normal text-neutral-800"
               value={draft.name}
@@ -305,7 +319,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           </div>
 
           <div className="flex flex-col text-xs font-semibold text-neutral-600">
-            Device type *
+            <span>Device type <span style={{ opacity: ro ? 0 : 1, transition: "opacity .4s ease" }}>*</span></span>
             <Select
               testId="device-type-trigger"
               ariaLabel="Device type"
@@ -335,7 +349,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 value={draft.widthIn}
                 onChange={(e) => setField("widthIn", Math.min(Number(e.target.value), MAX_BODY_WIDTH_IN))}
               />
-              <div className="absolute inset-y-1 right-1 flex w-5 flex-col overflow-hidden rounded border border-neutral-200">
+              <div className="rde-editable-affordance absolute inset-y-1 right-1 flex w-5 flex-col overflow-hidden rounded border border-neutral-200">
                 <button type="button" tabIndex={-1} aria-label="Increase width by 0.1"
                   className="flex flex-1 items-center justify-center text-neutral-500 transition-colors hover:bg-neutral-100"
                   onClick={() => stepWidth(0.1)}>
@@ -356,11 +370,16 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             current group/port — group boxes and port targets stopPropagation so
             selecting them isn't undone by this. */}
         <div
-          className={`rounded-xl border border-neutral-100 bg-neutral-100 p-4 ${ro ? "pointer-events-none opacity-70" : ""}`}
+          className="rounded-xl border border-neutral-100 bg-neutral-100 p-4"
           onClick={() => clearSelection()}
-          inert={ro || undefined}
         >
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          {/* Top toolbar: the palette collapses/slides in on the left while Front/Back stays pinned
+              at the top-right — aligned with the palette's top edge — and never moves or resizes.
+              Front/Back stays interactive in the preview; the palette (hidden) is inert there. */}
+          <div className="mb-3 flex items-start justify-between gap-3">
+          <div className={`rde-collapse min-w-0 flex-1 ${!ro ? "rde-open" : ""}`} style={{ transitionDelay: !ro ? ".05s" : "0s" }} inert={ro || undefined}>
+          <div className="rde-collapse-inner" style={{ overflow: settled ? "visible" : "hidden" }}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-stretch gap-2">
               <span className="flex items-center justify-center text-[10px] font-medium text-neutral-400" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>Port Types</span>
               <div className="grid grid-cols-5 gap-2 rounded-lg border border-neutral-200 bg-white p-2">
@@ -452,9 +471,11 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19.95 11a8 8 0 1 0 -.5 4" /><path d="M20 4.5v5h-5" /></svg>
               </button>
             </div>
-            <div className="flex flex-col gap-2">
-              <div className="relative flex h-9 rounded-lg border border-neutral-200 bg-white p-0.5 text-xs font-semibold">
-                {/* sliding black indicator behind the labels */}
+          </div>
+          </div>
+          </div>
+            <div className="flex shrink-0 flex-col">
+              <div className="relative flex h-9 w-[141px] rounded-lg border border-neutral-200 bg-white p-0.5 text-xs font-semibold">
                 <span className={`pointer-events-none absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-md bg-neutral-900 transition-transform duration-200 ${draft.activeSide === "back" ? "translate-x-full" : "translate-x-0"}`} />
                 <button type="button"
                   className={`relative z-10 flex flex-1 items-center justify-center rounded-md px-2.5 transition-colors ${draft.activeSide === "front" ? "text-white" : "text-neutral-500"}`}
@@ -463,14 +484,20 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                   className={`relative z-10 flex flex-1 items-center justify-center rounded-md px-2.5 transition-colors ${draft.activeSide === "back" ? "text-white" : "text-neutral-500"}`}
                   onClick={() => switchSide("back")}>Back</button>
               </div>
+              {/* Rack Mounted slides in under the pinned toggle (its original spot) so the palette
+                  keeps its full width and Front/Back stays put. */}
+              <div className={`rde-collapse ${!ro ? "rde-open" : ""}`} style={{ transitionDelay: !ro ? ".05s" : "0s" }} inert={ro || undefined}>
+              <div className="rde-collapse-inner" style={{ overflow: settled ? "visible" : "hidden" }}>
               <button type="button" aria-pressed={draft.rackMounted}
-                className="flex h-9 items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs font-medium transition-colors hover:bg-neutral-100"
+                className="mt-2 flex h-9 w-[141px] items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs font-medium transition-colors hover:bg-neutral-100"
                 onClick={() => setField("rackMounted", !draft.rackMounted)}>
                 Rack Mounted
                 <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors ${draft.rackMounted ? "bg-blue-600" : "bg-neutral-300"}`}>
                   <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-all ${draft.rackMounted ? "left-3.5" : "left-0.5"}`} />
                 </span>
               </button>
+              </div>
+              </div>
             </div>
           </div>
 
@@ -555,6 +582,11 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
           </div>
         </div>
 
+        {/* Defense-in-depth: even though the inert canvas already prevents any selection in
+            read-only, guard the settings panel itself so its controls are dead if a selection
+            ever exists. inert is layout-neutral. */}
+        <div className={`rde-collapse ${!ro ? "rde-open" : ""}`} style={{ transitionDelay: !ro ? ".1s" : "0s" }} inert={ro || undefined}>
+        <div className="rde-collapse-inner" style={{ overflow: settled ? "visible" : "hidden" }}>
         {selectedIcons.length > 0 ? (
           <div className="mt-4 rounded-xl border border-neutral-200 p-4">
             <IconSettings
@@ -596,6 +628,24 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
                 group={selectedGroup}
                 onChange={(patch) => setActiveFace(updatePortGroup(activeFace, selectedGroup.id, patch))}
                 onDelete={() => { setActiveFace(deletePortGroup(activeFace, selectedGroup.id)); clearSelection(); }}
+                layout={selectedGroup.rows > 1 ? (() => {
+                  const cols = selectedGroup.cols;
+                  const rowIndices = (r: number) => Array.from({ length: cols }, (_, i) => r * cols + i);
+                  const sorted = [...selectedPortIndices].sort((a, b) => a - b);
+                  const activeRow = sorted.length === cols && sorted[0] % cols === 0 && sorted.every((v, i) => v === sorted[0] + i)
+                    ? sorted[0] / cols : null;
+                  const labelPos = activeRow == null ? null
+                    : (layoutPortGroup(selectedGroup, dims.heightPx).cells.find((c) => c.index === activeRow * cols)?.labelPos ?? "top");
+                  return {
+                    activeRow,
+                    labelPos,
+                    onSelectRow: (r: number) => { setSelectedElementIds([]); setSelectedGroupIds([selectedGroup.id]); setSelectedPortIndices(rowIndices(r)); },
+                    onToggleLabel: () => {
+                      if (activeRow == null || labelPos == null) return;
+                      setActiveFace(patchPorts(activeFace, [{ groupId: selectedGroup.id, indices: rowIndices(activeRow) }], { labelPos: labelPos === "top" ? "bottom" : "top" }));
+                    },
+                  };
+                })() : undefined}
               />
             </div>
             <div className="flex w-full flex-col rounded-lg border border-dashed border-neutral-300 p-3 sm:w-[230px]">
@@ -642,28 +692,32 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
             Drag a port type onto the grid to add a group. Select a group to edit it; shift+click to select several.
           </div>
         )}
+        </div>
+        </div>
 
         {props.error && <p className="mt-3 text-sm text-red-600">{props.error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
-          {ro ? (
-            <button type="button" data-testid="editor-close" onClick={props.onCancel}
-              className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Close</button>
-          ) : (
-            <>
-              <button type="button" data-testid="editor-cancel" onClick={attemptClose}
-                className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
-              <button
-                type="button"
-                data-testid="editor-save"
-                disabled={!isValid || props.saving}
-                onClick={() => onSaveGuard(isValid, props.saving, () => props.onSave(draft))}
-                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
-              >
-                {props.saving ? "Saving…" : props.mode === "create" ? "Create" : "Save"}
-              </button>
-            </>
-          )}
+          <button type="button" data-testid="editor-cancel" onClick={ro ? closeNow : attemptClose}
+            className="rounded-lg border border-neutral-200 px-5 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Close</button>
+          {/* Primary action cross-fades "Editor" (preview) -> "Save" (editor) in place. */}
+          <div className="relative">
+            <button
+              type="button"
+              data-testid="editor-save"
+              disabled={ro || !isValid || props.saving}
+              onClick={() => onSaveGuard(isValid, props.saving, () => props.onSave(draft))}
+              style={{ opacity: ro ? 0 : (!isValid || props.saving ? 0.4 : 1), pointerEvents: ro ? "none" : "auto", transition: "opacity .4s ease" }}
+              className="w-[92px] rounded-lg bg-blue-600 py-2 text-center text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
+            >
+              {props.saving ? "Saving…" : props.mode === "create" ? "Create" : "Save"}
+            </button>
+            {canEnterEdit && (
+              <button type="button" data-testid="preview-enter-editor" onClick={props.onEnterEdit}
+                style={{ opacity: ro ? 1 : 0, pointerEvents: ro ? "auto" : "none", transition: "opacity .4s ease" }}
+                className="absolute inset-0 w-[92px] rounded-lg bg-blue-600 py-2 text-center text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]">Edit</button>
+            )}
+          </div>
         </div>
 
         {/* consumed so errors object isn't flagged as unused when wired in 3b */}
@@ -722,7 +776,7 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
               <button
                 type="button"
                 data-testid="discard-confirm-btn"
-                onClick={() => { setConfirmClose(false); props.onCancel(); }}
+                onClick={() => { setConfirmClose(false); closeNow(); }}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
               >
                 Discard

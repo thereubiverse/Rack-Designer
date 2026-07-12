@@ -1,6 +1,14 @@
 "use client";
 
 import { CONNECTORS, type PortGroup, type CountingDirection, type Media } from "@/domain/faceplate";
+import { PortGroupLayout } from "./PortGroupLayout";
+
+export interface PortGroupLayoutProps {
+  activeRow: number | null;
+  labelPos: "top" | "bottom" | null;
+  onSelectRow: (row: number) => void;
+  onToggleLabel: () => void;
+}
 
 const MEDIA_LABELS: Record<Media, string> = {
   copper: "Copper", fiber: "Fiber", sfp: "SFP", usb_a: "USB-A", usb_c: "USB-C",
@@ -15,12 +23,13 @@ const DIRECTIONS: { value: CountingDirection; label: string }[] = [
 ];
 
 export function PortGroupSettings({
-  group, onChange, onDelete, embedded,
+  group, onChange, onDelete, embedded, layout,
 }: {
   group: PortGroup;
   onChange: (patch: Partial<Pick<PortGroup, "idPrefix" | "countingDirection" | "connectorType">>) => void;
   onDelete: () => void;
   embedded?: boolean;
+  layout?: PortGroupLayoutProps;
 }) {
   return (
     <div data-testid="pg-settings" className={embedded ? "" : "mt-4 rounded-xl border border-neutral-200 p-4"}>
@@ -59,6 +68,7 @@ export function PortGroupSettings({
             {CONNECTORS[group.media].map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
+        {layout && <PortGroupLayout media={group.media} rows={group.rows} {...layout} />}
       </div>
     </div>
   );

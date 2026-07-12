@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RackDeviceEditor } from "./RackDeviceEditor";
 import type { DeviceTypeRow, BrandRow } from "../repository";
@@ -169,7 +169,7 @@ describe("RackDeviceEditor", () => {
     const onCancel = vi.fn();
     render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.click(screen.getByTestId("editor-cancel"));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1)); // after the close animation
   });
 
   it("clicking the backdrop does NOT close the editor (guards against stray drag-releases)", async () => {
@@ -189,7 +189,7 @@ describe("RackDeviceEditor", () => {
     expect(onCancel).not.toHaveBeenCalled();               // held back by the warning
     expect(screen.getByTestId("discard-confirm")).toBeInTheDocument();
     await user.click(screen.getByTestId("discard-confirm-btn"));
-    expect(onCancel).toHaveBeenCalledTimes(1);              // Discard closes
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1)); // Discard closes (after animation)
   });
 
   it("'Keep editing' dismisses the warning without closing", async () => {
@@ -216,7 +216,7 @@ describe("RackDeviceEditor", () => {
     const onCancel = vi.fn();
     render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={onCancel} />);
     await user.keyboard("{Escape}");
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -539,17 +539,22 @@ describe("RackDeviceEditor + Device Wizard", () => {
 });
 
 describe("RackDeviceEditor read-only mode", () => {
-  it("shows the banner, disables fields, and offers only Close", async () => {
+  it("shows a read-only preview (title, disabled fields) with an Editor action", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
+    const onEnterEdit = vi.fn();
     render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
-      initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
-    expect(screen.getByText(/read-only mode/i)).toBeInTheDocument();
+      initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} onEnterEdit={onEnterEdit} />);
+    expect(screen.getByTestId("device-preview")).toBeInTheDocument();
+    expect(screen.getByText("Rack Device Preview")).toBeInTheDocument();
+    // The fields render (same DOM as the editor) but are disabled and show their values.
     expect(screen.getByLabelText(/name/i)).toBeDisabled();
-    expect(screen.queryByTestId("editor-save")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("editor-cancel")).not.toBeInTheDocument();
-    await user.click(screen.getByTestId("editor-close"));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText(/name/i)).toHaveValue("Switch");
+    // The primary action is Editor (not Save); the wizard upload is hidden.
+    await user.click(screen.getByTestId("preview-enter-editor"));
+    expect(onEnterEdit).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("editor-cancel"));
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
   });
 
   it("Escape closes immediately in read-only mode (no discard warning)", async () => {
@@ -558,13 +563,15 @@ describe("RackDeviceEditor read-only mode", () => {
     render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={onCancel} />);
     await user.keyboard("{Escape}");
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("discard-confirm")).not.toBeInTheDocument();
   });
 
-  it("marks the palette and canvas inert so keyboard/programmatic activation is blocked", () => {
-    const { container } = render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
+  it("hides the Editor button when entering the editor isn't available", () => {
+    render(<RackDeviceEditor mode="edit" readOnly types={types} brands={brands} wizardEnabled wizardHasKey
       initial={{ name: "Switch", deviceTypeId: "t1", widthIn: 19 }} onSave={noop} onCancel={noop} />);
-    expect(container.querySelectorAll("[inert]").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("device-preview")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-enter-editor")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor-cancel")).toBeInTheDocument();
   });
 });
