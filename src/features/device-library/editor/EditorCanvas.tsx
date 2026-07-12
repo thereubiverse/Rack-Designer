@@ -474,19 +474,33 @@ export function EditorCanvas(props: EditorCanvasProps) {
   // same delta; "a"/"b" drags just that endpoint (device px, snapped to GRID_PX when enabled).
   type LineDrag = { kind: "line"; id: string; mode: "move" | "a" | "b"; startX: number; startY: number; ox1: number; oy1: number; ox2: number; oy2: number };
   const [lineDrag, setLineDrag] = useState<LineDrag | null>(null);
+  // Tracks the total delta-since-drag-start already sent for a "move" (body-translate) drag.
+  // Must live in a ref, not a closure-local variable inside the effect below: `onTranslateLine`
+  // calls back up into `setActiveFace`, which re-renders this component and (since the effect's
+  // deps include `props`, which is a fresh object every render) tears down and re-creates the
+  // effect on every single pointermove. A closure-local `let lastDx/lastDy` would reset to 0 on
+  // each re-creation, so the next pointermove would resend the full delta-since-drag-start on top
+  // of what was already applied — the line drifts ahead of the cursor and compounds. A ref
+  // survives the effect re-creation, so the increment tracking stays correct regardless of how
+  // often the effect re-runs.
+  const lineMoveLast = useRef({ dx: 0, dy: 0 });
   useEffect(() => {
     if (!lineDrag) return;
     const d = lineDrag;
     // `translateLine` is delta-based (adds to whatever the face currently holds), unlike the
     // absolute-set box ops, so a "move" drag must send only the INCREMENT since the last event —
     // sending the full since-drag-start delta on every move would re-apply already-applied motion.
-    let lastDx = 0, lastDy = 0;
+    // NOTE: `lineMoveLast` is reset at drag START (in the pointerDown handlers below), NOT here —
+    // this effect body re-runs on every pointermove during a "move" drag (see the ref comment
+    // above), so resetting it here would zero out the increment tracking on every single event
+    // and reintroduce the same double-apply bug this ref exists to fix.
     function onMove(e: PointerEvent) {
       const s = scaleRef.current || 1;
       const dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
       if (d.mode === "move") {
-        props.onTranslateLine?.(d.id, dx - lastDx, dy - lastDy);
-        lastDx = dx; lastDy = dy;
+        const last = lineMoveLast.current;
+        props.onTranslateLine?.(d.id, dx - last.dx, dy - last.dy);
+        lineMoveLast.current = { dx, dy };
       } else {
         // Endpoint drags are absolute (mirrors the box move/resize pattern): recompute from the
         // original endpoint each event, so out-of-order/duplicate events can't drift.
@@ -891,7 +905,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
             return (
               <div key={el.id} data-testid={`line-el-${el.id}`}>
                 {/* invisible fat hit line for click/drag along the segment (also the marquee's hit target) */}
-                <svg style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none", zIndex: 21 }}>
+                <svg width="100%" height="100%" style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none", zIndex: 21 }}>
                   <line
                     data-testid={`el-hit-${el.id}`}
                     x1={earX + el.x1} y1={el.y1} x2={earX + el.x2} y2={el.y2}
@@ -901,6 +915,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                     onPointerDown={(e) => {
                       if (e.button !== 0) return;
                       e.stopPropagation();
+                      lineMoveLast.current = { dx: 0, dy: 0 };
                       setLineDrag({ kind: "line", id: el.id, mode: "move", startX: e.clientX, startY: e.clientY, ox1: el.x1, oy1: el.y1, ox2: el.x2, oy2: el.y2 });
                     }}
                   />

@@ -418,6 +418,48 @@ describe("RackDeviceEditor — palette drag ghost", () => {
   });
 });
 
+describe("RackDeviceEditor — line element body-drag", () => {
+  // Regression test for a critical bug: dragging a line's body (translate) drifted ahead of the
+  // cursor and compounded (a 20px cursor move produced a 30px line move). Root cause was that the
+  // body-drag effect's "last delta sent" bookkeeping lived in a plain closure variable, which got
+  // reset to 0 every time the effect was torn down and re-created — and it WAS re-created on every
+  // pointermove, because RackDeviceEditor wires onTranslateLine with an inline arrow function
+  // (`onTranslateLine={(id, dx, dy) => setActiveFace(...)}`, line ~642) that's a fresh object every
+  // render, and `setActiveFace` itself triggers that render. This test goes through the real
+  // RackDeviceEditor (not a hand-rolled stable-callback harness) specifically so that churn occurs.
+  const lineFace: Face = {
+    portGroups: [],
+    elements: [{ id: "ln1", kind: "line", x1: 20, y1: 20, x2: 80, y2: 20, stroke: "#111418", strokeWidth: 1.5 }],
+  };
+
+  it("a two-step body-drag (10px then another 10px) moves the line exactly 20px total, not 30", () => {
+    render(
+      <RackDeviceEditor
+        mode="create"
+        types={types}
+        brands={brands}
+        wizardEnabled
+        wizardHasKey
+        initial={{ frontFace: lineFace }}
+        onSave={noop}
+        onCancel={noop}
+      />,
+    );
+    const hit = screen.getByTestId("el-hit-ln1");
+    const x1Before = Number(hit.getAttribute("x1"));
+    const x2Before = Number(hit.getAttribute("x2"));
+
+    fireEvent.pointerDown(hit, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { clientX: 10, clientY: 0 }); // +10 since drag start
+    fireEvent.pointerMove(window, { clientX: 20, clientY: 0 }); // +20 since drag start (a further +10 increment)
+    fireEvent.pointerUp(window, { clientX: 20, clientY: 0 });
+
+    const hitAfter = screen.getByTestId("el-hit-ln1");
+    expect(Number(hitAfter.getAttribute("x1")) - x1Before).toBe(20);
+    expect(Number(hitAfter.getAttribute("x2")) - x2Before).toBe(20);
+  });
+});
+
 describe("RackDeviceEditor — multi-select (shift+click)", () => {
   // Two non-overlapping 2-port groups so both single- and multi-group paths are testable.
   const twoGroupFace: Face = {
