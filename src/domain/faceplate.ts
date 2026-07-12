@@ -50,7 +50,8 @@ export interface TextElement {
   h: number;
   content: string;
   alignment: "left" | "center" | "right";
-  highlighted: boolean;
+  fontSize: number;
+  color?: string;   // defaults to faceplate ink when unset
 }
 
 export interface IconElement {
@@ -61,11 +62,36 @@ export interface IconElement {
   w: number;
   h: number;
   iconName: string;
-  color?: string;   // CSS color; defaults to the faceplate ink colour when unset
-  opacity?: number; // 0–1; defaults to 1 when unset
+  color?: string;
+  opacity?: number;
 }
 
-export type FaceElement = TextElement | IconElement;
+export interface ShapeElement {
+  id: string;
+  kind: "shape";
+  shape: "rect" | "ellipse";
+  gridX: number;
+  gridY: number;
+  w: number;
+  h: number;
+  fill?: string;        // defaults to "none"
+  stroke?: string;      // defaults to faceplate ink
+  strokeWidth?: number; // defaults to 1.5
+}
+
+export interface LineElement {
+  id: string;
+  kind: "line";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  stroke: string;
+  strokeWidth: number;
+}
+
+export type BoxElement = TextElement | IconElement | ShapeElement;
+export type FaceElement = BoxElement | LineElement;
 
 export interface Face {
   portGroups: PortGroup[];

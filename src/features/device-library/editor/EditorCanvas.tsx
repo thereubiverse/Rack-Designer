@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX, RU_PX } from "@/domain/faceplate-geometry";
-import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
+import { MEDIA, type Face, type Media, type PortGroup, type IconElement } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
 import { resolveIconResize, resolveIconGroupResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
@@ -778,7 +778,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   // Drag the whole multi-selection together if this icon is part of it, else just this one.
                   const sel = props.selectedElementIds ?? [];
                   const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                  const picked = face.elements.filter((x) => x.kind === "icon" && ids.includes(x.id));
+                  const picked = face.elements.filter((x) => x.kind === "icon" && ids.includes(x.id)) as IconElement[];
                   let dragIds = picked.map((x) => x.id);
                   if (e.altKey && props.onDuplicateElements) { // Alt/Option+drag → drag fresh copies
                     const newIds = props.onDuplicateElements(dragIds);
@@ -805,8 +805,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           // Resize acts on the whole selection (anchored on this icon) if this icon is part of it.
                           const sel = props.selectedElementIds ?? [];
                           const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                          const origs = face.elements
-                            .filter((x) => x.kind === "icon" && ids.includes(x.id))
+                          const origs = (face.elements
+                            .filter((x) => x.kind === "icon" && ids.includes(x.id)) as IconElement[])
                             .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                           setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
                         }}
