@@ -6,7 +6,7 @@ import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_P
 import { MEDIA, type Face, type Media, type PortGroup, type FaceElement, type BoxElement } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
-import { resolveIconResize, resolveIconGroupResize, resolveElementsResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
+import { resolveIconResize, resolveIconGroupResize, resolveElementsResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
 
 // How close (screen px) a group edge/gap must get before a smart guide snaps.
 const GUIDE_THRESHOLD_PX = 6;
@@ -437,7 +437,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
   // Icon element move/resize: commits live (the elements re-render at their new box each move).
   // A move carries the whole selected set (so they move together); a resize is a single element.
-  type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number };
+  type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number; rotation?: number };
   const [elDrag, setElDrag] = useState<
     { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string; anchorKind?: BoxElement["kind"] } | null
   >(null);
@@ -457,6 +457,20 @@ export function EditorCanvas(props: EditorCanvasProps) {
         const res = resolveIconDrag(d.origs, dx, dy); // smart guides → grid → clamped to the body
         props.onMoveElements?.(d.origs.map((o) => ({ id: o.id, gridX: o.gridX + res.dx, gridY: o.gridY + res.dy })));
         setElGuides(res.lines.length || res.spacings.length ? { lines: res.lines, spacings: res.spacings } : null);
+      } else if (d.origs.length === 1 && d.origs[0].rotation) {
+        // Rotated single element: scale from the bottom-right handle along the box's OWN axes,
+        // keeping the (rotated) top-left corner pinned. Project the screen drag onto the local
+        // axes for the new w/h, then re-place gridX/gridY so that top-left corner stays fixed.
+        const o = d.origs[0];
+        const th = (o.rotation! * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
+        const w = Math.max(ICON_MIN_SIZE, o.w + dx * c + dy * sn);
+        const h = Math.max(ICON_MIN_SIZE, o.h - dx * sn + dy * c);
+        const rot = (vx: number, vy: number) => ({ x: vx * c - vy * sn, y: vx * sn + vy * c }); // matches SVG rotate()
+        const cx = o.gridX + o.w / 2, cy = o.gridY + o.h / 2;
+        const tl = rot(-o.w / 2, -o.h / 2), br = rot(w / 2, h / 2); // top-left (pinned) + new bottom-right offsets
+        const ncx = cx + tl.x + br.x, ncy = cy + tl.y + br.y;       // new centre keeps top-left fixed
+        props.onResizeElements?.([{ id: o.id, w, h }]);
+        props.onMoveElements?.([{ id: o.id, gridX: ncx - w / 2, gridY: ncy - h / 2 }]);
       } else {
         // Resize the whole selection from the anchor handle; Shift forces one uniform size,
         // otherwise every box scales by the same factor, clamped per-box to its own room.
@@ -857,13 +871,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   const origs = picked.map((x, i) => ({ id: dragIds[i], gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                   setElDrag({ ids: dragIds, mode: "move", startX: e.clientX, startY: e.clientY, origs });
                 }}
-                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
+                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22, transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }}
               >
                 {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
                 <div data-testid={`el-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
                 {selected && (
                   <>
-                    <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none", transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }} />
+                    <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none" }} />
                     {props.onResizeElements && (onlySelected || hoverElId === el.id) && (
                       <div
                         data-testid="icon-el-resize"
@@ -876,7 +890,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
                           const origs = face.elements
                             .filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id))
-                            .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
+                            .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h, rotation: x.rotation }));
                           setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id, anchorKind: el.kind });
                         }}
                         style={{ position: "absolute", right: -6, bottom: -6, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 23 }}
