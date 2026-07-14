@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, type RackPlacementRender } from "./RackFrame";
-import { RU_PX } from "@/domain/faceplate-geometry";
+import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
 import { samePort, type Connection, type PortRef } from "./connectionOps";
@@ -255,17 +255,32 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
             className="absolute cursor-pointer rounded hover:bg-blue-50/60"
             style={{ left: ix, top: ruTopY(u, 1, heightU), width: RACK_INTERIOR_W, height: RU_PX }} />
         ))}
-        {/* device hit boxes */}
+        {/* device hit boxes — ONLY the mounting ears select a device. The container is
+           pointer-events:none so clicks on the faceplate body (and the port dots in the overlay
+           painted above) are never intercepted — even when the device is selected and raised to
+           z-10 — so a selected device's own ports stay patchable. */}
         {placements.map((p) => {
           // Base RU position; during a grip-drag the box is offset imperatively (see the drag effect).
           const top = ruTopY(p.startU, p.template.rackUnits, heightU);
           const h = p.template.rackUnits * RU_PX;
           const selected = p.id === selectedId;
+          const earPx = frameDims({ widthIn: p.template.widthIn, rackUnits: p.template.rackUnits, rackMounted: p.template.rackMounted }).earWidthPx;
+          // Selectable strips: the two ears when present, else the whole body (so an ear-less,
+          // non-rack-mounted device isn't left unselectable).
+          const ears = earPx > 0
+            ? [{ key: "l", left: 0 }, { key: "r", left: RACK_INTERIOR_W - earPx }]
+            : [{ key: "full", left: 0 }];
+          const earW = earPx > 0 ? earPx : RACK_INTERIOR_W;
           return (
             <div key={p.id} data-testid={`rack-dev-${p.id}`}
-              onClick={(e) => { e.stopPropagation(); props.onSelect(p.id); }}
               className={`absolute ${selected ? "z-10" : ""}`}
-              style={{ left: ix, top, width: RACK_INTERIOR_W, height: h, cursor: "pointer" }}>
+              style={{ left: ix, top, width: RACK_INTERIOR_W, height: h, pointerEvents: "none" }}>
+              {ears.map((ear) => (
+                <div key={ear.key} data-testid={`rack-dev-ear-${ear.key}-${p.id}`}
+                  onClick={(e) => { e.stopPropagation(); props.onSelect(p.id); }}
+                  className="absolute top-0 h-full cursor-pointer"
+                  style={{ left: ear.left, width: earW, pointerEvents: "auto" }} />
+              ))}
               {selected && (
                 <>
                   <div className="pointer-events-none absolute -inset-0.5 rounded border-2 border-blue-500" />
@@ -276,7 +291,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
                       dragRef.current = { id: p.id, startY: e.clientY, origU: p.startU, ru: p.template.rackUnits, ghostU: p.startU };
                       setDragId(p.id);
                     }}
-                    className="absolute -right-1 top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded bg-blue-600 text-white">
+                    className="pointer-events-auto absolute -right-1 top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded bg-blue-600 text-white">
                     <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>
                   </div>
                 </>

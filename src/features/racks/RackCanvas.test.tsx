@@ -23,10 +23,13 @@ describe("RackCanvas", () => {
     fireEvent.click(screen.getByTestId("ru-hit-4"));
     expect(onAddAt).toHaveBeenCalledWith(4);
   });
-  it("clicking a device selects it; grip drag fires onMove with the RU target", () => {
+  it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {
     const onSelect = vi.fn(), onMove = vi.fn();
     const { rerender } = render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
+    // Clicking the body container does not select — only the ear hit-strips do.
     fireEvent.click(screen.getByTestId("rack-dev-d1"));
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("rack-dev-ear-l-d1"));
     expect(onSelect).toHaveBeenCalledWith("d1");
     rerender(<RackCanvas {...base} selectedId="d1" onSelect={onSelect} onMove={onMove} />);
     const grip = screen.getByTestId("rack-grip-d1");
