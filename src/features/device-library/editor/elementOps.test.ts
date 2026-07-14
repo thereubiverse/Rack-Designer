@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
+import { addIconElement, moveElement, resizeElement, deleteElement, setElementIcon, resolveIconResize, resolveIconGroupResize, resolveElementsResize, resizeElements, resolveIconDrop, setElementsColor, setElementsOpacity, duplicateElements, resolveElementsDrag, placeElements, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
+import {
+  addTextElement, addShapeElement, addLineElement, updateElements, rotateElements90,
+  translateLine, moveLineEndpoint, LINE_MIN_LEN,
+} from "./elementOps";
 import type { Face } from "@/domain/faceplate";
+import { emptyFace } from "@/domain/faceplate";
 
 const empty: Face = { portGroups: [], elements: [] };
 
@@ -92,6 +97,49 @@ describe("resolveIconGroupResize", () => {
   });
 });
 
+describe("resolveElementsResize", () => {
+  const bounds = { width: 400, height: 84 };
+  it("single element, non-uniform: grows w by dx and leaves h unchanged when dy=0 (no square-lock)", () => {
+    const boxes = [{ id: "a", gridX: 10, gridY: 10, w: 40, h: 20 }];
+    expect(resolveElementsResize(boxes, "a", 20, 0, bounds, false)).toEqual([
+      { id: "a", w: 60, h: 20 },
+    ]);
+  });
+  it("multi-element, non-uniform: scales every box by the anchor's per-axis factor (keeps relative sizes)", () => {
+    const boxes = [
+      { id: "a", gridX: 0, gridY: 10, w: 40, h: 20 },
+      { id: "b", gridX: 100, gridY: 10, w: 20, h: 10 },
+    ];
+    // anchor a: w 40->60 (factor 1.5), h 20->30 (factor 1.5) -> b scales same factors: 20->30, 10->15
+    expect(resolveElementsResize(boxes, "a", 20, 10, bounds, false)).toEqual([
+      { id: "a", w: 60, h: 30 },
+      { id: "b", w: 30, h: 15 },
+    ]);
+  });
+  it("uniform (Shift): forces every box to a square of the anchor's larger new side", () => {
+    const boxes = [
+      { id: "a", gridX: 0, gridY: 10, w: 40, h: 20 },
+      { id: "b", gridX: 100, gridY: 10, w: 20, h: 10 },
+    ];
+    // anchor a: w 40->60, h 20->25 -> larger side 60 -> broadcast 60x60 to all (clamped per box)
+    expect(resolveElementsResize(boxes, "a", 20, 5, bounds, true)).toEqual([
+      { id: "a", w: 60, h: 60 },
+      { id: "b", w: 60, h: 60 },
+    ]);
+  });
+  it("clamps each result to ICON_MIN_SIZE and to the body per-axis", () => {
+    const boxes = [{ id: "a", gridX: 380, gridY: 10, w: 20, h: 20 }];
+    // w would grow past the body edge (maxW = 400-380 = 20); h stays within room (maxH = 84-10 = 74)
+    expect(resolveElementsResize(boxes, "a", 200, 5, bounds, false)).toEqual([
+      { id: "a", w: 20, h: 25 },
+    ]);
+    // shrinking past the minimum clamps to ICON_MIN_SIZE on both axes
+    expect(resolveElementsResize(boxes, "a", -100, -100, bounds, false)).toEqual([
+      { id: "a", w: ICON_MIN_SIZE, h: ICON_MIN_SIZE },
+    ]);
+  });
+});
+
 describe("resizeElements", () => {
   it("sets sizes on the listed elements (clamped to minimum)", () => {
     const f = addIconElement(addIconElement(empty, { gridX: 0, gridY: 0, iconName: "a" }), { gridX: 10, gridY: 10, iconName: "b" });
@@ -154,4 +202,76 @@ describe("placeElements", () => {
     const out = placeElements(f, [{ id: f.elements[0].id, gridX: 40, gridY: 20 }]).elements[0];
     expect(out).toMatchObject({ gridX: 40, gridY: 20 });
   });
+});
+
+it("addTextElement appends a text element at the drop point", () => {
+  const f = addTextElement(emptyFace(), { gridX: 10, gridY: 20 });
+  expect(f.elements[0]).toMatchObject({ kind: "text", gridX: 10, gridY: 20, content: "Text", alignment: "center" });
+});
+
+it("addShapeElement appends the requested shape", () => {
+  const f = addShapeElement(emptyFace(), "ellipse", { gridX: 5, gridY: 5 });
+  expect(f.elements[0]).toMatchObject({ kind: "shape", shape: "ellipse", gridX: 5, gridY: 5 });
+});
+
+it("addLineElement appends a horizontal line centred on the drop point", () => {
+  const f = addLineElement(emptyFace(), { gridX: 50, gridY: 30 });
+  const l = f.elements[0] as Extract<typeof f.elements[number], { kind: "line" }>;
+  expect(l.kind).toBe("line");
+  expect(l.y1).toBe(30); expect(l.y2).toBe(30);
+  expect(l.x2 - l.x1).toBeGreaterThan(0);
+});
+
+it("updateElements shallow-merges a patch into listed elements of any kind", () => {
+  const f0 = addTextElement(emptyFace(), { gridX: 0, gridY: 0 });
+  const id = f0.elements[0].id;
+  const f1 = updateElements(f0, [id], { content: "Hi", alignment: "left" });
+  expect(f1.elements[0]).toMatchObject({ content: "Hi", alignment: "left" });
+});
+
+it("translateLine shifts both endpoints", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 });
+  const id = f0.elements[0].id;
+  const f1 = translateLine(f0, id, 5, -10);
+  const l = f1.elements[0] as any;
+  expect(l.y1).toBe(20); expect(l.y2).toBe(20);
+});
+
+it("moveLineEndpoint moves one end, never collapsing below LINE_MIN_LEN", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 }); // x1<x2, same y
+  const id = f0.elements[0].id;
+  const l0 = f0.elements[0] as any;
+  const f1 = moveLineEndpoint(f0, id, "b", { x: l0.x1 + 2, y: l0.y1 }); // try to collapse b onto a
+  const l1 = f1.elements[0] as any;
+  expect(Math.hypot(l1.x2 - l1.x1, l1.y2 - l1.y1)).toBeGreaterThanOrEqual(LINE_MIN_LEN - 0.001);
+});
+
+it("rotateElements90 bumps a box element's rotation by 90° (mod 360)", () => {
+  const f0 = addShapeElement(emptyFace(), "rect", { gridX: 0, gridY: 0 });
+  const id = f0.elements[0].id;
+  const f1 = rotateElements90(f0, [id]);
+  expect((f1.elements[0] as { rotation?: number }).rotation).toBe(90);
+  const f4 = rotateElements90(rotateElements90(rotateElements90(f1, [id]), [id]), [id]);
+  expect((f4.elements[0] as { rotation?: number }).rotation).toBe(0);
+});
+
+it("rotateElements90 turns a horizontal line vertical about its midpoint", () => {
+  const f0 = addLineElement(emptyFace(), { gridX: 50, gridY: 30 }); // horizontal, y=30
+  const id = f0.elements[0].id;
+  const l0 = f0.elements[0] as { x1: number; y1: number; x2: number; y2: number };
+  const f1 = rotateElements90(f0, [id]);
+  const l1 = f1.elements[0] as { x1: number; y1: number; x2: number; y2: number };
+  const mx = (l0.x1 + l0.x2) / 2;
+  expect(l1.x1).toBeCloseTo(mx, 5); // both x's collapse to the midpoint x (now vertical)
+  expect(l1.x2).toBeCloseTo(mx, 5);
+  expect(Math.abs(l1.y2 - l1.y1)).toBeCloseTo(Math.abs(l0.x2 - l0.x1), 5); // length preserved
+});
+
+it("setElementsOpacity applies to text/shape/line, not just icons", () => {
+  let f = addTextElement(emptyFace(), { gridX: 0, gridY: 0 });
+  f = addShapeElement(f, "rect", { gridX: 0, gridY: 0 });
+  f = addLineElement(f, { gridX: 0, gridY: 0 });
+  const ids = f.elements.map((e) => e.id);
+  const out = setElementsOpacity(f, ids, 0.5);
+  expect(out.elements.map((e) => (e as { opacity?: number }).opacity)).toEqual([0.5, 0.5, 0.5]);
 });

@@ -69,7 +69,7 @@ function toTextElement(l: DetectedLabel, bounds: GridBounds): TextElement {
     h: ROW_H,
     content: l.text,
     alignment: "center",
-    highlighted: false,
+    fontSize: 11,
   };
 }
 

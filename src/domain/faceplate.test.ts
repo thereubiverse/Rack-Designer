@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MEDIA, CONNECTORS, emptyFace, isValidWidthIn, isValidRackUnits } from "./faceplate";
+import type { FaceElement } from "./faceplate";
 
 describe("faceplate domain", () => {
   it("lists all ten media types", () => {
@@ -27,4 +28,13 @@ describe("faceplate domain", () => {
     expect(isValidRackUnits(1.5)).toBe(false);
     expect(isValidRackUnits(61)).toBe(false);
   });
+});
+
+it("FaceElement union accepts text, shape, and line", () => {
+  const els: FaceElement[] = [
+    { id: "t", kind: "text", gridX: 0, gridY: 0, w: 40, h: 24, content: "A", alignment: "center", fontSize: 11 },
+    { id: "s", kind: "shape", shape: "rect", gridX: 0, gridY: 0, w: 40, h: 24 },
+    { id: "l", kind: "line", x1: 0, y1: 0, x2: 40, y2: 0, stroke: "#111418", strokeWidth: 1.5 },
+  ];
+  expect(els).toHaveLength(3);
 });

@@ -3,10 +3,10 @@
 import { useRef, useState, useEffect } from "react";
 import { Faceplate, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, layoutPortGroup, CELL_W, ROW_H, LABEL_H, RAIL_WIDTH_IN, PX_PER_IN, GRID_PX, RU_PX } from "@/domain/faceplate-geometry";
-import { MEDIA, type Face, type Media, type PortGroup } from "@/domain/faceplate";
+import { MEDIA, type Face, type Media, type PortGroup, type FaceElement, type BoxElement } from "@/domain/faceplate";
 import { maxSpacing, wouldOverlapAt, resolveYOffset, resolveSingleRowBoxOffset, singleRowPositions, rankForRowState, resolveRowRank, twoRowPositions, rankForTwoRowState, labelSidePositions, rankForLabelSide, findFreePosition, SEL_PAD, type Pos } from "./portGroupOps";
 import { computeGuides, guidesForMovingRect, rectOf, type GuideLine, type SpacingGuide, type Rect } from "./alignmentGuides";
-import { resolveIconResize, resolveIconGroupResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE } from "./elementOps";
+import { resolveIconResize, resolveIconGroupResize, resolveElementsResize, resolveIconDrop, resolveElementsDrag, ICON_DEFAULT_SIZE, ICON_MIN_SIZE } from "./elementOps";
 
 // How close (screen px) a group edge/gap must get before a smart guide snaps.
 const GUIDE_THRESHOLD_PX = 6;
@@ -29,8 +29,19 @@ export interface EditorCanvasProps {
   onCreate?: (media: Media, pos: Pos) => void;
   /** Dropping the Icon element chip on the device → open the icon picker at this position. */
   onDropIcon?: (pos: Pos) => void;
+  /** Dropping the Text element chip on the device → create a text element at this position. */
+  onCreateText?: (pos: Pos) => void;
+  /** Dropping the Shape element chip on the device → create a shape element at this position. */
+  onCreateShape?: (pos: Pos) => void;
+  /** Dropping the Line element chip on the device → create a line element at this position. */
+  onCreateLine?: (pos: Pos) => void;
   /** True while the Icon element chip is being dragged (shows the drop-preview box). */
   paletteDragIcon?: boolean;
+  /** Which non-icon element chip (Text/Shape) is being dragged (shows the drop-preview box). */
+  paletteDragElement?: "text" | "shape" | null;
+  // Line elements: move an endpoint, or translate the whole line.
+  onMoveLineEndpoint?: (id: string, which: "a" | "b", pos: { x: number; y: number }) => void;
+  onTranslateLine?: (id: string, dx: number, dy: number) => void;
   // Icon elements: multi-select (marquee + shift+click) / move / resize.
   selectedElementIds?: string[];
   onSelectElement?: (id: string, additive: boolean) => void;
@@ -63,6 +74,10 @@ export interface EditorCanvasProps {
   /** Media of the palette chip currently being dragged (for the drop-preview box). */
   paletteDragMedia?: Media | null;
 }
+
+// A "box" element (icon/text/shape) sits in a gridX/gridY/w/h box and shares the generic
+// select/move/resize overlay below; lines are a separate future overlay.
+const isBoxEl = (e: FaceElement): e is BoxElement => e.kind === "icon" || e.kind === "text" || e.kind === "shape";
 
 export function EditorCanvas(props: EditorCanvasProps) {
   const { face, widthIn, rackUnits, rackMounted, side } = props;
@@ -229,7 +244,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
       return out;
     };
     const groupIds = hits('[data-testid^="glyph-bounds-"]', "glyph-bounds-");
-    const elementIds = hits('[data-testid^="icon-hit-"]', "icon-hit-");
+    const elementIds = hits('[data-testid^="el-hit-"]', "el-hit-");
     props.onMarqueeSelect?.(groupIds, elementIds, additive);
   }
   // Marquee lifecycle: select LIVE as it's dragged (so it never depends on the release point),
@@ -422,9 +437,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
   // Icon element move/resize: commits live (the elements re-render at their new box each move).
   // A move carries the whole selected set (so they move together); a resize is a single element.
-  type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number };
+  type ElBox = { id: string; gridX: number; gridY: number; w: number; h: number; rotation?: number };
   const [elDrag, setElDrag] = useState<
-    { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string } | null
+    { ids: string[]; mode: "move" | "resize"; startX: number; startY: number; origs: ElBox[]; anchorId?: string; anchorKind?: BoxElement["kind"] } | null
   >(null);
   // The icon the cursor is over — its resize handle shows even inside a multi-selection.
   const [hoverElId, setHoverElId] = useState<string | null>(null);
@@ -442,10 +457,35 @@ export function EditorCanvas(props: EditorCanvasProps) {
         const res = resolveIconDrag(d.origs, dx, dy); // smart guides → grid → clamped to the body
         props.onMoveElements?.(d.origs.map((o) => ({ id: o.id, gridX: o.gridX + res.dx, gridY: o.gridY + res.dy })));
         setElGuides(res.lines.length || res.spacings.length ? { lines: res.lines, spacings: res.spacings } : null);
+      } else if (d.origs.length === 1 && d.origs[0].rotation) {
+        // Rotated single element: the handle rides whichever corner is at the *screen*
+        // bottom-right, and the diagonally-opposite (screen top-left) corner stays pinned.
+        // Find those two opposite corners, move the handle one by the drag, then rebuild the
+        // box from the anchor→handle diagonal (its midpoint is the new centre; projecting it
+        // onto the box's own axes gives the new w/h). Reduces to a plain resize at rotation 0.
+        const o = d.origs[0];
+        const th = (o.rotation! * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
+        const cx = o.gridX + o.w / 2, cy = o.gridY + o.h / 2;
+        const corner = (sx: number, sy: number) => {
+          const lx = (sx * o.w) / 2, ly = (sy * o.h) / 2;
+          return { x: cx + lx * c - ly * sn, y: cy + lx * sn + ly * c }; // matches SVG rotate()
+        };
+        const corners = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+        const anchor = corners.reduce((a, b) => (a.x + a.y <= b.x + b.y ? a : b)); // screen top-left
+        const h0 = corners.reduce((a, b) => (a.x + a.y >= b.x + b.y ? a : b));     // screen bottom-right
+        const Dx = h0.x + dx - anchor.x, Dy = h0.y + dy - anchor.y;                // anchor→handle diagonal
+        const w = Math.max(ICON_MIN_SIZE, Math.abs(Dx * c + Dy * sn));            // project onto local axes
+        const h = Math.max(ICON_MIN_SIZE, Math.abs(-Dx * sn + Dy * c));
+        const ncx = anchor.x + Dx / 2, ncy = anchor.y + Dy / 2;                    // centre = diagonal midpoint
+        props.onResizeElements?.([{ id: o.id, w, h }]);
+        props.onMoveElements?.([{ id: o.id, gridX: ncx - w / 2, gridY: ncy - h / 2 }]);
       } else {
         // Resize the whole selection from the anchor handle; Shift forces one uniform size,
-        // otherwise every icon scales by the same factor (kept square + clamped per-icon).
-        props.onResizeElements?.(resolveIconGroupResize(d.origs, d.anchorId ?? d.origs[0].id, dx, dy, bounds, e.shiftKey));
+        // otherwise every box scales by the same factor, clamped per-box to its own room.
+        // Icons stay locked to a square (their existing behavior); text/shape resize each
+        // axis independently so a rectangle can actually become wide/tall, not just bigger.
+        const resolve = d.anchorKind === "icon" ? resolveIconGroupResize : resolveElementsResize;
+        props.onResizeElements?.(resolve(d.origs, d.anchorId ?? d.origs[0].id, dx, dy, bounds, e.shiftKey));
       }
     }
     function onUp() { setElDrag(null); setElGuides(null); }
@@ -453,6 +493,53 @@ export function EditorCanvas(props: EditorCanvasProps) {
     window.addEventListener("pointerup", onUp);
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, [elDrag, props, bounds]);
+
+  // Line element move/reshape: a separate drag state from the box-element `elDrag` above since a
+  // line has no gridX/gridY/w/h box — it's two endpoints. "move" translates both endpoints by the
+  // same delta; "a"/"b" drags just that endpoint (device px, snapped to GRID_PX when enabled).
+  type LineDrag = { kind: "line"; id: string; mode: "move" | "a" | "b"; startX: number; startY: number; ox1: number; oy1: number; ox2: number; oy2: number };
+  const [lineDrag, setLineDrag] = useState<LineDrag | null>(null);
+  // Tracks the total delta-since-drag-start already sent for a "move" (body-translate) drag.
+  // Must live in a ref, not a closure-local variable inside the effect below: `onTranslateLine`
+  // calls back up into `setActiveFace`, which re-renders this component and (since the effect's
+  // deps include `props`, which is a fresh object every render) tears down and re-creates the
+  // effect on every single pointermove. A closure-local `let lastDx/lastDy` would reset to 0 on
+  // each re-creation, so the next pointermove would resend the full delta-since-drag-start on top
+  // of what was already applied — the line drifts ahead of the cursor and compounds. A ref
+  // survives the effect re-creation, so the increment tracking stays correct regardless of how
+  // often the effect re-runs.
+  const lineMoveLast = useRef({ dx: 0, dy: 0 });
+  useEffect(() => {
+    if (!lineDrag) return;
+    const d = lineDrag;
+    // `translateLine` is delta-based (adds to whatever the face currently holds), unlike the
+    // absolute-set box ops, so a "move" drag must send only the INCREMENT since the last event —
+    // sending the full since-drag-start delta on every move would re-apply already-applied motion.
+    // NOTE: `lineMoveLast` is reset at drag START (in the pointerDown handlers below), NOT here —
+    // this effect body re-runs on every pointermove during a "move" drag (see the ref comment
+    // above), so resetting it here would zero out the increment tracking on every single event
+    // and reintroduce the same double-apply bug this ref exists to fix.
+    function onMove(e: PointerEvent) {
+      const s = scaleRef.current || 1;
+      const dx = (e.clientX - d.startX) / s, dy = (e.clientY - d.startY) / s;
+      if (d.mode === "move") {
+        const last = lineMoveLast.current;
+        props.onTranslateLine?.(d.id, dx - last.dx, dy - last.dy);
+        lineMoveLast.current = { dx, dy };
+      } else {
+        // Endpoint drags are absolute (mirrors the box move/resize pattern): recompute from the
+        // original endpoint each event, so out-of-order/duplicate events can't drift.
+        const snap = (v: number) => (props.snapToGrid ? Math.round(v / GRID_PX) * GRID_PX : v);
+        const x = snap((d.mode === "a" ? d.ox1 : d.ox2) + dx);
+        const y = snap((d.mode === "a" ? d.oy1 : d.oy2) + dy);
+        props.onMoveLineEndpoint?.(d.id, d.mode, { x, y });
+      }
+    }
+    function onUp() { setLineDrag(null); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+  }, [lineDrag, props]);
 
   function dropPos(e: React.DragEvent): Pos {
     const rect = overlayRef.current?.getBoundingClientRect();
@@ -537,7 +624,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move"; // suppress the native "+" copy badge
-            if (props.paletteDragIcon) { // the Icon chip → preview where the icon lands
+            if (props.paletteDragIcon || props.paletteDragElement) { // Icon/Text/Shape chip → preview where it lands
               setDragOverPort(null); setDropPreview(null); setIconDropAt(dropPos(e)); return;
             }
             const p = portAt(e.clientX, e.clientY);
@@ -565,6 +652,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
             setDropPreview(null);
             setIconDropAt(null);
             if (payload === "element:icon") { props.onDropIcon?.(dropPos(e)); return; } // opens the icon picker
+            if (payload === "element:text") { props.onCreateText?.(dropPos(e)); return; }
+            if (payload === "element:shape") { props.onCreateShape?.(dropPos(e)); return; }
+            if (payload === "element:line") { props.onCreateLine?.(dropPos(e)); return; }
             const media = payload as Media;
             if (!(MEDIA as string[]).includes(media)) return;
             const p = portAt(e.clientX, e.clientY);
@@ -758,12 +848,23 @@ export function EditorCanvas(props: EditorCanvasProps) {
               </div>
             );
           })}
-          {/* Icon elements — marquee/shift+click select, drag to move, corner handle to resize. */}
+          {/* Box elements (icon/text/shape) — marquee/shift+click select, drag to move, corner
+              handle to resize. Lines are a separate future overlay. */}
           {props.onSelectElement && face.elements.map((el) => {
-            if (el.kind !== "icon") return null;
+            if (!isBoxEl(el)) return null;
             const selIds = props.selectedElementIds ?? [];
             const selected = selIds.includes(el.id);
             const onlySelected = selIds.length === 1 && selIds[0] === el.id;
+            // Keep the resize handle at the *screen* bottom-right as the element rotates:
+            // pick the box corner that a CW rotation maps there (0°→BR, 90°→TR, 180°→TL, 270°→BL).
+            const rk = ((((el.rotation ?? 0) / 90) % 4) + 4) % 4;
+            const handlePos: React.CSSProperties = [
+              { right: -6, bottom: -6 },
+              { right: -6, top: -6 },
+              { left: -6, top: -6 },
+              { left: -6, bottom: -6 },
+            ][rk];
+            const handleCursor = rk % 2 === 0 ? "nwse-resize" : "nesw-resize";
             return (
               <div
                 key={el.id}
@@ -778,7 +879,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   // Drag the whole multi-selection together if this icon is part of it, else just this one.
                   const sel = props.selectedElementIds ?? [];
                   const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
-                  const picked = face.elements.filter((x) => x.kind === "icon" && ids.includes(x.id));
+                  const picked = face.elements.filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id));
                   let dragIds = picked.map((x) => x.id);
                   if (e.altKey && props.onDuplicateElements) { // Alt/Option+drag → drag fresh copies
                     const newIds = props.onDuplicateElements(dragIds);
@@ -788,10 +889,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
                   const origs = picked.map((x, i) => ({ id: dragIds[i], gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
                   setElDrag({ ids: dragIds, mode: "move", startX: e.clientX, startY: e.clientY, origs });
                 }}
-                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22 }}
+                style={{ position: "absolute", left: earX + el.gridX, top: el.gridY, width: el.w, height: el.h, cursor: "move", zIndex: 22, transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined, transformOrigin: "center" }}
               >
                 {/* hidden exact-rect hit target for the marquee (mirrors glyph-bounds) */}
-                <div data-testid={`icon-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+                <div data-testid={`el-hit-${el.id}`} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
                 {selected && (
                   <>
                     <div data-testid="icon-el-box" style={{ position: "absolute", inset: -2, border: "1px solid #2d5bff", borderRadius: 4, background: "rgba(45,91,255,0.06)", pointerEvents: "none" }} />
@@ -806,15 +907,57 @@ export function EditorCanvas(props: EditorCanvasProps) {
                           const sel = props.selectedElementIds ?? [];
                           const ids = sel.length > 1 && sel.includes(el.id) ? sel : [el.id];
                           const origs = face.elements
-                            .filter((x) => x.kind === "icon" && ids.includes(x.id))
-                            .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h }));
-                          setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id });
+                            .filter((x): x is BoxElement => isBoxEl(x) && ids.includes(x.id))
+                            .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h, rotation: x.rotation }));
+                          setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id, anchorKind: el.kind });
                         }}
-                        style={{ position: "absolute", right: -6, bottom: -6, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 23 }}
+                        style={{ position: "absolute", ...handlePos, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: handleCursor, zIndex: 23 }}
                       />
                     )}
                   </>
                 )}
+              </div>
+            );
+          })}
+          {/* Line elements: a separate overlay from the box elements above — a line has no
+              gridX/gridY/w/h box, just two endpoints, so it gets its own hit-area (a fat
+              transparent stroke along the segment) and its own pair of endpoint handles. */}
+          {props.onSelectElement && face.elements.map((el) => {
+            if (el.kind !== "line") return null;
+            const sel = (props.selectedElementIds ?? []).includes(el.id);
+            const mkHandle = (which: "a" | "b", x: number, y: number) => (
+              <div
+                key={which}
+                data-testid={`line-handle-${which}-${el.id}`}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  setLineDrag({ kind: "line", id: el.id, mode: which, startX: e.clientX, startY: e.clientY, ox1: el.x1, oy1: el.y1, ox2: el.x2, oy2: el.y2 });
+                }}
+                style={{ position: "absolute", left: earX + x - 5, top: y - 5, width: 10, height: 10, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "grab", zIndex: 24 }}
+              />
+            );
+            return (
+              <div key={el.id} data-testid={`line-el-${el.id}`}>
+                {/* invisible fat hit line for click/drag along the segment (also the marquee's hit target) */}
+                <svg width="100%" height="100%" style={{ position: "absolute", left: 0, top: 0, overflow: "visible", pointerEvents: "none", zIndex: 21 }}>
+                  <line
+                    data-testid={`el-hit-${el.id}`}
+                    x1={earX + el.x1} y1={el.y1} x2={earX + el.x2} y2={el.y2}
+                    stroke="transparent" strokeWidth={12} strokeLinecap="round"
+                    style={{ pointerEvents: "stroke", cursor: "move" }}
+                    onClick={(e) => { e.stopPropagation(); props.onSelectElement?.(el.id, e.shiftKey); }}
+                    onPointerDown={(e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      lineMoveLast.current = { dx: 0, dy: 0 };
+                      setLineDrag({ kind: "line", id: el.id, mode: "move", startX: e.clientX, startY: e.clientY, ox1: el.x1, oy1: el.y1, ox2: el.x2, oy2: el.y2 });
+                    }}
+                  />
+                  {sel && <line x1={earX + el.x1} y1={el.y1} x2={earX + el.x2} y2={el.y2} stroke="#2d5bff" strokeWidth={1} pointerEvents="none" />}
+                </svg>
+                {sel && mkHandle("a", el.x1, el.y1)}
+                {sel && mkHandle("b", el.x2, el.y2)}
               </div>
             );
           })}

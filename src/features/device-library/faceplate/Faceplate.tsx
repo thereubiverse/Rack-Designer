@@ -11,6 +11,9 @@ import {
 } from "@/domain/faceplate-geometry";
 import { PORT_GLYPHS } from "./portGlyphs";
 import { FaceIcon } from "./FaceIcon";
+import { FaceText } from "./FaceText";
+import { FaceShape } from "./FaceShape";
+import { FaceLine } from "./FaceLine";
 
 export interface FaceplateOptions {
   widthIn: number;
@@ -142,7 +145,13 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           );
         })}
         {/* free-floating elements (icons, later text/shapes) positioned in body coords */}
-        {face.elements.map((el) => (el.kind === "icon" ? <FaceIcon key={el.id} el={el} /> : null))}
+        {face.elements.map((el) =>
+          el.kind === "icon" ? <FaceIcon key={el.id} el={el} />
+          : el.kind === "text" ? <FaceText key={el.id} el={el} />
+          : el.kind === "shape" ? <FaceShape key={el.id} el={el} />
+          : el.kind === "line" ? <FaceLine key={el.id} el={el} />
+          : null,
+        )}
       </g>
     </>
   );

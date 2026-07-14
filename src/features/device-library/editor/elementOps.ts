@@ -1,6 +1,6 @@
 // Pure operations on a Face's `elements` (icons, and later text/shapes/lines). Mirrors the shape
 // of portGroupOps: no React, no I/O — just Face → Face transforms the editor and tests can share.
-import type { Face, IconElement } from "@/domain/faceplate";
+import type { Face, IconElement, TextElement, ShapeElement, LineElement, FaceElement } from "@/domain/faceplate";
 
 export const ICON_DEFAULT_SIZE = 36; // device px — a placed icon's initial width & height
 export const ICON_MIN_SIZE = 12;     // device px — smallest an icon can be resized to
@@ -71,6 +71,43 @@ export function resolveIconGroupResize(
   });
 }
 
+/** Resolve a corner-handle resize for text/shape boxes, which — unlike icons — are not locked to a
+ *  square: each axis grows independently by its own drag delta. Non-uniform (default) scales every
+ *  box in the selection by the anchor's per-axis growth factor, so a single selection simply becomes
+ *  `orig.w+dx x orig.h+dy` and a multi-selection keeps every box's relative proportions. `uniform`
+ *  (Shift held) mirrors `resolveIconGroupResize`'s Shift behaviour but forces a square on BOTH axes:
+ *  the anchor's larger new side (clamped to the anchor's own room) is broadcast to every box's w AND
+ *  h. Every result is clamped to the minimum size and to that box's own room in the body. */
+export function resolveElementsResize(
+  boxes: { id: string; gridX: number; gridY: number; w: number; h: number }[],
+  anchorId: string, dx: number, dy: number,
+  bounds: { width: number; height: number }, uniform: boolean,
+): { id: string; w: number; h: number }[] {
+  const anchor = boxes.find((b) => b.id === anchorId);
+  if (!anchor) return boxes.map((b) => ({ id: b.id, w: b.w, h: b.h }));
+
+  const clamp = (raw: number, gridPos: number, boundSize: number) =>
+    Math.max(ICON_MIN_SIZE, Math.min(raw, boundSize - gridPos));
+
+  if (uniform) {
+    const anchorMax = Math.min(bounds.width - anchor.gridX, bounds.height - anchor.gridY);
+    const anchorSide = Math.max(ICON_MIN_SIZE, Math.min(Math.max(anchor.w + dx, anchor.h + dy), anchorMax));
+    return boxes.map((b) => {
+      const maxSize = Math.min(bounds.width - b.gridX, bounds.height - b.gridY);
+      const size = Math.max(ICON_MIN_SIZE, Math.min(anchorSide, maxSize));
+      return { id: b.id, w: size, h: size };
+    });
+  }
+
+  const wFactor = (anchor.w + dx) / anchor.w;
+  const hFactor = (anchor.h + dy) / anchor.h;
+  return boxes.map((b) => ({
+    id: b.id,
+    w: clamp(b.w * wFactor, b.gridX, bounds.width),
+    h: clamp(b.h * hFactor, b.gridY, bounds.height),
+  }));
+}
+
 /** Set sizes on several elements at once (used by the multi-element resize). */
 export function resizeElements(face: Face, sizes: { id: string; w: number; h: number }[]): Face {
   const byId = new Map(sizes.map((s) => [s.id, s]));
@@ -99,27 +136,47 @@ export function setElementsIcon(face: Face, ids: string[], iconName: string): Fa
   return { ...face, elements: face.elements.map((e) => (set.has(e.id) && e.kind === "icon" ? { ...e, iconName } : e)) };
 }
 
-/** Set the colour on every listed icon element. */
+/** Set the colour on every listed icon/text/shape element. */
 export function setElementsColor(face: Face, ids: string[], color: string): Face {
   const set = new Set(ids);
-  return { ...face, elements: face.elements.map((e) => (set.has(e.id) && e.kind === "icon" ? { ...e, color } : e)) };
+  return { ...face, elements: face.elements.map((e) => (set.has(e.id) && (e.kind === "icon" || e.kind === "text" || e.kind === "shape") ? { ...e, color } : e)) };
 }
 
 /** Set the opacity (0–1) on every listed icon element. */
 export function setElementsOpacity(face: Face, ids: string[], opacity: number): Face {
   const o = Math.max(0, Math.min(1, opacity));
   const set = new Set(ids);
-  return { ...face, elements: face.elements.map((e) => (set.has(e.id) && e.kind === "icon" ? { ...e, opacity: o } : e)) };
+  return { ...face, elements: face.elements.map((e) => (set.has(e.id) ? { ...e, opacity: o } : e)) };
+}
+
+/** Rotate the listed elements 90° clockwise. Box elements (icon/text/shape) bump their `rotation`
+ *  (about the box centre); a line rotates its two endpoints 90° CW about the line's own midpoint.
+ *  Screen y points down, so clockwise maps a vector (dx,dy) → (-dy, dx). */
+export function rotateElements90(face: Face, ids: string[]): Face {
+  const set = new Set(ids);
+  return {
+    ...face,
+    elements: face.elements.map((e) => {
+      if (!set.has(e.id)) return e;
+      if (e.kind === "line") {
+        const mx = (e.x1 + e.x2) / 2, my = (e.y1 + e.y2) / 2;
+        const rot = (x: number, y: number) => ({ x: mx - (y - my), y: my + (x - mx) });
+        const a = rot(e.x1, e.y1), b = rot(e.x2, e.y2);
+        return { ...e, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+      }
+      return { ...e, rotation: ((e.rotation ?? 0) + 90) % 360 };
+    }),
+  };
 }
 
 /** Duplicate the listed elements (fresh ids, same position). Returns the new face + new ids so the
  *  caller can select and drag the copies (Alt/Option+drag). */
 export function duplicateElements(face: Face, ids: string[]): { face: Face; newIds: string[] } {
   const set = new Set(ids);
-  const copies: IconElement[] = [];
+  const copies: FaceElement[] = [];
   const newIds: string[] = [];
   for (const e of face.elements) {
-    if (!set.has(e.id) || e.kind !== "icon") continue;
+    if (!set.has(e.id)) continue;
     const id = crypto.randomUUID();
     newIds.push(id);
     copies.push({ ...e, id });
@@ -147,4 +204,60 @@ export function resolveElementsDrag(
 export function placeElements(face: Face, moves: { id: string; gridX: number; gridY: number }[]): Face {
   const byId = new Map(moves.map((m) => [m.id, m]));
   return { ...face, elements: face.elements.map((e) => { const m = byId.get(e.id); return m ? { ...e, gridX: m.gridX, gridY: m.gridY } : e; }) };
+}
+
+export const TEXT_DEFAULT_W = 64;
+export const TEXT_DEFAULT_H = 20;
+export const SHAPE_DEFAULT_SIZE = 40;
+export const LINE_DEFAULT_LEN = 60;
+export const LINE_MIN_LEN = 8;
+
+/** Append a text element at a position (top-left, device px) with default size/content. */
+export function addTextElement(face: Face, { gridX, gridY }: { gridX: number; gridY: number }): Face {
+  const el: TextElement = { id: crypto.randomUUID(), kind: "text", gridX, gridY, w: TEXT_DEFAULT_W, h: TEXT_DEFAULT_H, content: "Text", alignment: "center", fontSize: 11 };
+  return { ...face, elements: [...face.elements, el] };
+}
+
+/** Append a shape element (rect/ellipse) at a position (top-left, device px) with a default square size. */
+export function addShapeElement(face: Face, shape: "rect" | "ellipse", { gridX, gridY }: { gridX: number; gridY: number }): Face {
+  const el: ShapeElement = { id: crypto.randomUUID(), kind: "shape", shape, gridX, gridY, w: SHAPE_DEFAULT_SIZE, h: SHAPE_DEFAULT_SIZE };
+  return { ...face, elements: [...face.elements, el] };
+}
+
+/** Append a horizontal line element centred on the drop point. */
+export function addLineElement(face: Face, { gridX, gridY }: { gridX: number; gridY: number }): Face {
+  const half = LINE_DEFAULT_LEN / 2;
+  const el: LineElement = { id: crypto.randomUUID(), kind: "line", x1: gridX - half, y1: gridY, x2: gridX + half, y2: gridY, stroke: "#111418", strokeWidth: 1.5 };
+  return { ...face, elements: [...face.elements, el] };
+}
+
+/** Shallow-merge a partial into every listed element (any kind). */
+export function updateElements(face: Face, ids: string[], patch: Partial<FaceElement>): Face {
+  const set = new Set(ids);
+  return { ...face, elements: face.elements.map((e) => (set.has(e.id) ? { ...e, ...patch } as FaceElement : e)) };
+}
+
+/** Shift both endpoints of a line by the same delta. */
+export function translateLine(face: Face, id: string, dx: number, dy: number): Face {
+  return { ...face, elements: face.elements.map((e) => (e.id === id && e.kind === "line" ? { ...e, x1: e.x1 + dx, y1: e.y1 + dy, x2: e.x2 + dx, y2: e.y2 + dy } : e)) };
+}
+
+/** Move one endpoint ("a" = x1/y1, "b" = x2/y2), clamped so the line keeps at least LINE_MIN_LEN. */
+export function moveLineEndpoint(face: Face, id: string, which: "a" | "b", pos: { x: number; y: number }): Face {
+  return {
+    ...face,
+    elements: face.elements.map((e) => {
+      if (e.id !== id || e.kind !== "line") return e;
+      const fixed = which === "a" ? { x: e.x2, y: e.y2 } : { x: e.x1, y: e.y1 };
+      let { x, y } = pos;
+      const len = Math.hypot(x - fixed.x, y - fixed.y);
+      if (len < LINE_MIN_LEN) {
+        const ux = len === 0 ? 1 : (x - fixed.x) / len;
+        const uy = len === 0 ? 0 : (y - fixed.y) / len;
+        x = fixed.x + ux * LINE_MIN_LEN;
+        y = fixed.y + uy * LINE_MIN_LEN;
+      }
+      return which === "a" ? { ...e, x1: x, y1: y } : { ...e, x2: x, y2: y };
+    }),
+  };
 }
