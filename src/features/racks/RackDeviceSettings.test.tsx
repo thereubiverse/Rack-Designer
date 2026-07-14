@@ -2,11 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RackDeviceSettings } from "./RackDeviceSettings";
+import { emptyFace } from "@/domain/faceplate";
 
 const d = {
   id: "d1", deviceTemplateId: "t1", code: "SW01", name: null, startU: 5, side: "front" as const,
   status: "installed" as const, manufacturer: null, modelName: null, serialNumber: null,
   purchaseDate: null, operationStart: null,
+  frontFace: emptyFace(), backFace: emptyFace(), heightU: 1,
 };
 
 describe("RackDeviceSettings", () => {

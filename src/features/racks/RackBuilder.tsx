@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
+import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
@@ -16,6 +17,9 @@ function fromRow(r: RackDeviceRow): PlacementDraft {
     startU: r.start_u, side: "front", status: r.status,
     manufacturer: r.manufacturer, modelName: r.model_name, serialNumber: r.serial_number,
     purchaseDate: r.purchase_date, operationStart: r.operation_start,
+    frontFace: (r.front_face as Face | null) ?? emptyFace(),
+    backFace: (r.back_face as Face | null) ?? emptyFace(),
+    heightU: r.height_u,
   };
 }
 function toInput(d: PlacementDraft): RackDeviceInput {
@@ -24,9 +28,7 @@ function toInput(d: PlacementDraft): RackDeviceInput {
     start_u: d.startU, side: d.side, status: d.status,
     manufacturer: d.manufacturer, model_name: d.modelName, serial_number: d.serialNumber,
     purchase_date: d.purchaseDate, operation_start: d.operationStart,
-    // TODO(patching Task 6): snapshot the template's faces/height at placement time instead
-    // of nulling them here — PlacementDraft doesn't carry them yet.
-    front_face: null, back_face: null, height_u: null,
+    front_face: d.frontFace, back_face: d.backFace, height_u: d.heightU,
   };
 }
 
@@ -114,6 +116,7 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
       id: crypto.randomUUID(), deviceTemplateId: t.id, code: nextCode(like, typeCode), name: null,
       startU: slot, side: "front", status: "installed",
       manufacturer: null, modelName: null, serialNumber: null, purchaseDate: null, operationStart: null,
+      frontFace: t.frontFace, backFace: t.backFace, heightU: t.rackUnits,
     };
     commit([...placements, draft]);
     setSelectedId(draft.id);

@@ -1,10 +1,15 @@
 "use client";
 
+import type { Face } from "@/domain/faceplate";
+
 export interface PlacementDraft {
   id: string; deviceTemplateId: string; code: string; name: string | null;
   startU: number; side: "front"; status: "planned" | "installed" | "verified";
   manufacturer: string | null; modelName: string | null; serialNumber: string | null;
   purchaseDate: string | null; operationStart: string | null;
+  // Snapshot of the template's faces/height at placement time — the settings form ignores
+  // these; they only round-trip through save so replaceRackDevices' upsert never nulls them.
+  frontFace: Face; backFace: Face; heightU: number | null;
 }
 
 const input = "mt-1 h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal focus:border-neutral-400 focus:outline-none";
