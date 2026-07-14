@@ -10,7 +10,7 @@ import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
 import { createHistory, push, undo, redo, canUndo, canRedo, type History } from "./history";
-import type { Connection } from "./connectionOps";
+import { validatePatch, addConnection, portsOf, type Connection } from "./connectionOps";
 
 function fromRow(r: RackDeviceRow): PlacementDraft {
   return {
@@ -46,6 +46,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
     createHistory({ placements: initialDevices.map(fromRow), connections: initialConnections }));
   const { placements, connections } = hist.present;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [side, setSide] = useState<"FRONT" | "BACK">("FRONT");
   // initialTypeId null → picker opens at the "Select type" list (free-RU click); a type id →
   // opens straight to that type's templates (palette click). atU is the RU the insert lands on.
@@ -147,6 +148,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
       (placements.some((p) => p.id !== selected.id && p.code === selected.code) ? "That ID is already used in this rack" : null)
     : null;
 
+  const faceSide = (): "front" | "back" => (side === "FRONT" ? "front" : "back");
+
   const canvasPlacements = placements
     .filter((p) => templatesById[p.deviceTemplateId])
     .map((p) => ({
@@ -221,6 +224,17 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
                 connections: connections.filter((c) => c.a.rackDeviceId !== id && c.b.rackDeviceId !== id),
               });
               setSelectedId(null);
+            }}
+            connections={connections}
+            selectedConnectionId={selectedConnectionId}
+            onSelectConnection={setSelectedConnectionId}
+            onPatch={(a, b) => {
+              const fs = faceSide();
+              const portsByDevice = Object.fromEntries(canvasPlacements.map((p) => [p.id,
+                [...portsOf(fs === "front" ? p.template.frontFace : p.template.backFace, p.id, fs)]]));
+              const err = validatePatch(connections, portsByDevice, a, b);
+              if (err) { setError(err); return; }
+              commitConnections(addConnection(connections, a, b));
             }}
           />
         </div>

@@ -4,6 +4,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, type RackPlacementRender } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
+import { PatchLayer } from "./PatchLayer";
+import type { Connection, PortRef } from "./connectionOps";
 
 // Smoothly-animated fit/zoom transition on the single translate+scale transform, so a Fit toggle
 // or button zoom eases from wherever the rack is now to the target.
@@ -32,6 +34,10 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   onAddAt: (u: number) => void;
   onMove: (id: string, targetU: number) => void;
   onDelete: (id: string) => void;
+  connections: Connection[];
+  selectedConnectionId: string | null;
+  onPatch: (a: PortRef, b: PortRef) => void;
+  onSelectConnection: (id: string | null) => void;
 }>(function RackCanvas(props, ref) {
   const { heightU, placements, side, selectedId, fitMode = "height" } = props;
   const { width, height } = rackSvgSize(heightU);
@@ -192,8 +198,12 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     <div ref={hostRef} className="relative h-full w-full overflow-hidden">
       <div ref={contentRef} data-testid="rack-canvas-scale" className="absolute left-0 top-0 origin-top-left"
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} onClick={() => props.onSelect(null)}>
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
+          onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} />
+          <PatchLayer placements={placements} heightU={heightU} side={side}
+            connections={props.connections} selectedConnectionId={props.selectedConnectionId}
+            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection} />
         </svg>
         {/* free-RU click strips */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (

@@ -10,7 +10,10 @@ const scaleOf = (el: HTMLElement) => parseFloat(el.style.transform.match(/scale\
 
 const tpl = { rackUnits: 1, widthIn: 17.5, rackMounted: true, frontFace: emptyFace(), backFace: emptyFace() };
 const placements = [{ id: "d1", startU: 2, template: tpl }];
-const base = { heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn() };
+const base = {
+  heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(),
+  connections: [], selectedConnectionId: null, onPatch: vi.fn(), onSelectConnection: vi.fn(),
+};
 
 describe("RackCanvas", () => {
   it("clicking a free RU strip fires onAddAt with that U", () => {
