@@ -45,9 +45,9 @@ const CX = hx(RULER_N) + 46;
 const TOP = 58 * Ky;                        // interior top edge (cap sits 58 ref-units above it)
 export const RACK_GUTTER_L = CX - MOUNT_HW; // device-mount left edge (= RackCanvas ix)
 export const RACK_PAD = 0;
-// x of the shared patch-cable trunk — sits ~60% into the widened moat, leaving breathing room to
-// both the device mount and the inner cabinet wall (PatchDocs routes its trunk similarly).
-export const RACK_CABLE_LANE_X = RACK_GUTTER_L - hx(MOAT) * 0.6;
+// x of the shared patch-cable trunk (the "meeting point" cables converge on) — kept WITHIN the
+// device, over its left ear, so patch lines never reach out past the device into the gutter.
+export const RACK_CABLE_LANE_X = RACK_GUTTER_L + 16;
 
 export interface RackPlacementRender {
   id: string;
