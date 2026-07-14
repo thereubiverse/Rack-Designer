@@ -141,7 +141,7 @@ export function PatchLayer(props: {
           const d = roundedPath([
             { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
             { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
-          ], 12);
+          ], 18);
           const active = activeConnIds.has(c.id);
           return (
             <path key={c.id} data-testid={`cable-${c.id}`} d={d}
