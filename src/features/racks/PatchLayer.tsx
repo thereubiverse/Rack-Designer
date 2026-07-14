@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
-import { RACK_GUTTER_L, ruTopY } from "./RackFrame";
+import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
@@ -76,7 +76,7 @@ export function PatchLayer(props: {
     return m;
   }, [placements, heightU]);
 
-  const laneBase = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
+  const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -125,7 +125,7 @@ export function PatchLayer(props: {
           const d = roundedPath([
             { x: a.x, y: a.y }, { x: a.x, y: aBottom }, { x: laneBase, y: aBottom },
             { x: laneBase, y: bBottom }, { x: b.x, y: bBottom }, { x: b.x, y: b.y },
-          ], 6);
+          ], 8);
           const active = activeConnIds.has(c.id);
           return (
             <path key={c.id} data-testid={`cable-${c.id}`} d={d}

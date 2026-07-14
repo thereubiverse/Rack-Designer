@@ -29,9 +29,10 @@ const RK_PLUS = "#3b82f6";  // free-slot ⊕ marker (Tailwind blue-500 — match
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
 const EAR_OUT = 270;                // ear outer edge (= mount half-width) — fixed
 const EAR_W = 0.75 * PX_PER_IN;     // 36px — mounting-ear width; matches the faceplate's 0.75" device ear
-const MOAT = 20;                    // white gap inner-wall → ear (= the 20-wide ear)
-const IW = EAR_OUT + MOAT;          // 290 — inner wall
-const OW = IW + 10;                 // 300 — outer wall (10 double-wall gap, reference)
+const MOAT = 60;                    // white gap inner-wall → ear — widened to give patch cables room
+                                    // to breathe next to the rack (PatchDocs proportion: ~70 ref units)
+const IW = EAR_OUT + MOAT;          // 330 — inner wall
+const OW = IW + 10;                 // 340 — outer wall (matches PatchDocs' cabinet outline at ±340)
 const RULER_V = OW + 50;            // 350 — ruler line/ticks (ref: outer+50)
 const RULER_N = OW + 60;            // 360 — ruler numbers (ref: outer+60)
 const LIP = OW - 5;                 // 295 — cap/base lip (ref: outer-5)
@@ -44,6 +45,9 @@ const CX = hx(RULER_N) + 46;
 const TOP = 58 * Ky;                        // interior top edge (cap sits 58 ref-units above it)
 export const RACK_GUTTER_L = CX - MOUNT_HW; // device-mount left edge (= RackCanvas ix)
 export const RACK_PAD = 0;
+// x of the shared patch-cable trunk — sits ~60% into the widened moat, leaving breathing room to
+// both the device mount and the inner cabinet wall (PatchDocs routes its trunk similarly).
+export const RACK_CABLE_LANE_X = RACK_GUTTER_L - hx(MOAT) * 0.6;
 
 export interface RackPlacementRender {
   id: string;
