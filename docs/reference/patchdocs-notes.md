@@ -112,6 +112,55 @@ Their standard lists (reference only — we keep our own rack list):
 - Fit to width/height toggle, zoom, reset. **Autosave** with visible status + ⌘S manual trigger +
   leave-warning.
 
+## Patching — hands-on walkthrough (Reuben's trial, 2026-07-14)
+
+Built a switch + patch panel in RK01 and patched them end to end to nail the exact
+mechanics (this is the Phase-2c blueprint). Concrete, verified behaviours:
+
+- **Add device**: drag a *type* from the palette onto an RU (or click a free RU's `+`) →
+  **"Add device" picker** scoped to that type, breadcrumb `← Switch`. Standard templates
+  (Switch 24/48-Port RJ45; Patch Panel 24/48-Port in RJ45 **and** SC/UPC) + custom + "+ Create
+  Custom Device". Selecting one shows **FRONT/BACK faceplate previews, RU height, Brand,
+  Standard badge** and an **Insert device** button. Insert drops it at the target RU; auto-ID
+  `SW01` / `PP01` from the type code; autosave chip flips "Saving changes soon" → "Saved".
+- **Switch faceplate**: RJ45 ports in an **odd-top / even-bottom** layout (01,03,05…top;
+  02,04,06…bottom) with **SFP01–SFP04** as a separate group on the right. Patch-panel ports
+  render as **empty keystone frames** (grey outline) until a building connection exists.
+- **Patch = drag port→port.** Dragging SW01/01 → PP01/01 fired a **soft-block modal**, verbatim:
+  *"No building connection — This port has no building connection yet. The connection chain will
+  be incomplete until a building connection is added. Continue anyway?"* [Cancel] [Confirm].
+  Confirm creates an **incomplete** user connection (not blocked).
+- **Cable rendering**: an orthogonal cable routes **around the rack's LEFT edge, outside the
+  faceplates** (not across the face). Default **blue**; selecting either endpoint highlights the
+  **whole run in amber**. A small orange badge sits on the incomplete port.
+- **Port states (verified)**: connected patch-panel keystone = **solid blue fill**; unconnected
+  = **grey outline frame**; the *incomplete* state shows as a **dashed border** around the
+  Connection-Overview card (subtle — easy to miss on the port itself).
+- **Port sidebar** (click a port; title `…/RK01/SW01/01`): **Port name**, **Speed (Mbps)**,
+  **VLAN** (multi-select, "Unassigned" default), and a **Connection Overview** card: `01 RJ45`
+  then `↱` (black, near end) + `↳` (green, far end), each a **full-path clickable link**; dashed
+  border = incomplete.
+- **Device sidebar** (click device edge; URL gains `?subDeviceId=…`): ID/Name, **Ports → Wired
+  ports** list — every port row has a **plug icon + disconnect icon**; the connected row expands
+  inline to show its chain. Top of panel: **"Manage building connections"** link. Selected device
+  gets a blue frame + **blue grip handle on the right edge** (drag between RUs; cables re-route).
+- **Building connections overlay** ("Manage building connections" → *Building connections - PP01*):
+  a table **one row per patch-panel port** (PP01/01…24) with columns **SOURCE Port | TARGET:
+  Location · Floor · Room · Device · Port** — five cascading dropdowns per row, pre-scoped to the
+  current location, cross-floor/location allowed. **Cancel / Save changes** (batch). This is the
+  "horizontal cabling" half that turns a keystone into a **complete** chain — separate from the
+  front-side patch cable.
+- **Two-tier model confirmed**: (1) **User connection** = front patch cable (switch↔patch-panel),
+  drag-to-patch; (2) **Building connection** = patch-panel port → far-end port, defined in the
+  overlay. Chain is **complete** only when both exist and both ends terminate on active devices.
+- **OUTBOUND tag** floats at the rack's top edge (anchor for rack↔floor-device connections).
+- **Friction points seen (our improvement targets)**: patching is strictly **one cable at a time**
+  (no range/bulk patch SW 1-24→PP 1-24); building connections are a **24-row manual dropdown grid**
+  (no sequential auto-map / copy-down); the **incomplete** state is only a faint dashed card border
+  (not glanceable on the port); all cables share **left-edge lanes** (clutters fast); patch is
+  **drag-only** (no click-source-then-target fallback); **no connector/media mismatch check** on
+  patch (RJ45→LC not warned at drag time).
+
 ## Observed live in the app (Reuben's trial account, 2026-07-08)
 
 Hands-on walkthrough of the rack-building flow — details their docs don't spell out:
