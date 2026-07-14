@@ -112,12 +112,12 @@ describe("PatchLayer drag-to-patch", () => {
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
-    expect(cable.getAttribute("stroke")).toBe("#2d5bff"); // blue by default
+    expect(cable.getAttribute("stroke")).toBe("#1a55d8"); // blue by default
     // React derives onPointerEnter/Leave from pointerover/pointerout.
     act(() => { cable.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerId: 1 })); });
-    expect(cable.getAttribute("stroke")).toBe("#f59e0b"); // amber on hover
+    expect(cable.getAttribute("stroke")).toBe("#fdc700"); // amber on hover
     act(() => { cable.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, pointerId: 1 })); });
-    expect(cable.getAttribute("stroke")).toBe("#2d5bff"); // back to blue
+    expect(cable.getAttribute("stroke")).toBe("#1a55d8"); // back to blue
   });
 
   it("hovering a patched port turns its run amber (cable + endpoint cells)", () => {
@@ -135,10 +135,10 @@ describe("PatchLayer drag-to-patch", () => {
     // connected ports render blue at rest (2 endpoints highlighted, no amber).
     const highlightedAtRest = container.querySelectorAll('[data-testid="port-cell"][data-highlighted="true"]');
     expect(highlightedAtRest.length).toBe(2);
-    expect(cable.getAttribute("stroke")).toBe("#2d5bff");
+    expect(cable.getAttribute("stroke")).toBe("#1a55d8");
     // hovering one endpoint port ambers the whole run.
     const dot = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
     act(() => { dot.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerId: 1 })); });
-    expect(cable.getAttribute("stroke")).toBe("#f59e0b");
+    expect(cable.getAttribute("stroke")).toBe("#fdc700");
   });
 });

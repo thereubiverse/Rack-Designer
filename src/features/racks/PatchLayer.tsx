@@ -6,8 +6,9 @@ import { RU_PX } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
-const BLUE = "#2d5bff";
-const AMBER = "#f59e0b";
+// Exact PatchDocs cable colours (their --color-primary-blue / highlighted amber).
+const BLUE = "#1a55d8";
+const AMBER = "#fdc700";
 
 const keyOf = (p: PortRef) => `${p.rackDeviceId}-${p.side}-${p.groupId}-${p.portIndex}`;
 const parsePort = (s: string): PortRef => {
@@ -111,29 +112,31 @@ export function PatchLayer(props: {
 
   return (
     <g data-testid="patch-layer" ref={gRef}>
-      {/* patch cables — route down out of each port, along the gap to the left gutter, up/down the
-          lane, then symmetrically into the far port. Blue by default, amber when the run is active. */}
-      {faceCables.map((c, i) => {
-        const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
-        if (!a || !b) return null;
-        const aBottom = (deviceBottom.get(c.a.rackDeviceId) ?? a.y) + 5;
-        const bBottom = (deviceBottom.get(c.b.rackDeviceId) ?? b.y) + 5;
-        const lane = laneBase - (i % 6) * 5; // nest overlapping runs like PatchDocs
-        const d = roundedPath([
-          { x: a.x, y: a.y }, { x: a.x, y: aBottom }, { x: lane, y: aBottom },
-          { x: lane, y: bBottom }, { x: b.x, y: bBottom }, { x: b.x, y: b.y },
-        ], 6);
-        const active = activeConnIds.has(c.id);
-        return (
-          <path key={c.id} data-testid={`cable-${c.id}`} d={d}
-            fill="none" stroke={active ? AMBER : BLUE} strokeWidth={active ? 3 : 2}
-            strokeLinejoin="round" strokeLinecap="round"
-            style={{ cursor: "pointer", pointerEvents: "auto" }}
-            onPointerEnter={() => props.onHoverCable?.(c.id)}
-            onPointerLeave={() => props.onHoverCable?.(null)}
-            onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
-        );
-      })}
+      {/* patch cables — every cable routes down out of its ports to a SINGLE shared lane next to
+          the rack, so the vertical runs overlap perfectly (PatchDocs). Blue by default; the active
+          run is amber and rendered LAST so it sits on top of the overlapping blue lines. */}
+      {[...faceCables]
+        .sort((x, y) => Number(activeConnIds.has(x.id)) - Number(activeConnIds.has(y.id)))
+        .map((c) => {
+          const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
+          if (!a || !b) return null;
+          const aBottom = (deviceBottom.get(c.a.rackDeviceId) ?? a.y) + 5;
+          const bBottom = (deviceBottom.get(c.b.rackDeviceId) ?? b.y) + 5;
+          const d = roundedPath([
+            { x: a.x, y: a.y }, { x: a.x, y: aBottom }, { x: laneBase, y: aBottom },
+            { x: laneBase, y: bBottom }, { x: b.x, y: bBottom }, { x: b.x, y: b.y },
+          ], 6);
+          const active = activeConnIds.has(c.id);
+          return (
+            <path key={c.id} data-testid={`cable-${c.id}`} d={d}
+              fill="none" stroke={active ? AMBER : BLUE} strokeWidth={2}
+              strokeLinejoin="round" strokeLinecap="round"
+              style={{ cursor: "pointer", pointerEvents: "auto" }}
+              onPointerEnter={() => props.onHoverCable?.(c.id)}
+              onPointerLeave={() => props.onHoverCable?.(null)}
+              onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
+          );
+        })}
 
       {/* rubber-band while dragging */}
       {drag && (() => {

@@ -8,8 +8,9 @@ import { PatchLayer } from "./PatchLayer";
 import { samePort, type Connection, type PortRef } from "./connectionOps";
 import type { HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 
-const BLUE = "#2d5bff";
-const AMBER = "#f59e0b";
+// Exact PatchDocs colours (their --color-primary-blue / highlighted amber).
+const BLUE = "#1a55d8";
+const AMBER = "#fdc700";
 
 // Smoothly-animated fit/zoom transition on the single translate+scale transform, so a Fit toggle
 // or button zoom eases from wherever the rack is now to the target.
