@@ -80,14 +80,13 @@ export function PatchLayer(props: {
     return m;
   }, [placements, heightU]);
   const EXIT_MARGIN = 6;
-  const exitY = (port: PortRef, dot: PortDot, otherDot: PortDot) => {
+  const exitY = (port: PortRef, dot: PortDot) => {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
     const up = dot.y - e.top, down = e.bottom - dot.y;
-    // Clearly nearer one edge (e.g. a switch's top/bottom row) → use it. Near-centred (a single-row
-    // panel) → exit toward the far port so a stacked connection meets in the gap between the devices.
-    if (Math.abs(up - down) > ROW_H) return up < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
-    return otherDot.y < dot.y ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
+    // Exit UP only for a port clearly in the device's upper region (e.g. a switch's top row);
+    // a middle port (single-row panel) or a lower port exits toward the BOTTOM.
+    return up + ROW_H < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
@@ -134,8 +133,8 @@ export function PatchLayer(props: {
         .map((c) => {
           const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
           if (!a || !b) return null;
-          const aRail = exitY(c.a, a, b);
-          const bRail = exitY(c.b, b, a);
+          const aRail = exitY(c.a, a);
+          const bRail = exitY(c.b, b);
           const d = roundedPath([
             { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
             { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
