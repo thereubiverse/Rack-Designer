@@ -141,4 +141,30 @@ describe("PatchLayer drag-to-patch", () => {
     act(() => { dot.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerId: 1 })); });
     expect(cable.getAttribute("stroke")).toBe("#fdc700");
   });
+
+  it("a top-half port exits toward the device top; a middle/bottom port toward the bottom", () => {
+    // A 2-row switch: indices 0–11 are the top row (upper half), 12–23 the bottom row (lower half).
+    const g2 = (id: string): PortGroup => ({ ...g(id), rows: 2, cols: 12 });
+    const sw = { id: "sw", startU: 5, code: "sw",
+      template: { rackUnits: 1, widthIn: 19, rackMounted: true,
+        frontFace: { portGroups: [g2("g-sw")], elements: [] } as Face, backFace: face("g-sw-b") } };
+    const pp = dev("pp", 3, "g-pp"); // single-row panel → centred ports
+    const ref = (d: string, gid: string, i: number) => ({ rackDeviceId: d, side: "front" as const, groupId: gid, portIndex: i });
+    const conns = [
+      { id: "top", a: ref("sw", "g-sw", 0), b: ref("pp", "g-pp", 0) },   // sw top-row port
+      { id: "bot", a: ref("sw", "g-sw", 12), b: ref("pp", "g-pp", 1) },  // sw bottom-row port
+    ];
+    const { container } = render(
+      <RackCanvas heightU={12} placements={[sw, pp]} side="FRONT" selectedId={null}
+        onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+        connections={conns} selectedConnectionId={null}
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+    );
+    const exit = (id: string) => {
+      const n = [...container.querySelector(`[data-testid="cable-${id}"]`)!.getAttribute("d")!.matchAll(/-?\d+\.?\d*/g)].map(Number);
+      return { portY: n[1], exitY: n[3] };
+    };
+    const top = exit("top"); expect(top.exitY).toBeLessThan(top.portY);     // top-row exits UP
+    const bot = exit("bot"); expect(bot.exitY).toBeGreaterThan(bot.portY);  // bottom-row exits DOWN
+  });
 });
