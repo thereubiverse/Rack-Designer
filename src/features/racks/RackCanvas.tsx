@@ -203,9 +203,6 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
           onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} />
-          <PatchLayer placements={placements} heightU={heightU} side={side}
-            connections={props.connections} selectedConnectionId={props.selectedConnectionId}
-            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection} />
         </svg>
         {/* free-RU click strips */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
@@ -243,6 +240,16 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
             </div>
           );
         })}
+        {/* Overlay svg painted ABOVE the device hit-box divs so port dots and cables are hit-testable
+           by the real pointer (elementFromPoint). pointerEvents:none lets clicks over empty faceplate
+           area fall through to the device divs / free-RU strips / base svg beneath it; only the
+           interactive PatchLayer elements (port dots, cables) opt back in via their own pointerEvents. */}
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} overflow="visible"
+          style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
+          <PatchLayer placements={placements} heightU={heightU} side={side}
+            connections={props.connections} selectedConnectionId={props.selectedConnectionId}
+            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection} />
+        </svg>
       </div>
     </div>
   );

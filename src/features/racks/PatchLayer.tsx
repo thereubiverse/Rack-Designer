@@ -55,6 +55,7 @@ export function PatchLayer(props: {
   const lane = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
+  const gRef = useRef<SVGGElement>(null);
 
   // Safety net: releasing a drag over empty space (no port dot under the pointer) should still
   // clear the rubber-band. A successful drop already clears state via the dot's own onPointerUp
@@ -66,8 +67,27 @@ export function PatchLayer(props: {
     return () => window.removeEventListener("pointerup", onUp);
   }, [drag]);
 
+  // Track the cursor while dragging so the rubber-band follows the pointer instead of staying
+  // pinned at the origin dot. Client coords are converted to SVG user-space via the owning svg's
+  // screen CTM so this stays correct under the canvas's pan/zoom transform.
+  useEffect(() => {
+    if (!drag) return;
+    const move = (e: PointerEvent) => {
+      const svg = gRef.current?.ownerSVGElement;
+      if (!svg) return;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const p = pt.matrixTransform(ctm.inverse());
+      setDrag((d) => (d ? { ...d, x: p.x, y: p.y } : d));
+    };
+    window.addEventListener("pointermove", move);
+    return () => window.removeEventListener("pointermove", move);
+  }, [drag]);
+
   return (
-    <g data-testid="patch-layer">
+    <g data-testid="patch-layer" ref={gRef}>
       {/* existing cables (only those whose both ends are on the current face) */}
       {connections.map((c) => {
         if (c.a.side !== faceSide || c.b.side !== faceSide) return null;
@@ -77,7 +97,7 @@ export function PatchLayer(props: {
         return (
           <path key={c.id} data-testid={`cable-${c.id}`} d={cablePath(a, b, lane)}
             fill="none" stroke={selected ? "#f59e0b" : "#2d5bff"} strokeWidth={selected ? 3 : 2}
-            style={{ cursor: "pointer" }}
+            style={{ cursor: "pointer", pointerEvents: "auto" }}
             onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
         );
       })}
@@ -96,7 +116,7 @@ export function PatchLayer(props: {
           <circle cx={d.x} cy={d.y} r={4} fill="#2d5bff" pointerEvents="none" />
         )}
         <circle data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
-          cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair" }}
+          cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair", pointerEvents: "all" }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             e.stopPropagation();

@@ -114,8 +114,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
   }
 
   // Undo/redo — buttons + keyboard.
-  function doUndo() { setHist((h) => { const n = undo(h); if (n !== h) queueSave(n.present); return n; }); }
-  function doRedo() { setHist((h) => { const n = redo(h); if (n !== h) queueSave(n.present); return n; }); }
+  function doUndo() { const n = undo(hist); if (n !== hist) { setHist(n); queueSave(n.present); } }
+  function doRedo() { const n = redo(hist); if (n !== hist) { setHist(n); queueSave(n.present); } }
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
@@ -124,7 +124,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [hist]);
 
   function insertTemplate(t: PickerTemplate) {
     const at = picker?.atU ?? undefined;
@@ -241,7 +241,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
               const portsByDevice = Object.fromEntries(canvasPlacements.map((p) => [p.id,
                 [...portsOf(fs === "front" ? p.template.frontFace : p.template.backFace, p.id, fs)]]));
               const err = validatePatch(connections, portsByDevice, a, b);
-              if (err) { setError(err); return; }
+              if (err) { setSaveState("error"); setError(err); return; }
               commitConnections(addConnection(connections, a, b));
             }}
           />

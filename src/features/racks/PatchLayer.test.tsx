@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, act } from "@testing-library/react";
 import { RackCanvas } from "./RackCanvas";
 import type { RackPlacementRender } from "./RackFrame";
 import type { Face, PortGroup } from "@/domain/faceplate";
@@ -34,8 +34,8 @@ describe("PatchLayer drag-to-patch", () => {
     const src = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
     const dst = container.querySelector('[data-testid="port-dot-pp-front-g-pp-0"]')!;
     expect(src).toBeTruthy(); expect(dst).toBeTruthy();
-    pdown(src);
-    pup(dst); // PatchLayer resolves the target via elementFromPoint OR the pointerup target
+    act(() => { pdown(src); });
+    act(() => { pup(dst); }); // PatchLayer resolves the target via elementFromPoint OR the pointerup target
     expect(onPatch).toHaveBeenCalledTimes(1);
     const [a, b] = onPatch.mock.calls[0];
     expect(a).toEqual({ rackDeviceId: "sw", side: "front", groupId: "g-sw", portIndex: 0 });
