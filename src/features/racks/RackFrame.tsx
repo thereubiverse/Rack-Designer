@@ -8,7 +8,7 @@
 // cap on top and a ventilation-slat plinth + feet on the bottom.
 // No interactivity — RackCanvas overlays that (same split as Faceplate/EditorCanvas).
 import { memo } from "react";
-import { renderFace } from "@/features/device-library/faceplate/Faceplate";
+import { renderFace, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { RU_PX, PX_PER_IN, RAIL_WIDTH_IN } from "@/domain/faceplate-geometry";
 import { type Face } from "@/domain/faceplate";
 
@@ -151,9 +151,10 @@ const RackChrome = memo(function RackChrome({ heightU, placements }: {
   );
 });
 
-export function RackFrame({ heightU, placements, side, dragId = null }: {
+export function RackFrame({ heightU, placements, side, dragId = null, highlight = null }: {
   heightU: number; placements: RackPlacementRender[]; side: "FRONT" | "BACK";
   dragId?: string | null;  // id of the device being grip-dragged (its faceplate + this ghost move imperatively)
+  highlight?: HighlightPort | null; // a hovered port to render blue (glyph + label); matched per-device by groupId
 }) {
   const ix = RACK_GUTTER_L + RACK_PAD; // device-mount left edge (faceplate origin)
   return (
@@ -179,7 +180,7 @@ export function RackFrame({ heightU, placements, side, dragId = null }: {
         return (
           <g key={p.id} data-testid={`rack-device-${p.id}`} transform={`translate(${ix}, ${y})`}
             opacity={dragging ? 0.95 : 1} style={dragging ? { filter: "drop-shadow(0 3px 4px rgba(0,0,0,0.25))" } : undefined}>
-            {renderFace(face, opts)}
+            {renderFace(face, opts, highlight ?? undefined)}
             {p.code && (() => {
               const midY = (p.template.rackUnits * RU_PX) / 2;
               return <text x={18} y={midY} fontSize={16} fontWeight={600} fill="#6b7280"

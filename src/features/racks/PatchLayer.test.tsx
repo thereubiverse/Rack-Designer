@@ -99,4 +99,24 @@ describe("PatchLayer drag-to-patch", () => {
     expect(onSelectConnection).toHaveBeenCalled();
     expect(onSelectConnection.mock.calls.at(-1)?.[0]).toBe("c1");
   });
+
+  it("a cable turns amber on hover and back to blue on leave", () => {
+    const placements = [dev("sw", 5, "g-sw"), dev("pp", 3, "g-pp")];
+    const conn = { id: "c1",
+      a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
+      b: { rackDeviceId: "pp", side: "front" as const, groupId: "g-pp", portIndex: 0 } };
+    const { container } = render(
+      <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
+        onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+        connections={[conn]} selectedConnectionId={null}
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+    );
+    const cable = container.querySelector('[data-testid="cable-c1"]')!;
+    expect(cable.getAttribute("stroke")).toBe("#2d5bff"); // blue by default
+    // React derives onPointerEnter/Leave from pointerover/pointerout.
+    act(() => { cable.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerId: 1 })); });
+    expect(cable.getAttribute("stroke")).toBe("#f59e0b"); // amber on hover
+    act(() => { cable.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, pointerId: 1 })); });
+    expect(cable.getAttribute("stroke")).toBe("#2d5bff"); // back to blue
+  });
 });

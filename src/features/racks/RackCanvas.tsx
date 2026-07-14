@@ -191,6 +191,12 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedId, props, props.selectedConnectionId]);
 
+  // Hovering an unpatched port highlights its glyph + label blue (via the faceplate's highlight prop).
+  const [hoveredPort, setHoveredPort] = useState<import("./connectionOps").PortRef | null>(null);
+  const faceSide = side === "FRONT" ? "front" : "back";
+  const highlightPort = hoveredPort && hoveredPort.side === faceSide
+    ? { groupId: hoveredPort.groupId, portIndex: hoveredPort.portIndex } : null;
+
   const occupied = new Set<number>();
   for (const p of placements) for (let u = p.startU; u < p.startU + p.template.rackUnits; u++) occupied.add(u);
 
@@ -202,7 +208,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
           onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
-          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} />
+          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={highlightPort} />
         </svg>
         {/* free-RU click strips */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
@@ -248,7 +254,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
           style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
           <PatchLayer placements={placements} heightU={heightU} side={side}
             connections={props.connections} selectedConnectionId={props.selectedConnectionId}
-            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection} />
+            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection}
+            onHoverPort={setHoveredPort} />
         </svg>
       </div>
     </div>

@@ -25,6 +25,7 @@ export function PatchLayer(props: {
   selectedConnectionId: string | null;
   onPatch: (a: PortRef, b: PortRef) => void;
   onSelectConnection: (id: string | null) => void;
+  onHoverPort?: (port: PortRef | null) => void;
 }) {
   const { placements, heightU, side, connections, selectedConnectionId } = props;
   const faceSide = side === "FRONT" ? "front" : "back";
@@ -53,6 +54,8 @@ export function PatchLayer(props: {
   }, [connections]);
 
   const lane = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
+  // A hovered cable highlights amber just like a selected one (PatchDocs behaviour).
+  const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -93,11 +96,14 @@ export function PatchLayer(props: {
         if (c.a.side !== faceSide || c.b.side !== faceSide) return null;
         const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
         if (!a || !b) return null;
-        const selected = c.id === selectedConnectionId;
+        // Blue by default; amber when hovered OR selected (matches PatchDocs' run highlight).
+        const active = c.id === selectedConnectionId || c.id === hoveredConnectionId;
         return (
           <path key={c.id} data-testid={`cable-${c.id}`} d={cablePath(a, b, lane)}
-            fill="none" stroke={selected ? "#f59e0b" : "#2d5bff"} strokeWidth={selected ? 3 : 2}
+            fill="none" stroke={active ? "#f59e0b" : "#2d5bff"} strokeWidth={active ? 3 : 2}
             style={{ cursor: "pointer", pointerEvents: "auto" }}
+            onPointerEnter={() => setHoveredConnectionId(c.id)}
+            onPointerLeave={() => setHoveredConnectionId((h) => (h === c.id ? null : h))}
             onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
         );
       })}
@@ -117,6 +123,8 @@ export function PatchLayer(props: {
         )}
         <circle data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
           cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair", pointerEvents: "all" }}
+          onPointerEnter={() => { if (!connectedKeys.has(keyOf(d.port))) props.onHoverPort?.(d.port); }}
+          onPointerLeave={() => props.onHoverPort?.(null)}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             e.stopPropagation();
