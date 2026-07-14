@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
-import { RU_PX, ROW_H } from "@/domain/faceplate-geometry";
+import { RU_PX } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
@@ -84,9 +84,9 @@ export function PatchLayer(props: {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
     const up = dot.y - e.top, down = e.bottom - dot.y;
-    // Exit UP only for a port clearly in the device's upper region (e.g. a switch's top row);
-    // a middle port (single-row panel) or a lower port exits toward the BOTTOM.
-    return up + ROW_H < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
+    // A port in the device's TOP half exits toward the top; a middle (centred) or bottom-half
+    // port exits toward the bottom.
+    return up < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
