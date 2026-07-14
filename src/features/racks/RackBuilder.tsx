@@ -24,6 +24,9 @@ function toInput(d: PlacementDraft): RackDeviceInput {
     start_u: d.startU, side: d.side, status: d.status,
     manufacturer: d.manufacturer, model_name: d.modelName, serial_number: d.serialNumber,
     purchase_date: d.purchaseDate, operation_start: d.operationStart,
+    // TODO(patching Task 6): snapshot the template's faces/height at placement time instead
+    // of nulling them here — PlacementDraft doesn't carry them yet.
+    front_face: null, back_face: null, height_u: null,
   };
 }
 
