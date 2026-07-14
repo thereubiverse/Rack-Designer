@@ -5,7 +5,7 @@ import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_
 import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
-import { samePort, type Connection, type PortRef } from "./connectionOps";
+import { samePort, portConnection, isConnected, portsOf, type Connection, type PortRef } from "./connectionOps";
 import type { HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 
 // Exact PatchDocs colours (their --color-primary-blue / highlighted amber).
@@ -42,8 +42,10 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   connections: Connection[];
   selectedConnectionId: string | null;
   onPatch: (a: PortRef, b: PortRef) => void;
+  onReplace: (existingConnId: string, a: PortRef, b: PortRef) => void;
   onSelectConnection: (id: string | null) => void;
   onDisconnect: (id: string) => void;
+  portLabel: (p: PortRef) => string;
 }>(function RackCanvas(props, ref) {
   const { heightU, placements, side, selectedId, fitMode = "height" } = props;
   const { width, height } = rackSvgSize(heightU);
@@ -201,9 +203,52 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   //  - an unpatched port turns BLUE on hover.
   const [hoveredPort, setHoveredPort] = useState<PortRef | null>(null);
   const [hoveredCable, setHoveredCable] = useState<string | null>(null);
-  const [selectedPort, setSelectedPort] = useState<PortRef | null>(null); // clicked port → disconnect pin
+  const [selectedPort, setSelectedPort] = useState<PortRef | null>(null); // patched port picked by 1st click
+  const [pinShown, setPinShown] = useState(false);                        // 2nd click on it → disconnect pin
+  const [pendingSource, setPendingSource] = useState<PortRef | null>(null); // unpatched port picked to connect FROM
+  const [replacePrompt, setReplacePrompt] = useState<{ existingConnId: string; source: PortRef; target: PortRef } | null>(null);
   const faceSide = side === "FRONT" ? "front" : "back";
   const conns = props.connections;
+
+  // Drag-drop / click completing a connection onto `to`. If `to` is already patched, raise the
+  // replace prompt instead of patching (the parent re-validates and rejects duplicates anyway).
+  const attemptConnect = (from: PortRef, to: PortRef) => {
+    if (samePort(from, to)) return;
+    const existing = portConnection(conns, to);
+    if (existing) { setReplacePrompt({ existingConnId: existing.id, source: from, target: to }); return; }
+    props.onPatch(from, to);
+  };
+  // The click state machine: a patched port selects on the 1st click and shows its disconnect pin on
+  // the 2nd; an unpatched port becomes the pending connection source (candidate ports then flash),
+  // and a 2nd click on another port completes (or, if that port is patched, prompts to replace).
+  const handlePortClick = (port: PortRef) => {
+    if (pendingSource) {
+      if (samePort(pendingSource, port)) { setPendingSource(null); return; } // click source again → cancel
+      attemptConnect(pendingSource, port);
+      setPendingSource(null);
+      return;
+    }
+    const conn = portConnection(conns, port);
+    if (conn) {
+      if (selectedPort && samePort(selectedPort, port)) setPinShown(true);
+      else { props.onSelectConnection(conn.id); setSelectedPort(port); setPinShown(false); }
+    } else {
+      setPendingSource(port);
+      setSelectedPort(null); setPinShown(false); props.onSelectConnection(null);
+    }
+  };
+
+  // Escape cancels whatever is in flight (replace prompt → pending pick → disconnect pin).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (replacePrompt) { setReplacePrompt(null); setPendingSource(null); }
+      else if (pendingSource) setPendingSource(null);
+      else if (pinShown) setPinShown(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [replacePrompt, pendingSource, pinShown]);
 
   // A connection's "run" is active (amber) when it is selected, hovered directly, or one of its
   // ports is the hovered port.
@@ -219,20 +264,30 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // unpatched port blue. Ports off the current face are ignored (matched per-device by groupId).
   const portHighlights: HighlightPort[] = [];
   const seenHl = new Set<string>();
-  const addHl = (p: PortRef, color: string) => {
+  const addHl = (p: PortRef, extra: { color?: string; flash?: boolean }) => {
     if (p.side !== faceSide) return;
     const k = `${p.groupId}:${p.portIndex}`;
     if (seenHl.has(k)) return;
     seenHl.add(k);
-    portHighlights.push({ groupId: p.groupId, portIndex: p.portIndex, color });
+    portHighlights.push({ groupId: p.groupId, portIndex: p.portIndex, ...extra });
   };
   for (const c of conns) {
     const color = activeConnIds.has(c.id) ? AMBER : BLUE;
-    addHl(c.a, color);
-    addHl(c.b, color);
+    addHl(c.a, { color });
+    addHl(c.b, { color });
   }
-  if (hoveredPort && !conns.some((c) => samePort(c.a, hoveredPort) || samePort(c.b, hoveredPort))) {
-    addHl(hoveredPort, BLUE);
+  if (pendingSource) {
+    // Connection in progress: the picked source is solid blue and every UNPATCHED port on the face
+    // flashes to show it's a connectable target.
+    addHl(pendingSource, { color: BLUE });
+    for (const p of placements) {
+      const face = faceSide === "front" ? p.template.frontFace : p.template.backFace;
+      for (const port of portsOf(face, p.id, faceSide)) {
+        if (!isConnected(conns, port)) addHl(port, { flash: true });
+      }
+    }
+  } else if (hoveredPort && !conns.some((c) => samePort(c.a, hoveredPort) || samePort(c.b, hoveredPort))) {
+    addHl(hoveredPort, { color: BLUE });
   }
 
   const occupied = new Set<number>();
@@ -245,7 +300,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
       <div ref={contentRef} data-testid="rack-canvas-scale" className="absolute left-0 top-0 origin-top-left"
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
-          onClick={() => { props.onSelect(null); props.onSelectConnection(null); setSelectedPort(null); }}>
+          onClick={() => { props.onSelect(null); props.onSelectConnection(null); setSelectedPort(null); setPinShown(false); setPendingSource(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={portHighlights} />
         </svg>
         {/* free-RU click strips */}
@@ -307,12 +362,41 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
           style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
           <PatchLayer placements={placements} heightU={heightU} side={side}
             connections={props.connections} activeConnIds={activeConnIds}
-            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection}
+            onConnectAttempt={attemptConnect} onPortClick={handlePortClick}
+            onSelectConnection={props.onSelectConnection}
             onHoverPort={setHoveredPort} onHoverCable={setHoveredCable}
-            selectedPort={selectedPort} onSelectPort={setSelectedPort}
-            onDisconnect={(id) => { props.onDisconnect(id); setSelectedPort(null); props.onSelectConnection(null); }} />
+            pinPort={pinShown ? selectedPort : null}
+            onDisconnect={(id) => { props.onDisconnect(id); setSelectedPort(null); setPinShown(false); props.onSelectConnection(null); }} />
         </svg>
       </div>
+
+      {/* Replace-connection prompt: shown when a connect gesture lands on an already-patched port. */}
+      {replacePrompt && (() => {
+        const existing = conns.find((c) => c.id === replacePrompt.existingConnId);
+        const otherEnd = existing ? (samePort(existing.a, replacePrompt.target) ? existing.b : existing.a) : null;
+        const close = () => { setReplacePrompt(null); setPendingSource(null); };
+        return (
+          <div className="rde-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={close}>
+            <div className="rde-modal-card w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-semibold text-neutral-900">Port already connected</h3>
+              <p className="mt-2 text-sm leading-relaxed text-neutral-600">
+                <span className="font-medium text-neutral-900">{props.portLabel(replacePrompt.target)}</span> is already
+                connected{otherEnd ? <> to <span className="font-medium text-neutral-900">{props.portLabel(otherEnd)}</span></> : null}.
+                {" "}Replace it with{" "}
+                <span className="font-medium text-neutral-900">{props.portLabel(replacePrompt.source)} ↔ {props.portLabel(replacePrompt.target)}</span>?
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" onClick={close}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100">Cancel</button>
+                <button type="button" data-testid="replace-confirm"
+                  onClick={() => { props.onReplace(replacePrompt.existingConnId, replacePrompt.source, replacePrompt.target); close(); }}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700">Replace</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 });

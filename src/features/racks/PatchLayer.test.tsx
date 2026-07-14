@@ -20,7 +20,8 @@ function setup(onPatch = vi.fn()) {
     <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
       onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
       connections={[]} selectedConnectionId={null}
-      onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+      onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
   );
   return { ...utils, onPatch };
 }
@@ -51,7 +52,8 @@ describe("PatchLayer drag-to-patch", () => {
           a: { rackDeviceId: "sw", side: "front", groupId: "g-sw", portIndex: 0 },
           b: { rackDeviceId: "pp", side: "front", groupId: "g-pp", portIndex: 0 } }]}
         selectedConnectionId={null} onPatch={() => {}} onSelectConnection={() => {}}
-        onDisconnect={() => {}} />,
+        onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     expect(container.querySelector('[data-testid="cable-c1"]')).toBeTruthy();
   });
@@ -68,7 +70,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={"c1"}
         onPatch={() => {}} onSelectConnection={onSelectConnection}
-        onDisconnect={onDisconnect} />,
+        onDisconnect={onDisconnect}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     container.querySelector('[data-testid="cable-c1"]'); // present
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" }));
@@ -89,7 +92,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={onSelectConnection}
-        onDisconnect={() => {}} />,
+        onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     expect(cable).toBeTruthy();
@@ -109,7 +113,8 @@ describe("PatchLayer drag-to-patch", () => {
       <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
-        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     expect(cable.getAttribute("stroke")).toBe("#1a55d8"); // blue by default
@@ -129,7 +134,8 @@ describe("PatchLayer drag-to-patch", () => {
       <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
-        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     // connected ports render blue at rest (2 endpoints highlighted, no amber).
@@ -160,7 +166,8 @@ describe("PatchLayer drag-to-patch", () => {
       <RackCanvas heightU={12} placements={[sw, pp]} side="FRONT" selectedId={null}
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={conns} selectedConnectionId={null}
-        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
     const seg = (id: string) => {
       // d = "M portX portY L wpX wpY Q ..." — n[0..1] the port, n[2..3] the first waypoint.
@@ -175,8 +182,8 @@ describe("PatchLayer drag-to-patch", () => {
     expect(bot.wpX).toBeLessThan(bot.portX);    // ...angled toward the trunk, off the label
   });
 
-  it("clicking a patched port shows the red disconnect pin; clicking the pin disconnects", () => {
-    const onDisconnect = vi.fn();
+  it("a patched port selects on the 1st click and shows the disconnect pin on the 2nd; the pin disconnects", () => {
+    const onDisconnect = vi.fn(), onSelectConnection = vi.fn();
     const placements = [dev("sw", 5, "g-sw"), dev("pp", 3, "g-pp")];
     const conn = { id: "c1",
       a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
@@ -185,14 +192,53 @@ describe("PatchLayer drag-to-patch", () => {
       <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
-        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={onDisconnect} />,
+        onPatch={() => {}} onSelectConnection={onSelectConnection} onDisconnect={onDisconnect}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
     );
-    expect(container.querySelector('[data-testid="disconnect-pin"]')).toBeFalsy(); // hidden until a port is clicked
     const dot = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
+    // 1st click: selects the run, no pin yet.
+    act(() => { dot.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onSelectConnection).toHaveBeenCalledWith("c1");
+    expect(container.querySelector('[data-testid="disconnect-pin"]')).toBeFalsy();
+    // 2nd click on the same port: pin appears.
     act(() => { dot.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     const pin = container.querySelector('[data-testid="disconnect-pin"]');
     expect(pin).toBeTruthy();
     act(() => { pin!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(onDisconnect).toHaveBeenCalledWith("c1");
+  });
+
+  it("clicking an unpatched port makes the connectable (unpatched) ports flash", () => {
+    const { container } = setup();
+    // sw port 0 is unpatched → clicking it starts a pending connection; other unpatched ports flash.
+    const src = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
+    act(() => { src.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(container.querySelectorAll(".patch-flash").length).toBeGreaterThan(0);
+  });
+
+  it("completing a connection onto an already-patched port prompts to replace it", () => {
+    const onPatch = vi.fn(), onReplace = vi.fn();
+    const placements = [dev("sw", 5, "g-sw"), dev("pp", 3, "g-pp")];
+    // pp port 0 is already connected to sw port 5.
+    const conn = { id: "c1",
+      a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 5 },
+      b: { rackDeviceId: "pp", side: "front" as const, groupId: "g-pp", portIndex: 0 } };
+    const { container } = render(
+      <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
+        onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+        connections={[conn]} selectedConnectionId={null}
+        onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+    );
+    // click unpatched sw/0 (source), then patched pp/0 (target).
+    act(() => { container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    act(() => { container.querySelector('[data-testid="port-dot-pp-front-g-pp-0"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onPatch).not.toHaveBeenCalled(); // no direct patch — a prompt is shown instead
+    const confirm = container.querySelector('[data-testid="replace-confirm"]')!;
+    expect(confirm).toBeTruthy();
+    act(() => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onReplace).toHaveBeenCalledWith("c1",
+      { rackDeviceId: "sw", side: "front", groupId: "g-sw", portIndex: 0 },
+      { rackDeviceId: "pp", side: "front", groupId: "g-pp", portIndex: 0 });
   });
 });

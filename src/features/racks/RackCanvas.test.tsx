@@ -5,6 +5,7 @@ import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { ruTopY, RACK_GUTTER_L } from "./RackFrame";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
+import type { PortRef } from "./connectionOps";
 
 const scaleOf = (el: HTMLElement) => parseFloat(el.style.transform.match(/scale\(([-0-9.]+)\)/)![1]);
 
@@ -13,7 +14,7 @@ const placements = [{ id: "d1", startU: 2, template: tpl }];
 const base = {
   heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(),
   connections: [], selectedConnectionId: null, onPatch: vi.fn(), onSelectConnection: vi.fn(),
-  onDisconnect: vi.fn(),
+  onDisconnect: vi.fn(), onReplace: vi.fn(), portLabel: (p: PortRef) => `${p.rackDeviceId}/${p.portIndex + 1}`,
 };
 
 describe("RackCanvas", () => {

@@ -44,6 +44,7 @@ export interface HighlightPort {
   groupId: string;
   portIndex: number;
   color?: string; // glyph + label colour when highlighted; defaults to blue (#2d5bff)
+  flash?: boolean; // pulse blue<->pale-blue (a connectable target while a patch is pending)
 }
 
 // Live drag hint: shift one group's glyphs + labels horizontally by offsetX so they
@@ -54,15 +55,17 @@ export interface MovePreview {
   offsetY?: number;
 }
 
-function PortCell({ cell, color }: { cell: LaidOutPort; color?: string }) {
+function PortCell({ cell, color, flash }: { cell: LaidOutPort; color?: string; flash?: boolean }) {
   const spec = PORT_GLYPHS[cell.media];
   const gx = cell.x + CELL_W / 2; // glyph horizontal center
   const gy = cell.y + ROW_H / 2; // glyph vertical center
+  // When flashing, both glyph and label inherit the animated `color` (currentColor) from the
+  // .patch-flash group instead of a static colour.
   const glyphColor = color ?? "#111418";
   const labelFill = color ?? "#4b5563";
   const labelY = cell.labelPos === "top" ? cell.y - 3 : cell.y + ROW_H + LABEL_H - 3;
   return (
-    <g data-testid="port-cell" data-highlighted={color ? "true" : "false"}>
+    <g data-testid="port-cell" data-highlighted={color || flash ? "true" : "false"} className={flash ? "patch-flash" : undefined}>
       <text
         x={cell.x + CELL_W / 2}
         y={labelY}
@@ -70,7 +73,7 @@ function PortCell({ cell, color }: { cell: LaidOutPort; color?: string }) {
         fontSize={8}
         fontFamily="Inter, system-ui, sans-serif"
         style={{ fontVariantNumeric: "tabular-nums" }}
-        fill={labelFill}
+        fill={flash ? "currentColor" : labelFill}
       >
         {cell.label}
       </text>
@@ -78,7 +81,7 @@ function PortCell({ cell, color }: { cell: LaidOutPort; color?: string }) {
         transform={`${cell.rotation ? `rotate(${cell.rotation}, ${gx}, ${gy}) ` : ""}translate(${gx - GLYPH_W / 2}, ${gy - spec.height / 2})${
           cell.flipped ? ` translate(0, ${spec.height}) scale(1, -1)` : ""
         }`}
-        color={glyphColor}
+        color={flash ? undefined : glyphColor}
       >
         <svg width={GLYPH_W} height={spec.height} viewBox={spec.viewBox} overflow="visible">
           {spec.body}
@@ -140,7 +143,8 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
               <PortCell
                 key={`${g.id}-${cell.index}`}
                 cell={cell}
-                color={hl ? (hl.color ?? "#2d5bff") : undefined}
+                color={hl && !hl.flash ? (hl.color ?? "#2d5bff") : undefined}
+                flash={hl?.flash}
               />
             );
           });

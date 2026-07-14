@@ -244,6 +244,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
               if (err) { setSaveState("error"); setError(err); return; }
               commitConnections(addConnection(connections, a, b));
             }}
+            onReplace={(existingId, a, b) => {
+              // Drop the existing connection on the target port, then patch the new one — one commit.
+              commitConnections(addConnection(removeConnection(connections, existingId), a, b));
+            }}
+            portLabel={labelForPort}
           />
         </div>
       </div>

@@ -45,15 +45,15 @@ export function PatchLayer(props: {
   side: "FRONT" | "BACK";
   connections: Connection[];
   activeConnIds: Set<string>;
-  onPatch: (a: PortRef, b: PortRef) => void;
+  onConnectAttempt: (a: PortRef, b: PortRef) => void; // drag-drop from a onto b (parent resolves conflicts)
+  onPortClick: (port: PortRef) => void;               // parent runs the select / connect / pin state machine
   onSelectConnection: (id: string | null) => void;
   onHoverPort?: (port: PortRef | null) => void;
   onHoverCable?: (id: string | null) => void;
-  selectedPort?: PortRef | null;
-  onSelectPort?: (port: PortRef | null) => void;
+  pinPort?: PortRef | null;                           // port whose red disconnect pin is showing (2nd click)
   onDisconnect?: (id: string) => void;
 }) {
-  const { placements, heightU, side, connections, activeConnIds, selectedPort } = props;
+  const { placements, heightU, side, connections, activeConnIds, pinPort } = props;
   const faceSide = side === "FRONT" ? "front" : "back";
 
   // All port centres on the current face, keyed for O(1) lookup by PortRef.
@@ -171,10 +171,7 @@ export function PatchLayer(props: {
           cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair", pointerEvents: "all" }}
           onPointerEnter={() => props.onHoverPort?.(d.port)}
           onPointerLeave={() => props.onHoverPort?.(null)}
-          onClick={(e) => {
-            const conn = portConnection(connections, d.port);
-            if (conn) { e.stopPropagation(); props.onSelectConnection(conn.id); props.onSelectPort?.(d.port); }
-          }}
+          onClick={(e) => { e.stopPropagation(); props.onPortClick(d.port); }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             e.stopPropagation();
@@ -190,15 +187,15 @@ export function PatchLayer(props: {
             setDrag(null);
             if (!target) return;
             const to = parsePort(target);
-            if (!samePort(from, to)) props.onPatch(from, to);
+            if (!samePort(from, to)) props.onConnectAttempt(from, to);
           }} />
       ))}
 
-      {/* red disconnect pin above a clicked patched port — click it to remove that connection */}
+      {/* red disconnect pin above a patched port on its SECOND click — click it to remove the run */}
       {(() => {
-        if (!selectedPort || selectedPort.side !== faceSide) return null;
-        const dot = dotByKey.get(keyOf(selectedPort));
-        const conn = portConnection(connections, selectedPort);
+        if (!pinPort || pinPort.side !== faceSide) return null;
+        const dot = dotByKey.get(keyOf(pinPort));
+        const conn = portConnection(connections, pinPort);
         if (!dot || !conn) return null;
         const cx = dot.x, tip = dot.y - 10, cy = tip - 20; // pin tip just above the port; body centre
         return (
