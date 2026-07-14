@@ -1,6 +1,7 @@
 // src/features/racks/repository.ts
 // Thin Supabase wrappers for racks + placed devices (same pattern as device-library/repository).
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Face } from "@/domain/faceplate";
 
 export interface RackRow {
   id: string; room_id: string; code: string; name: string | null; height_u: number;
@@ -12,6 +13,7 @@ export interface RackDeviceRow {
   status: "planned" | "installed" | "verified";
   manufacturer: string | null; model_name: string | null; serial_number: string | null;
   purchase_date: string | null; operation_start: string | null;
+  front_face: Face | null; back_face: Face | null; height_u: number | null;
   created_at: string; updated_at: string;
 }
 

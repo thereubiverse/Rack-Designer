@@ -68,12 +68,14 @@ describe("rack repository (integration)", () => {
         start_u: 1, side: "front", status: "installed",
         manufacturer: null, model_name: null, serial_number: null,
         purchase_date: null, operation_start: null,
+        front_face: null, back_face: null, height_u: null,
       },
       {
         id: idB, device_template_id: template.id, code: "SW02", name: null,
         start_u: 2, side: "front", status: "installed",
         manufacturer: null, model_name: null, serial_number: null,
         purchase_date: null, operation_start: null,
+        front_face: null, back_face: null, height_u: null,
       },
     ];
 

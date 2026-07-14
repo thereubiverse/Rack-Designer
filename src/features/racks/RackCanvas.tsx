@@ -4,6 +4,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, type RackPlacementRender } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
+import { PatchLayer } from "./PatchLayer";
+import type { Connection, PortRef } from "./connectionOps";
 
 // Smoothly-animated fit/zoom transition on the single translate+scale transform, so a Fit toggle
 // or button zoom eases from wherever the rack is now to the target.
@@ -32,6 +34,11 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   onAddAt: (u: number) => void;
   onMove: (id: string, targetU: number) => void;
   onDelete: (id: string) => void;
+  connections: Connection[];
+  selectedConnectionId: string | null;
+  onPatch: (a: PortRef, b: PortRef) => void;
+  onSelectConnection: (id: string | null) => void;
+  onDisconnect: (id: string) => void;
 }>(function RackCanvas(props, ref) {
   const { heightU, placements, side, selectedId, fitMode = "height" } = props;
   const { width, height } = rackSvgSize(heightU);
@@ -177,11 +184,12 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const t = e.target as HTMLElement | null;
       if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT" || t?.isContentEditable) return;
+      if (props.selectedConnectionId) { e.preventDefault(); props.onDisconnect(props.selectedConnectionId); return; }
       if (selectedId) { e.preventDefault(); props.onDelete(selectedId); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, props]);
+  }, [selectedId, props, props.selectedConnectionId]);
 
   const occupied = new Set<number>();
   for (const p of placements) for (let u = p.startU; u < p.startU + p.template.rackUnits; u++) occupied.add(u);
@@ -192,7 +200,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     <div ref={hostRef} className="relative h-full w-full overflow-hidden">
       <div ref={contentRef} data-testid="rack-canvas-scale" className="absolute left-0 top-0 origin-top-left"
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} onClick={() => props.onSelect(null)}>
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
+          onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} />
         </svg>
         {/* free-RU click strips */}
@@ -231,6 +240,16 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
             </div>
           );
         })}
+        {/* Overlay svg painted ABOVE the device hit-box divs so port dots and cables are hit-testable
+           by the real pointer (elementFromPoint). pointerEvents:none lets clicks over empty faceplate
+           area fall through to the device divs / free-RU strips / base svg beneath it; only the
+           interactive PatchLayer elements (port dots, cables) opt back in via their own pointerEvents. */}
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} overflow="visible"
+          style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
+          <PatchLayer placements={placements} heightU={heightU} side={side}
+            connections={props.connections} selectedConnectionId={props.selectedConnectionId}
+            onPatch={props.onPatch} onSelectConnection={props.onSelectConnection} />
+        </svg>
       </div>
     </div>
   );

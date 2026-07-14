@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getRack, replaceRackDevices, listRackDevices, templateHeights, updateRack, type RackDeviceInput } from "./repository";
 import { canPlace, validateDeviceCode, minRackHeight, type PlacementLike } from "./rackOps";
+import { replaceConnections } from "./connectionsRepository";
+import { portsOf, validatePatch, type Connection, type PortRef } from "./connectionOps";
+import { emptyFace, type Face } from "@/domain/faceplate";
 
 function toPlacementLike(rows: { id: string; device_template_id?: string; deviceTemplateId?: string; code: string; start_u?: number; startU?: number }[]): PlacementLike[] {
   return rows.map((r) => ({
@@ -39,6 +42,36 @@ export async function saveRackLayoutAction(
       }
     }
     await replaceRackDevices(db, rackId, devices);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath(`/racks/${rackId}`);
+  return { ok: true };
+}
+
+/** Reconcile the rack's patch cables. Re-validates every edge against FRESH device snapshots so a
+ *  stale client can't create a cable on a vanished port or double-book a port. */
+export async function saveConnectionsAction(
+  rackId: string, conns: Connection[],
+): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    const devices = await listRackDevices(db, rackId);
+    // Build the valid-port index per device from the snapshot faces (fallback to empty).
+    const portsByDevice: Record<string, PortRef[]> = {};
+    for (const d of devices) {
+      const front = (d.front_face as Face | null) ?? emptyFace();
+      const back = (d.back_face as Face | null) ?? emptyFace();
+      portsByDevice[d.id] = [...portsOf(front, d.id, "front"), ...portsOf(back, d.id, "back")];
+    }
+    // Re-validate edges cumulatively so a port used twice in the same batch is caught.
+    const accepted: Connection[] = [];
+    for (const c of conns) {
+      const err = validatePatch(accepted, portsByDevice, c.a, c.b);
+      if (err) return { ok: false, error: err };
+      accepted.push(c);
+    }
+    await replaceConnections(db, rackId, accepted);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
