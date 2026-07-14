@@ -142,8 +142,10 @@ describe("PatchLayer drag-to-patch", () => {
     expect(cable.getAttribute("stroke")).toBe("#fdc700");
   });
 
-  it("a top-half port exits toward the device top; a middle/bottom port toward the bottom", () => {
-    // A 2-row switch: indices 0–11 are the top row (upper half), 12–23 the bottom row (lower half).
+  it("a cable exits toward the side OPPOSITE the port's label (never crossing it)", () => {
+    // A 2-row switch: top row (0–11) labels ABOVE its glyphs, bottom row (12–23) labels BELOW —
+    // so a cable must leave the top row DOWNWARD and the bottom row UPWARD (into the label-free
+    // gutter between the rows) instead of up/down through its own label.
     const g2 = (id: string): PortGroup => ({ ...g(id), rows: 2, cols: 12 });
     const sw = { id: "sw", startU: 5, code: "sw",
       template: { rackUnits: 1, widthIn: 19, rackMounted: true,
@@ -164,8 +166,12 @@ describe("PatchLayer drag-to-patch", () => {
       const n = [...container.querySelector(`[data-testid="cable-${id}"]`)!.getAttribute("d")!.matchAll(/-?\d+\.?\d*/g)].map(Number);
       return { portY: n[1], exitY: n[3] };
     };
-    const top = exit("top"); expect(top.exitY).toBeLessThan(top.portY);     // top-row exits UP
-    const bot = exit("bot"); expect(bot.exitY).toBeGreaterThan(bot.portY);  // bottom-row exits DOWN
+    const top = exit("top"); expect(top.exitY).toBeGreaterThan(top.portY);  // top-labelled → exits DOWN
+    const bot = exit("bot"); expect(bot.exitY).toBeLessThan(bot.portY);     // bottom-labelled → exits UP
+    // Both leave into the gutter between the two rows: the top row's exit is below its port and the
+    // bottom row's exit is above its port, so the two rails sit between the rows (top < bottom).
+    expect(top.exitY).toBeLessThan(bot.portY);
+    expect(bot.exitY).toBeGreaterThan(top.portY);
   });
 
   it("clicking a patched port shows the red disconnect pin; clicking the pin disconnects", () => {

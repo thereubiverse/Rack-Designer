@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
-import { RU_PX } from "@/domain/faceplate-geometry";
+import { RU_PX, ROW_H } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
@@ -71,9 +71,7 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
-  // Each device's top/bottom edges. A cable exits a port toward its NEAREST edge (up for a port in
-  // the device's upper half, down for the lower half) and routes in the gap just outside the device,
-  // so it stays close to port level (PatchDocs feel) without ever crossing the port glyphs.
+  // Each device's top/bottom edges — used to keep a cable's exit rail inside the device.
   const deviceEdges = useMemo(() => {
     const m = new Map<string, { top: number; bottom: number }>();
     for (const p of placements) {
@@ -82,15 +80,15 @@ export function PatchLayer(props: {
     }
     return m;
   }, [placements, heightU]);
-  const EDGE_INSET = 4;
+  // A cable leaves a port toward the side OPPOSITE its number label, clearing the glyph into the
+  // adjacent label-free band, so the horizontal run never crosses the port's own label. (A
+  // top-labelled port drops down just below its glyph; a bottom-labelled port rises just above it —
+  // on a 2-row device both rows meet in the label-free gutter between the rows.)
+  const EXIT_CLEAR = ROW_H / 2 + 4; // just past the glyph edge
   const exitY = (port: PortRef, dot: PortDot) => {
+    const y = dot.labelPos === "top" ? dot.y + EXIT_CLEAR : dot.y - EXIT_CLEAR;
     const e = deviceEdges.get(port.rackDeviceId);
-    if (!e) return dot.y;
-    const up = dot.y - e.top, down = e.bottom - dot.y;
-    // A port in the device's TOP half exits toward the top; a middle (centred) or bottom-half
-    // port exits toward the bottom. The horizontal run sits just inside the device's top/bottom
-    // edge — PatchDocs routes the cable ALONG the device edge before dropping into the trunk.
-    return up < down ? e.top + EDGE_INSET : e.bottom - EDGE_INSET;
+    return e ? Math.max(e.top + 2, Math.min(e.bottom - 2, y)) : y;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter

@@ -6,7 +6,7 @@ import { frameDims, layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-ge
 import { ruTopY, RACK_GUTTER_L, RACK_PAD } from "./RackFrame";
 import type { PortRef } from "./connectionOps";
 
-export type PortDot = { port: PortRef; x: number; y: number };
+export type PortDot = { port: PortRef; x: number; y: number; labelPos: "top" | "bottom" };
 
 export function portCenters(args: {
   rackDeviceId: string; side: "front" | "back"; face: Face;
@@ -24,6 +24,7 @@ export function portCenters(args: {
         port: { rackDeviceId, side, groupId: g.id, portIndex: cell.index },
         x: ix + dims.earWidthPx + cell.x + CELL_W / 2,
         y: deviceTop + cell.y + ROW_H / 2,
+        labelPos: cell.labelPos,
       });
     }
   }
