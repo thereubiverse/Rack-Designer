@@ -7,9 +7,10 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
-import { saveRackLayoutAction, updateRackAction } from "./actions";
+import { saveRackLayoutAction, saveConnectionsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
 import { createHistory, push, undo, redo, canUndo, canRedo, type History } from "./history";
+import type { Connection } from "./connectionOps";
 
 function fromRow(r: RackDeviceRow): PlacementDraft {
   return {
@@ -32,14 +33,18 @@ function toInput(d: PlacementDraft): RackDeviceInput {
   };
 }
 
-export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
+type RackState = { placements: PlacementDraft[]; connections: Connection[] };
+
+export function RackBuilder({ rack, initialDevices, initialConnections, types, templatesByType }: {
   rack: RackRow;
   initialDevices: RackDeviceRow[];
+  initialConnections: Connection[];
   types: DeviceTypeRow[];
   templatesByType: Record<string, PickerTemplate[]>;
 }) {
-  const [hist, setHist] = useState<History<PlacementDraft[]>>(() => createHistory(initialDevices.map(fromRow)));
-  const placements = hist.present;
+  const [hist, setHist] = useState<History<RackState>>(() =>
+    createHistory({ placements: initialDevices.map(fromRow), connections: initialConnections }));
+  const { placements, connections } = hist.present;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [side, setSide] = useState<"FRONT" | "BACK">("FRONT");
   // initialTypeId null → picker opens at the "Select type" list (free-RU click); a type id →
@@ -76,22 +81,35 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
     }, 600);
   }
 
-  function queueSave(next: PlacementDraft[]) {
+  function queueSave(next: RackState) {
     setSaveState("saving"); setError(null);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const res = await saveRackLayoutAction(rack.id, next.map(toInput));
-      if (!res.ok) { setSaveState("error"); setError(res.error ?? "Save failed"); return; }
+      const [layout, conns] = await Promise.all([
+        saveRackLayoutAction(rack.id, next.placements.map(toInput)),
+        saveConnectionsAction(rack.id, next.connections),
+      ]);
+      const bad = !layout.ok ? layout : !conns.ok ? conns : null;
+      if (bad) { setSaveState("error"); setError(bad.error ?? "Save failed"); return; }
       setSaveState("saved");
     }, 600);
   }
   // Skip the history push (and the save) when the patch didn't actually change anything — a
   // same-value edit (e.g. re-selecting the current status) would otherwise create a dead undo
   // step that visibly does nothing when the user hits ⌘Z.
-  function commit(next: PlacementDraft[]) {
-    if (next === placements) return;
+  function commitState(next: RackState) {
+    if (next.placements === placements && next.connections === connections) return;
     setHist((h) => push(h, next));
     queueSave(next);
+  }
+  // Keep the placement-only helper for the many existing call sites.
+  function commit(nextPlacements: PlacementDraft[]) {
+    if (nextPlacements === placements) return;
+    commitState({ placements: nextPlacements, connections });
+  }
+  function commitConnections(nextConns: Connection[]) {
+    if (nextConns === connections) return;
+    commitState({ placements, connections: nextConns });
   }
 
   // Undo/redo — buttons + keyboard.
@@ -131,7 +149,15 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
 
   const canvasPlacements = placements
     .filter((p) => templatesById[p.deviceTemplateId])
-    .map((p) => ({ id: p.id, startU: p.startU, code: p.code, template: templatesById[p.deviceTemplateId] }));
+    .map((p) => ({
+      id: p.id, startU: p.startU, code: p.code,
+      template: {
+        rackUnits: templatesById[p.deviceTemplateId].rackUnits,
+        widthIn: templatesById[p.deviceTemplateId].widthIn,
+        rackMounted: templatesById[p.deviceTemplateId].rackMounted,
+        frontFace: p.frontFace, backFace: p.backFace,
+      },
+    }));
 
   return (
     <div className="flex gap-4">
@@ -189,7 +215,13 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
               if (!cur || cur.startU === resolved) return;
               commit(placements.map((p) => (p.id === id ? { ...p, startU: resolved } : p)));
             }}
-            onDelete={(id) => { commit(placements.filter((p) => p.id !== id)); setSelectedId(null); }}
+            onDelete={(id) => {
+              commitState({
+                placements: placements.filter((p) => p.id !== id),
+                connections: connections.filter((c) => c.a.rackDeviceId !== id && c.b.rackDeviceId !== id),
+              });
+              setSelectedId(null);
+            }}
           />
         </div>
       </div>
@@ -208,7 +240,13 @@ export function RackBuilder({ rack, initialDevices, types, templatesByType }: {
               if (!changed) return;
               commit(next);
             }}
-            onDelete={() => { commit(placements.filter((p) => p.id !== selected.id)); setSelectedId(null); }}
+            onDelete={() => {
+              commitState({
+                placements: placements.filter((p) => p.id !== selected.id),
+                connections: connections.filter((c) => c.a.rackDeviceId !== selected.id && c.b.rackDeviceId !== selected.id),
+              });
+              setSelectedId(null);
+            }}
           />
         ) : (
           <RackSettings rack={rack} minHeight={minHeight} heightU={heightU} onHeightChange={changeHeight} />
