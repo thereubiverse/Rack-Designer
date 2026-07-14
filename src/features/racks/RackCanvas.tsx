@@ -201,6 +201,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   //  - an unpatched port turns BLUE on hover.
   const [hoveredPort, setHoveredPort] = useState<PortRef | null>(null);
   const [hoveredCable, setHoveredCable] = useState<string | null>(null);
+  const [selectedPort, setSelectedPort] = useState<PortRef | null>(null); // clicked port → disconnect pin
   const faceSide = side === "FRONT" ? "front" : "back";
   const conns = props.connections;
 
@@ -244,7 +245,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
       <div ref={contentRef} data-testid="rack-canvas-scale" className="absolute left-0 top-0 origin-top-left"
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
-          onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
+          onClick={() => { props.onSelect(null); props.onSelectConnection(null); setSelectedPort(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={portHighlights} />
         </svg>
         {/* free-RU click strips */}
@@ -292,7 +293,9 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
           <PatchLayer placements={placements} heightU={heightU} side={side}
             connections={props.connections} activeConnIds={activeConnIds}
             onPatch={props.onPatch} onSelectConnection={props.onSelectConnection}
-            onHoverPort={setHoveredPort} onHoverCable={setHoveredCable} />
+            onHoverPort={setHoveredPort} onHoverCable={setHoveredCable}
+            selectedPort={selectedPort} onSelectPort={setSelectedPort}
+            onDisconnect={(id) => { props.onDisconnect(id); setSelectedPort(null); props.onSelectConnection(null); }} />
         </svg>
       </div>
     </div>

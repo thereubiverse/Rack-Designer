@@ -167,4 +167,25 @@ describe("PatchLayer drag-to-patch", () => {
     const top = exit("top"); expect(top.exitY).toBeLessThan(top.portY);     // top-row exits UP
     const bot = exit("bot"); expect(bot.exitY).toBeGreaterThan(bot.portY);  // bottom-row exits DOWN
   });
+
+  it("clicking a patched port shows the red disconnect pin; clicking the pin disconnects", () => {
+    const onDisconnect = vi.fn();
+    const placements = [dev("sw", 5, "g-sw"), dev("pp", 3, "g-pp")];
+    const conn = { id: "c1",
+      a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
+      b: { rackDeviceId: "pp", side: "front" as const, groupId: "g-pp", portIndex: 0 } };
+    const { container } = render(
+      <RackCanvas heightU={12} placements={placements} side="FRONT" selectedId={null}
+        onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+        connections={[conn]} selectedConnectionId={null}
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={onDisconnect} />,
+    );
+    expect(container.querySelector('[data-testid="disconnect-pin"]')).toBeFalsy(); // hidden until a port is clicked
+    const dot = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
+    act(() => { dot.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const pin = container.querySelector('[data-testid="disconnect-pin"]');
+    expect(pin).toBeTruthy();
+    act(() => { pin!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onDisconnect).toHaveBeenCalledWith("c1");
+  });
 });

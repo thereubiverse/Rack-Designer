@@ -49,8 +49,11 @@ export function PatchLayer(props: {
   onSelectConnection: (id: string | null) => void;
   onHoverPort?: (port: PortRef | null) => void;
   onHoverCable?: (id: string | null) => void;
+  selectedPort?: PortRef | null;
+  onSelectPort?: (port: PortRef | null) => void;
+  onDisconnect?: (id: string) => void;
 }) {
-  const { placements, heightU, side, connections, activeConnIds } = props;
+  const { placements, heightU, side, connections, activeConnIds, selectedPort } = props;
   const faceSide = side === "FRONT" ? "front" : "back";
 
   // All port centres on the current face, keyed for O(1) lookup by PortRef.
@@ -138,7 +141,7 @@ export function PatchLayer(props: {
           const d = roundedPath([
             { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
             { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
-          ], 8);
+          ], 12);
           const active = activeConnIds.has(c.id);
           return (
             <path key={c.id} data-testid={`cable-${c.id}`} d={d}
@@ -167,7 +170,7 @@ export function PatchLayer(props: {
           onPointerLeave={() => props.onHoverPort?.(null)}
           onClick={(e) => {
             const conn = portConnection(connections, d.port);
-            if (conn) { e.stopPropagation(); props.onSelectConnection(conn.id); }
+            if (conn) { e.stopPropagation(); props.onSelectConnection(conn.id); props.onSelectPort?.(d.port); }
           }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
@@ -187,6 +190,30 @@ export function PatchLayer(props: {
             if (!samePort(from, to)) props.onPatch(from, to);
           }} />
       ))}
+
+      {/* red disconnect pin above a clicked patched port — click it to remove that connection */}
+      {(() => {
+        if (!selectedPort || selectedPort.side !== faceSide) return null;
+        const dot = dotByKey.get(keyOf(selectedPort));
+        const conn = portConnection(connections, selectedPort);
+        if (!dot || !conn) return null;
+        const cx = dot.x, tip = dot.y - 10, cy = tip - 20; // pin tip just above the port; body centre
+        return (
+          <g data-testid="disconnect-pin" style={{ cursor: "pointer", pointerEvents: "auto" }}
+            onClick={(e) => { e.stopPropagation(); props.onDisconnect?.(conn.id); }}>
+            <path d={`M ${cx} ${tip} C ${cx - 7} ${tip - 8} ${cx - 13} ${tip - 14} ${cx - 13} ${cy} A 13 13 0 1 1 ${cx + 13} ${cy} C ${cx + 13} ${tip - 14} ${cx + 7} ${tip - 8} ${cx} ${tip} Z`}
+              fill="#ef4444" stroke="#fff" strokeWidth={1} />
+            {/* white crossed-out plug glyph */}
+            <g stroke="#fff" strokeWidth={1.6} strokeLinecap="round" fill="none">
+              <line x1={cx - 3} y1={cy - 6} x2={cx - 3} y2={cy - 3} />
+              <line x1={cx + 3} y1={cy - 6} x2={cx + 3} y2={cy - 3} />
+              <path d={`M ${cx - 4} ${cy - 3} h 8 v 2 a 4 4 0 0 1 -8 0 z`} fill="#fff" stroke="none" />
+              <line x1={cx} y1={cy + 1} x2={cx} y2={cy + 5} />
+              <line x1={cx - 7} y1={cy + 6} x2={cx + 7} y2={cy - 7} strokeWidth={2} />
+            </g>
+          </g>
+        );
+      })()}
     </g>
   );
 }
