@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
-import { RU_PX } from "@/domain/faceplate-geometry";
+import { RU_PX, ROW_H } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
@@ -68,13 +68,27 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
-  // Each device's bottom edge — cables drop to just below it and route in the gap/left gutter so the
-  // line never crosses the port glyphs ("through the middle of the device").
-  const deviceBottom = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of placements) m.set(p.id, ruTopY(p.startU, p.template.rackUnits, heightU) + p.template.rackUnits * RU_PX);
+  // Each device's top/bottom edges. A cable exits a port toward its NEAREST edge (up for a port in
+  // the device's upper half, down for the lower half) and routes in the gap just outside the device,
+  // so it stays close to port level (PatchDocs feel) without ever crossing the port glyphs.
+  const deviceEdges = useMemo(() => {
+    const m = new Map<string, { top: number; bottom: number }>();
+    for (const p of placements) {
+      const top = ruTopY(p.startU, p.template.rackUnits, heightU);
+      m.set(p.id, { top, bottom: top + p.template.rackUnits * RU_PX });
+    }
     return m;
   }, [placements, heightU]);
+  const EXIT_MARGIN = 6;
+  const exitY = (port: PortRef, dot: PortDot, otherDot: PortDot) => {
+    const e = deviceEdges.get(port.rackDeviceId);
+    if (!e) return dot.y;
+    const up = dot.y - e.top, down = e.bottom - dot.y;
+    // Clearly nearer one edge (e.g. a switch's top/bottom row) → use it. Near-centred (a single-row
+    // panel) → exit toward the far port so a stacked connection meets in the gap between the devices.
+    if (Math.abs(up - down) > ROW_H) return up < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
+    return otherDot.y < dot.y ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
+  };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
@@ -120,11 +134,11 @@ export function PatchLayer(props: {
         .map((c) => {
           const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
           if (!a || !b) return null;
-          const aBottom = (deviceBottom.get(c.a.rackDeviceId) ?? a.y) + 5;
-          const bBottom = (deviceBottom.get(c.b.rackDeviceId) ?? b.y) + 5;
+          const aRail = exitY(c.a, a, b);
+          const bRail = exitY(c.b, b, a);
           const d = roundedPath([
-            { x: a.x, y: a.y }, { x: a.x, y: aBottom }, { x: laneBase, y: aBottom },
-            { x: laneBase, y: bBottom }, { x: b.x, y: bBottom }, { x: b.x, y: b.y },
+            { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
+            { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
           ], 8);
           const active = activeConnIds.has(c.id);
           return (
