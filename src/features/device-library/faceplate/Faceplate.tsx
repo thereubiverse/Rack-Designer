@@ -43,6 +43,7 @@ function rightEarPath(x0: number, w: number, h: number): string {
 export interface HighlightPort {
   groupId: string;
   portIndex: number;
+  color?: string; // glyph + label colour when highlighted; defaults to blue (#2d5bff)
 }
 
 // Live drag hint: shift one group's glyphs + labels horizontally by offsetX so they
@@ -53,15 +54,15 @@ export interface MovePreview {
   offsetY?: number;
 }
 
-function PortCell({ cell, highlighted }: { cell: LaidOutPort; highlighted: boolean }) {
+function PortCell({ cell, color }: { cell: LaidOutPort; color?: string }) {
   const spec = PORT_GLYPHS[cell.media];
   const gx = cell.x + CELL_W / 2; // glyph horizontal center
   const gy = cell.y + ROW_H / 2; // glyph vertical center
-  const glyphColor = highlighted ? "#2d5bff" : "#111418";
-  const labelFill = highlighted ? "#2d5bff" : "#4b5563";
+  const glyphColor = color ?? "#111418";
+  const labelFill = color ?? "#4b5563";
   const labelY = cell.labelPos === "top" ? cell.y - 3 : cell.y + ROW_H + LABEL_H - 3;
   return (
-    <g data-testid="port-cell" data-highlighted={highlighted ? "true" : "false"}>
+    <g data-testid="port-cell" data-highlighted={color ? "true" : "false"}>
       <text
         x={cell.x + CELL_W / 2}
         y={labelY}
@@ -133,13 +134,16 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           const mp = previews.find((p) => p.groupId === g.id);
           const dx = mp ? mp.offsetX : 0;
           const dy = mp ? (mp.offsetY ?? 0) : 0;
-          const cells = g.cells.map((cell) => (
-            <PortCell
-              key={`${g.id}-${cell.index}`}
-              cell={cell}
-              highlighted={highlights.some((h) => h.groupId === g.id && h.portIndex === cell.index)}
-            />
-          ));
+          const cells = g.cells.map((cell) => {
+            const hl = highlights.find((h) => h.groupId === g.id && h.portIndex === cell.index);
+            return (
+              <PortCell
+                key={`${g.id}-${cell.index}`}
+                cell={cell}
+                color={hl ? (hl.color ?? "#2d5bff") : undefined}
+              />
+            );
+          });
           return (
             <g key={g.id} transform={dx || dy ? `translate(${dx}, ${dy})` : undefined}>{cells}</g>
           );

@@ -154,7 +154,7 @@ const RackChrome = memo(function RackChrome({ heightU, placements }: {
 export function RackFrame({ heightU, placements, side, dragId = null, highlight = null }: {
   heightU: number; placements: RackPlacementRender[]; side: "FRONT" | "BACK";
   dragId?: string | null;  // id of the device being grip-dragged (its faceplate + this ghost move imperatively)
-  highlight?: HighlightPort | null; // a hovered port to render blue (glyph + label); matched per-device by groupId
+  highlight?: HighlightPort[] | null; // ports to colour (glyph + label); matched per-device by groupId + color
 }) {
   const ix = RACK_GUTTER_L + RACK_PAD; // device-mount left edge (faceplate origin)
   return (

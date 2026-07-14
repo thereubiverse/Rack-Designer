@@ -1,9 +1,13 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
-import { RACK_GUTTER_L } from "./RackFrame";
+import { RACK_GUTTER_L, ruTopY } from "./RackFrame";
+import { RU_PX } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
-import { samePort, type Connection, type PortRef } from "./connectionOps";
+import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
+
+const BLUE = "#2d5bff";
+const AMBER = "#f59e0b";
 
 const keyOf = (p: PortRef) => `${p.rackDeviceId}-${p.side}-${p.groupId}-${p.portIndex}`;
 const parsePort = (s: string): PortRef => {
@@ -12,9 +16,26 @@ const parsePort = (s: string): PortRef => {
 };
 const serialize = (p: PortRef) => `${p.rackDeviceId}|${p.side}|${p.groupId}|${p.portIndex}`;
 
-// Orthogonal cable: out of A to a left-margin lane, down/up to B's row, into B.
-function cablePath(a: PortDot, b: PortDot, lane: number): string {
-  return `M ${a.x} ${a.y} H ${lane} V ${b.y} H ${b.x}`;
+// Build a rounded orthogonal path through the given points (right-angle corners smoothed with a
+// quadratic of radius r, clamped to half the shorter adjacent segment). Consecutive duplicate
+// points are dropped so a degenerate corner (same-row/same-device runs) doesn't break the curve.
+function roundedPath(pts: { x: number; y: number }[], r: number): string {
+  const p = pts.filter((pt, i) => i === 0 || pt.x !== pts[i - 1].x || pt.y !== pts[i - 1].y);
+  if (p.length < 2) return "";
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(b.x - a.x, b.y - a.y);
+  const toward = (from: { x: number; y: number }, to: { x: number; y: number }, d: number) => {
+    const len = dist(from, to) || 1;
+    return { x: from.x + ((to.x - from.x) / len) * d, y: from.y + ((to.y - from.y) / len) * d };
+  };
+  let d = `M ${p[0].x} ${p[0].y}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    const a = p[i - 1], b = p[i], c = p[i + 1];
+    const before = toward(b, a, Math.min(r, dist(a, b) / 2));
+    const after = toward(b, c, Math.min(r, dist(b, c) / 2));
+    d += ` L ${before.x} ${before.y} Q ${b.x} ${b.y} ${after.x} ${after.y}`;
+  }
+  const last = p[p.length - 1];
+  return `${d} L ${last.x} ${last.y}`;
 }
 
 export function PatchLayer(props: {
@@ -22,12 +43,13 @@ export function PatchLayer(props: {
   heightU: number;
   side: "FRONT" | "BACK";
   connections: Connection[];
-  selectedConnectionId: string | null;
+  activeConnIds: Set<string>;
   onPatch: (a: PortRef, b: PortRef) => void;
   onSelectConnection: (id: string | null) => void;
   onHoverPort?: (port: PortRef | null) => void;
+  onHoverCable?: (id: string | null) => void;
 }) {
-  const { placements, heightU, side, connections, selectedConnectionId } = props;
+  const { placements, heightU, side, connections, activeConnIds } = props;
   const faceSide = side === "FRONT" ? "front" : "back";
 
   // All port centres on the current face, keyed for O(1) lookup by PortRef.
@@ -45,24 +67,21 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
-  // Ports that are an endpoint of ANY connection (not just current-face ones don't apply here since
-  // `dots` is already scoped to the current face) — used to render a filled dot under the hit-dot.
-  const connectedKeys = useMemo(() => {
-    const s = new Set<string>();
-    for (const c of connections) { s.add(keyOf(c.a)); s.add(keyOf(c.b)); }
-    return s;
-  }, [connections]);
+  // Each device's bottom edge — cables drop to just below it and route in the gap/left gutter so the
+  // line never crosses the port glyphs ("through the middle of the device").
+  const deviceBottom = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of placements) m.set(p.id, ruTopY(p.startU, p.template.rackUnits, heightU) + p.template.rackUnits * RU_PX);
+    return m;
+  }, [placements, heightU]);
 
-  const lane = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
-  // A hovered cable highlights amber just like a selected one (PatchDocs behaviour).
-  const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
+  const laneBase = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
   const gRef = useRef<SVGGElement>(null);
 
-  // Safety net: releasing a drag over empty space (no port dot under the pointer) should still
-  // clear the rubber-band. A successful drop already clears state via the dot's own onPointerUp
-  // (React root handlers fire before this window listener), so this is idempotent in that case.
+  // Safety net: releasing a drag over empty space still clears the rubber-band (a successful drop
+  // already cleared state via the dot's own onPointerUp, which fires first).
   useEffect(() => {
     if (!drag) return;
     const onUp = () => { dragRef.current = null; setDrag(null); };
@@ -70,9 +89,7 @@ export function PatchLayer(props: {
     return () => window.removeEventListener("pointerup", onUp);
   }, [drag]);
 
-  // Track the cursor while dragging so the rubber-band follows the pointer instead of staying
-  // pinned at the origin dot. Client coords are converted to SVG user-space via the owning svg's
-  // screen CTM so this stays correct under the canvas's pan/zoom transform.
+  // Rubber-band follows the cursor while dragging (client coords → SVG user-space via the CTM).
   useEffect(() => {
     if (!drag) return;
     const move = (e: PointerEvent) => {
@@ -89,21 +106,31 @@ export function PatchLayer(props: {
     return () => window.removeEventListener("pointermove", move);
   }, [drag]);
 
+  // Only cables whose both ends are on the current face are drawable.
+  const faceCables = connections.filter((c) => c.a.side === faceSide && c.b.side === faceSide);
+
   return (
     <g data-testid="patch-layer" ref={gRef}>
-      {/* existing cables (only those whose both ends are on the current face) */}
-      {connections.map((c) => {
-        if (c.a.side !== faceSide || c.b.side !== faceSide) return null;
+      {/* patch cables — route down out of each port, along the gap to the left gutter, up/down the
+          lane, then symmetrically into the far port. Blue by default, amber when the run is active. */}
+      {faceCables.map((c, i) => {
         const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
         if (!a || !b) return null;
-        // Blue by default; amber when hovered OR selected (matches PatchDocs' run highlight).
-        const active = c.id === selectedConnectionId || c.id === hoveredConnectionId;
+        const aBottom = (deviceBottom.get(c.a.rackDeviceId) ?? a.y) + 5;
+        const bBottom = (deviceBottom.get(c.b.rackDeviceId) ?? b.y) + 5;
+        const lane = laneBase - (i % 6) * 5; // nest overlapping runs like PatchDocs
+        const d = roundedPath([
+          { x: a.x, y: a.y }, { x: a.x, y: aBottom }, { x: lane, y: aBottom },
+          { x: lane, y: bBottom }, { x: b.x, y: bBottom }, { x: b.x, y: b.y },
+        ], 6);
+        const active = activeConnIds.has(c.id);
         return (
-          <path key={c.id} data-testid={`cable-${c.id}`} d={cablePath(a, b, lane)}
-            fill="none" stroke={active ? "#f59e0b" : "#2d5bff"} strokeWidth={active ? 3 : 2}
+          <path key={c.id} data-testid={`cable-${c.id}`} d={d}
+            fill="none" stroke={active ? AMBER : BLUE} strokeWidth={active ? 3 : 2}
+            strokeLinejoin="round" strokeLinecap="round"
             style={{ cursor: "pointer", pointerEvents: "auto" }}
-            onPointerEnter={() => setHoveredConnectionId(c.id)}
-            onPointerLeave={() => setHoveredConnectionId((h) => (h === c.id ? null : h))}
+            onPointerEnter={() => props.onHoverCable?.(c.id)}
+            onPointerLeave={() => props.onHoverCable?.(null)}
             onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
         );
       })}
@@ -112,19 +139,20 @@ export function PatchLayer(props: {
       {drag && (() => {
         const from = dotByKey.get(keyOf(drag.from));
         return from ? <line data-testid="patch-rubber" x1={from.x} y1={from.y} x2={drag.x} y2={drag.y}
-          stroke="#2d5bff" strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" /> : null;
+          stroke={BLUE} strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" /> : null;
       })()}
 
-      {/* port hit-dots — invisible, but carry their PortRef for deterministic drag resolution */}
+      {/* port hit-dots — invisible, carry their PortRef; hovering reports the port (patched or not),
+          clicking a patched port selects its run. */}
       {dots.map((d) => (
-        <g key={keyOf(d.port)}>
-        {connectedKeys.has(keyOf(d.port)) && (
-          <circle cx={d.x} cy={d.y} r={4} fill="#2d5bff" pointerEvents="none" />
-        )}
-        <circle data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
+        <circle key={keyOf(d.port)} data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
           cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair", pointerEvents: "all" }}
-          onPointerEnter={() => { if (!connectedKeys.has(keyOf(d.port))) props.onHoverPort?.(d.port); }}
+          onPointerEnter={() => props.onHoverPort?.(d.port)}
           onPointerLeave={() => props.onHoverPort?.(null)}
+          onClick={(e) => {
+            const conn = portConnection(connections, d.port);
+            if (conn) { e.stopPropagation(); props.onSelectConnection(conn.id); }
+          }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             e.stopPropagation();
@@ -134,7 +162,7 @@ export function PatchLayer(props: {
           onPointerUp={(e) => {
             if (!dragRef.current) return;
             e.stopPropagation();
-            const target = (e.currentTarget.getAttribute("data-port"));
+            const target = e.currentTarget.getAttribute("data-port");
             const from = dragRef.current;
             dragRef.current = null;
             setDrag(null);
@@ -142,7 +170,6 @@ export function PatchLayer(props: {
             const to = parsePort(target);
             if (!samePort(from, to)) props.onPatch(from, to);
           }} />
-        </g>
       ))}
     </g>
   );

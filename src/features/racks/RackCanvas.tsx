@@ -5,7 +5,11 @@ import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_
 import { RU_PX } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
-import type { Connection, PortRef } from "./connectionOps";
+import { samePort, type Connection, type PortRef } from "./connectionOps";
+import type { HighlightPort } from "@/features/device-library/faceplate/Faceplate";
+
+const BLUE = "#2d5bff";
+const AMBER = "#f59e0b";
 
 // Smoothly-animated fit/zoom transition on the single translate+scale transform, so a Fit toggle
 // or button zoom eases from wherever the rack is now to the target.
@@ -191,11 +195,43 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedId, props, props.selectedConnectionId]);
 
-  // Hovering an unpatched port highlights its glyph + label blue (via the faceplate's highlight prop).
-  const [hoveredPort, setHoveredPort] = useState<import("./connectionOps").PortRef | null>(null);
+  // Port hover (any port) + cable hover feed the amber/blue highlight model:
+  //  - a patched port + its cable are BLUE by default, AMBER when that run is hovered or selected;
+  //  - an unpatched port turns BLUE on hover.
+  const [hoveredPort, setHoveredPort] = useState<PortRef | null>(null);
+  const [hoveredCable, setHoveredCable] = useState<string | null>(null);
   const faceSide = side === "FRONT" ? "front" : "back";
-  const highlightPort = hoveredPort && hoveredPort.side === faceSide
-    ? { groupId: hoveredPort.groupId, portIndex: hoveredPort.portIndex } : null;
+  const conns = props.connections;
+
+  // A connection's "run" is active (amber) when it is selected, hovered directly, or one of its
+  // ports is the hovered port.
+  const activeConnIds = new Set<string>();
+  for (const c of conns) {
+    if (c.id === props.selectedConnectionId || c.id === hoveredCable
+      || (hoveredPort && (samePort(c.a, hoveredPort) || samePort(c.b, hoveredPort)))) {
+      activeConnIds.add(c.id);
+    }
+  }
+
+  // Faceplate port colours: connected ports blue (amber when their run is active); a hovered
+  // unpatched port blue. Ports off the current face are ignored (matched per-device by groupId).
+  const portHighlights: HighlightPort[] = [];
+  const seenHl = new Set<string>();
+  const addHl = (p: PortRef, color: string) => {
+    if (p.side !== faceSide) return;
+    const k = `${p.groupId}:${p.portIndex}`;
+    if (seenHl.has(k)) return;
+    seenHl.add(k);
+    portHighlights.push({ groupId: p.groupId, portIndex: p.portIndex, color });
+  };
+  for (const c of conns) {
+    const color = activeConnIds.has(c.id) ? AMBER : BLUE;
+    addHl(c.a, color);
+    addHl(c.b, color);
+  }
+  if (hoveredPort && !conns.some((c) => samePort(c.a, hoveredPort) || samePort(c.b, hoveredPort))) {
+    addHl(hoveredPort, BLUE);
+  }
 
   const occupied = new Set<number>();
   for (const p of placements) for (let u = p.startU; u < p.startU + p.template.rackUnits; u++) occupied.add(u);
@@ -208,7 +244,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
           onClick={() => { props.onSelect(null); props.onSelectConnection(null); }}>
-          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={highlightPort} />
+          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={portHighlights} />
         </svg>
         {/* free-RU click strips */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
@@ -253,9 +289,9 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} overflow="visible"
           style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
           <PatchLayer placements={placements} heightU={heightU} side={side}
-            connections={props.connections} selectedConnectionId={props.selectedConnectionId}
+            connections={props.connections} activeConnIds={activeConnIds}
             onPatch={props.onPatch} onSelectConnection={props.onSelectConnection}
-            onHoverPort={setHoveredPort} />
+            onHoverPort={setHoveredPort} onHoverCable={setHoveredCable} />
         </svg>
       </div>
     </div>
