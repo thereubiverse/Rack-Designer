@@ -458,17 +458,25 @@ export function EditorCanvas(props: EditorCanvasProps) {
         props.onMoveElements?.(d.origs.map((o) => ({ id: o.id, gridX: o.gridX + res.dx, gridY: o.gridY + res.dy })));
         setElGuides(res.lines.length || res.spacings.length ? { lines: res.lines, spacings: res.spacings } : null);
       } else if (d.origs.length === 1 && d.origs[0].rotation) {
-        // Rotated single element: scale from the bottom-right handle along the box's OWN axes,
-        // keeping the (rotated) top-left corner pinned. Project the screen drag onto the local
-        // axes for the new w/h, then re-place gridX/gridY so that top-left corner stays fixed.
+        // Rotated single element: the handle rides whichever corner is at the *screen*
+        // bottom-right, and the diagonally-opposite (screen top-left) corner stays pinned.
+        // Find those two opposite corners, move the handle one by the drag, then rebuild the
+        // box from the anchor→handle diagonal (its midpoint is the new centre; projecting it
+        // onto the box's own axes gives the new w/h). Reduces to a plain resize at rotation 0.
         const o = d.origs[0];
         const th = (o.rotation! * Math.PI) / 180, c = Math.cos(th), sn = Math.sin(th);
-        const w = Math.max(ICON_MIN_SIZE, o.w + dx * c + dy * sn);
-        const h = Math.max(ICON_MIN_SIZE, o.h - dx * sn + dy * c);
-        const rot = (vx: number, vy: number) => ({ x: vx * c - vy * sn, y: vx * sn + vy * c }); // matches SVG rotate()
         const cx = o.gridX + o.w / 2, cy = o.gridY + o.h / 2;
-        const tl = rot(-o.w / 2, -o.h / 2), br = rot(w / 2, h / 2); // top-left (pinned) + new bottom-right offsets
-        const ncx = cx + tl.x + br.x, ncy = cy + tl.y + br.y;       // new centre keeps top-left fixed
+        const corner = (sx: number, sy: number) => {
+          const lx = (sx * o.w) / 2, ly = (sy * o.h) / 2;
+          return { x: cx + lx * c - ly * sn, y: cy + lx * sn + ly * c }; // matches SVG rotate()
+        };
+        const corners = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+        const anchor = corners.reduce((a, b) => (a.x + a.y <= b.x + b.y ? a : b)); // screen top-left
+        const h0 = corners.reduce((a, b) => (a.x + a.y >= b.x + b.y ? a : b));     // screen bottom-right
+        const Dx = h0.x + dx - anchor.x, Dy = h0.y + dy - anchor.y;                // anchor→handle diagonal
+        const w = Math.max(ICON_MIN_SIZE, Math.abs(Dx * c + Dy * sn));            // project onto local axes
+        const h = Math.max(ICON_MIN_SIZE, Math.abs(-Dx * sn + Dy * c));
+        const ncx = anchor.x + Dx / 2, ncy = anchor.y + Dy / 2;                    // centre = diagonal midpoint
         props.onResizeElements?.([{ id: o.id, w, h }]);
         props.onMoveElements?.([{ id: o.id, gridX: ncx - w / 2, gridY: ncy - h / 2 }]);
       } else {
@@ -847,6 +855,16 @@ export function EditorCanvas(props: EditorCanvasProps) {
             const selIds = props.selectedElementIds ?? [];
             const selected = selIds.includes(el.id);
             const onlySelected = selIds.length === 1 && selIds[0] === el.id;
+            // Keep the resize handle at the *screen* bottom-right as the element rotates:
+            // pick the box corner that a CW rotation maps there (0°→BR, 90°→TR, 180°→TL, 270°→BL).
+            const rk = ((((el.rotation ?? 0) / 90) % 4) + 4) % 4;
+            const handlePos: React.CSSProperties = [
+              { right: -6, bottom: -6 },
+              { right: -6, top: -6 },
+              { left: -6, top: -6 },
+              { left: -6, bottom: -6 },
+            ][rk];
+            const handleCursor = rk % 2 === 0 ? "nwse-resize" : "nesw-resize";
             return (
               <div
                 key={el.id}
@@ -893,7 +911,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
                             .map((x) => ({ id: x.id, gridX: x.gridX, gridY: x.gridY, w: x.w, h: x.h, rotation: x.rotation }));
                           setElDrag({ ids, mode: "resize", startX: e.clientX, startY: e.clientY, origs, anchorId: el.id, anchorKind: el.kind });
                         }}
-                        style={{ position: "absolute", right: -6, bottom: -6, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: "nwse-resize", zIndex: 23 }}
+                        style={{ position: "absolute", ...handlePos, width: 11, height: 11, borderRadius: "50%", background: "#2d5bff", border: "1.5px solid #fff", cursor: handleCursor, zIndex: 23 }}
                       />
                     )}
                   </>
