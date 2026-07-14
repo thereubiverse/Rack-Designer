@@ -82,14 +82,15 @@ export function PatchLayer(props: {
     }
     return m;
   }, [placements, heightU]);
-  const EXIT_MARGIN = 6;
+  const EDGE_INSET = 4;
   const exitY = (port: PortRef, dot: PortDot) => {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
     const up = dot.y - e.top, down = e.bottom - dot.y;
     // A port in the device's TOP half exits toward the top; a middle (centred) or bottom-half
-    // port exits toward the bottom.
-    return up < down ? e.top - EXIT_MARGIN : e.bottom + EXIT_MARGIN;
+    // port exits toward the bottom. The horizontal run sits just inside the device's top/bottom
+    // edge — PatchDocs routes the cable ALONG the device edge before dropping into the trunk.
+    return up < down ? e.top + EDGE_INSET : e.bottom - EDGE_INSET;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
@@ -141,7 +142,7 @@ export function PatchLayer(props: {
           const d = roundedPath([
             { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
             { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
-          ], 18);
+          ], 14);
           const active = activeConnIds.has(c.id);
           return (
             <path key={c.id} data-testid={`cable-${c.id}`} d={d}
