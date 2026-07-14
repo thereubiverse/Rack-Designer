@@ -142,10 +142,10 @@ describe("PatchLayer drag-to-patch", () => {
     expect(cable.getAttribute("stroke")).toBe("#fdc700");
   });
 
-  it("a cable exits toward the side OPPOSITE the port's label (never crossing it)", () => {
-    // A 2-row switch: top row (0–11) labels ABOVE its glyphs, bottom row (12–23) labels BELOW —
-    // so a cable must leave the top row DOWNWARD and the bottom row UPWARD (into the label-free
-    // gutter between the rows) instead of up/down through its own label.
+  it("a top-half port exits toward the top edge, a bottom-half toward the bottom, angled off the port", () => {
+    // A 2-row switch: indices 0–11 are the top row (upper half), 12–23 the bottom row (lower half).
+    // Each cable runs to its NEAREST device edge, and the segment onto the port angles toward the
+    // trunk (its first waypoint sits LEFT of the port) so it clears the port's centred label.
     const g2 = (id: string): PortGroup => ({ ...g(id), rows: 2, cols: 12 });
     const sw = { id: "sw", startU: 5, code: "sw",
       template: { rackUnits: 1, widthIn: 19, rackMounted: true,
@@ -162,16 +162,17 @@ describe("PatchLayer drag-to-patch", () => {
         connections={conns} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}} />,
     );
-    const exit = (id: string) => {
+    const seg = (id: string) => {
+      // d = "M portX portY L wpX wpY Q ..." — n[0..1] the port, n[2..3] the first waypoint.
       const n = [...container.querySelector(`[data-testid="cable-${id}"]`)!.getAttribute("d")!.matchAll(/-?\d+\.?\d*/g)].map(Number);
-      return { portY: n[1], exitY: n[3] };
+      return { portX: n[0], portY: n[1], wpX: n[2], wpY: n[3] };
     };
-    const top = exit("top"); expect(top.exitY).toBeGreaterThan(top.portY);  // top-labelled → exits DOWN
-    const bot = exit("bot"); expect(bot.exitY).toBeLessThan(bot.portY);     // bottom-labelled → exits UP
-    // Both leave into the gutter between the two rows: the top row's exit is below its port and the
-    // bottom row's exit is above its port, so the two rails sit between the rows (top < bottom).
-    expect(top.exitY).toBeLessThan(bot.portY);
-    expect(bot.exitY).toBeGreaterThan(top.portY);
+    const top = seg("top");
+    expect(top.wpY).toBeLessThan(top.portY);   // top-half exits UP toward the top edge
+    expect(top.wpX).toBeLessThan(top.portX);   // ...angled toward the trunk, off the label
+    const bot = seg("bot");
+    expect(bot.wpY).toBeGreaterThan(bot.portY); // bottom-half exits DOWN toward the bottom edge
+    expect(bot.wpX).toBeLessThan(bot.portX);    // ...angled toward the trunk, off the label
   });
 
   it("clicking a patched port shows the red disconnect pin; clicking the pin disconnects", () => {

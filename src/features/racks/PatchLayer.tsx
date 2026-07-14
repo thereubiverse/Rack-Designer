@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
-import { RU_PX, ROW_H } from "@/domain/faceplate-geometry";
+import { RU_PX } from "@/domain/faceplate-geometry";
 import { portCenters, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
@@ -71,7 +71,10 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
-  // Each device's top/bottom edges — used to keep a cable's exit rail inside the device.
+  // Each device's top/bottom edges. A cable exits a port toward its NEAREST edge (up for a port in
+  // the device's upper half, down for the lower half) and runs along the device edge, above/below
+  // the port labels — the short segment onto the port is ANGLED (see LEAD below) so it clears the
+  // port's own number label instead of covering it.
   const deviceEdges = useMemo(() => {
     const m = new Map<string, { top: number; bottom: number }>();
     for (const p of placements) {
@@ -80,15 +83,12 @@ export function PatchLayer(props: {
     }
     return m;
   }, [placements, heightU]);
-  // A cable leaves a port toward the side OPPOSITE its number label, clearing the glyph into the
-  // adjacent label-free band, so the horizontal run never crosses the port's own label. (A
-  // top-labelled port drops down just below its glyph; a bottom-labelled port rises just above it —
-  // on a 2-row device both rows meet in the label-free gutter between the rows.)
-  const EXIT_CLEAR = ROW_H / 2 + 4; // just past the glyph edge
+  const EDGE_INSET = 4;
   const exitY = (port: PortRef, dot: PortDot) => {
-    const y = dot.labelPos === "top" ? dot.y + EXIT_CLEAR : dot.y - EXIT_CLEAR;
     const e = deviceEdges.get(port.rackDeviceId);
-    return e ? Math.max(e.top + 2, Math.min(e.bottom - 2, y)) : y;
+    if (!e) return dot.y;
+    const up = dot.y - e.top, down = e.bottom - dot.y;
+    return up < down ? e.top + EDGE_INSET : e.bottom - EDGE_INSET;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
@@ -137,9 +137,13 @@ export function PatchLayer(props: {
           if (!a || !b) return null;
           const aRail = exitY(c.a, a);
           const bRail = exitY(c.b, b);
+          // The segment onto the port leaves at an ANGLE — leaning toward the trunk (left) as it
+          // rises/drops to the rail — so the diagonal clears the port's centred number label
+          // instead of covering it with a vertical stub.
+          const LEAD = 18;
           const d = roundedPath([
-            { x: a.x, y: a.y }, { x: a.x, y: aRail }, { x: laneBase, y: aRail },
-            { x: laneBase, y: bRail }, { x: b.x, y: bRail }, { x: b.x, y: b.y },
+            { x: a.x, y: a.y }, { x: a.x - LEAD, y: aRail }, { x: laneBase, y: aRail },
+            { x: laneBase, y: bRail }, { x: b.x - LEAD, y: bRail }, { x: b.x, y: b.y },
           ], 14);
           const active = activeConnIds.has(c.id);
           return (
