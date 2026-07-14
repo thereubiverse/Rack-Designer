@@ -13,6 +13,7 @@ const placements = [{ id: "d1", startU: 2, template: tpl }];
 const base = {
   heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(),
   connections: [], selectedConnectionId: null, onPatch: vi.fn(), onSelectConnection: vi.fn(),
+  onDisconnect: vi.fn(),
 };
 
 describe("RackCanvas", () => {

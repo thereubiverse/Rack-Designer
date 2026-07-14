@@ -10,7 +10,7 @@ import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
 import { createHistory, push, undo, redo, canUndo, canRedo, type History } from "./history";
-import { validatePatch, addConnection, portsOf, type Connection } from "./connectionOps";
+import { validatePatch, addConnection, removeConnection, portsOf, type Connection, type PortRef } from "./connectionOps";
 
 function fromRow(r: RackDeviceRow): PlacementDraft {
   return {
@@ -142,6 +142,13 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
     setPicker(null);
   }
 
+  // Slice 1 port label: "<deviceCode>/<portIndex+1>" — index+1 is sufficient for now; a richer
+  // per-group port number can reuse layoutPortGroup's labels later.
+  function labelForPort(p: PortRef): string {
+    const code = placements.find((pl) => pl.id === p.rackDeviceId)?.code ?? "?";
+    return `${code}/${p.portIndex + 1}`;
+  }
+
   const selected = placements.find((p) => p.id === selectedId) ?? null;
   const codeError = selected
     ? validateDeviceCode(selected.code) ??
@@ -228,6 +235,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
             connections={connections}
             selectedConnectionId={selectedConnectionId}
             onSelectConnection={setSelectedConnectionId}
+            onDisconnect={(id) => { commitConnections(removeConnection(connections, id)); setSelectedConnectionId(null); }}
             onPatch={(a, b) => {
               const fs = faceSide();
               const portsByDevice = Object.fromEntries(canvasPlacements.map((p) => [p.id,
@@ -262,7 +270,16 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
               setSelectedId(null);
             }}
           />
-        ) : (
+        ) : null}
+        {selected && connections.filter((c) => c.a.rackDeviceId === selected.id || c.b.rackDeviceId === selected.id).map((c) => (
+          <div key={c.id} className="mt-2 flex items-center justify-between rounded-md border border-neutral-200 px-2 py-1 text-xs">
+            <span>{labelForPort(c.a)} ↔ {labelForPort(c.b)}</span>
+            <button type="button" className="text-red-600" onClick={() => {
+              commitConnections(removeConnection(connections, c.id)); setSelectedConnectionId(null);
+            }}>Disconnect</button>
+          </div>
+        ))}
+        {!selected && (
           <RackSettings rack={rack} minHeight={minHeight} heightU={heightU} onHeightChange={changeHeight} />
         )}
       </div>

@@ -38,6 +38,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   selectedConnectionId: string | null;
   onPatch: (a: PortRef, b: PortRef) => void;
   onSelectConnection: (id: string | null) => void;
+  onDisconnect: (id: string) => void;
 }>(function RackCanvas(props, ref) {
   const { heightU, placements, side, selectedId, fitMode = "height" } = props;
   const { width, height } = rackSvgSize(heightU);
@@ -183,11 +184,12 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const t = e.target as HTMLElement | null;
       if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT" || t?.isContentEditable) return;
+      if (props.selectedConnectionId) { e.preventDefault(); props.onDisconnect(props.selectedConnectionId); return; }
       if (selectedId) { e.preventDefault(); props.onDelete(selectedId); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, props]);
+  }, [selectedId, props, props.selectedConnectionId]);
 
   const occupied = new Set<number>();
   for (const p of placements) for (let u = p.startU; u < p.startU + p.template.rackUnits; u++) occupied.add(u);

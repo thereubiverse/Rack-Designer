@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_GUTTER_L } from "./RackFrame";
 import { portCenters, type PortDot } from "./portGeometry";
@@ -44,9 +44,27 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
+  // Ports that are an endpoint of ANY connection (not just current-face ones don't apply here since
+  // `dots` is already scoped to the current face) — used to render a filled dot under the hit-dot.
+  const connectedKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of connections) { s.add(keyOf(c.a)); s.add(keyOf(c.b)); }
+    return s;
+  }, [connections]);
+
   const lane = RACK_GUTTER_L - 14; // vertical routing lane just left of the mount
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
+
+  // Safety net: releasing a drag over empty space (no port dot under the pointer) should still
+  // clear the rubber-band. A successful drop already clears state via the dot's own onPointerUp
+  // (React root handlers fire before this window listener), so this is idempotent in that case.
+  useEffect(() => {
+    if (!drag) return;
+    const onUp = () => { dragRef.current = null; setDrag(null); };
+    window.addEventListener("pointerup", onUp);
+    return () => window.removeEventListener("pointerup", onUp);
+  }, [drag]);
 
   return (
     <g data-testid="patch-layer">
@@ -60,7 +78,7 @@ export function PatchLayer(props: {
           <path key={c.id} data-testid={`cable-${c.id}`} d={cablePath(a, b, lane)}
             fill="none" stroke={selected ? "#f59e0b" : "#2d5bff"} strokeWidth={selected ? 3 : 2}
             style={{ cursor: "pointer" }}
-            onPointerDown={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
+            onClick={(e) => { e.stopPropagation(); props.onSelectConnection(c.id); }} />
         );
       })}
 
@@ -73,7 +91,11 @@ export function PatchLayer(props: {
 
       {/* port hit-dots — invisible, but carry their PortRef for deterministic drag resolution */}
       {dots.map((d) => (
-        <circle key={keyOf(d.port)} data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
+        <g key={keyOf(d.port)}>
+        {connectedKeys.has(keyOf(d.port)) && (
+          <circle cx={d.x} cy={d.y} r={4} fill="#2d5bff" pointerEvents="none" />
+        )}
+        <circle data-testid={`port-dot-${keyOf(d.port)}`} data-port={serialize(d.port)}
           cx={d.x} cy={d.y} r={9} fill="transparent" style={{ cursor: "crosshair" }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
@@ -92,6 +114,7 @@ export function PatchLayer(props: {
             const to = parsePort(target);
             if (!samePort(from, to)) props.onPatch(from, to);
           }} />
+        </g>
       ))}
     </g>
   );
