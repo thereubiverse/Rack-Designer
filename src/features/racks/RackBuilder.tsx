@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullT, pullGeometry, nearRack, restingJiggle } from "./palettePull";
+import { SNAP_MS, pullGeometry, nearRack, restingJiggle } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -132,11 +132,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
       // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
       // fired, and the phase machine belongs with the state's owner. This setState runs once.
-      // Two conditions, in order: the neck must have snapped (pullT >= 1 — you can't solidify
-      // something still attached to the palette), and the blob must have reached the rack's centre
-      // line. The rack is what turns slime into a device, so it forms where it is about to live
-      // rather than over the palette. The blob sits exactly under the cursor, so p.x IS its x.
-      if (p.phase === "pulling" && pullT(p) >= 1 && nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null)) {
+      // The rack is what turns a carried chip into a device, so it opens where it is about to live
+      // rather than over the palette. The chip sits exactly under the cursor, so p.x IS its x.
+      // (This used to also require pullT >= 1 — "the neck has snapped". There is no neck any more;
+      // that condition would now be an unreachable leftover gating the whole gesture on nothing.)
+      if (p.phase === "pulling" && nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null)) {
         p.phase = "solid";
         p.snapStart = performance.now();  // the latch spring's clock
         // flushSync, not a plain setState: pointermove is continuous priority, so React would
