@@ -55,6 +55,12 @@ function samplePath(d: string, n: number): Pt[] {
 }
 const polyD = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" ");
 
+function pathLength(d: string): number {
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", d);
+  return p.getTotalLength();
+}
+
 /** Does a connection join the same two ports as the recoiling drop (either way round)? */
 const pairsMatch = (r: { a: PortRef; b: PortRef }, c: Connection) =>
   (samePort(r.a, c.a) && samePort(r.b, c.b)) || (samePort(r.a, c.b) && samePort(r.b, c.a));
@@ -127,6 +133,10 @@ export function PatchLayer(props: {
   const [recoil, setRecoil] = useState<{ a: PortRef; b: PortRef } | null>(null);
   const recoilRef = useRef<SVGPathElement>(null);
   const recoilAnim = useRef<{ from: Pt[]; to: Pt[]; t0: number } | null>(null);
+  // Cables being reeled back into their port: a dropped-short drag, or an unplugged connection.
+  const [sucks, setSucks] = useState<{ id: string; d: string }[]>([]);
+  const suckEls = useRef(new Map<string, SVGPathElement>());
+  const suckAnim = useRef(new Map<string, { len: number; t0: number }>());
 
   /** How near a port has to be for the cable to grab it (SVG units; the dot itself is r=9). */
   const SNAP_R = 16;
@@ -146,25 +156,49 @@ export function PatchLayer(props: {
     ], 14);
   };
 
-  /** Kick off the recoil from the cable's current hanging shape into its routed position.
-   *  Only when the drop will really connect — a patched endpoint raises the replace prompt or an
-   *  error instead, and there would be no cable to land on. */
-  const startRecoil = (from: PortRef, to: PortRef) => {
+  /** Reel a cable back into the port it came out of: the strand shortens along its own curve, tip
+   *  first, accelerating as it goes. `d` must START at the port doing the sucking. */
+  const startSuck = (d: string) => {
+    let len: number;
+    try { len = pathLength(d); } catch { return; }
+    if (!(len > 0)) return;
+    const id = crypto.randomUUID();
+    suckAnim.current.set(id, { len, t0: performance.now() });
+    setSucks((s) => [...s, { id, d }]);
+  };
+
+  /** Kick off the recoil from the cable's current hanging shape into its routed position. Returns
+   *  false when the drop won't actually connect — a patched endpoint raises the replace prompt or
+   *  an error instead, and there would be no cable to land on — so the caller reels it back in. */
+  const startRecoil = (from: PortRef, to: PortRef): boolean => {
     const a = dotByKey.get(keyOf(from)), b = dotByKey.get(keyOf(to));
     const hangD = rubberRef.current?.getAttribute("d");
-    if (!a || !b || !hangD) return;
-    if (portConnection(connections, from) || portConnection(connections, to)) return;
+    if (!a || !b || !hangD) return false;
+    if (portConnection(connections, from) || portConnection(connections, to)) return false;
     const N = 48;
     try {
       recoilAnim.current = {
         from: samplePath(hangD, N), to: samplePath(cableD(from, a, to, b), N), t0: performance.now(),
       };
-    } catch { return; } // getTotalLength can throw on a degenerate path; just skip the flourish
+    } catch { return false; } // getTotalLength can throw on a degenerate path; skip the flourish
     setRecoil({ a: from, b: to });
+    return true;
+  };
+
+  /** Every drag ends here: it either recoils into a new cable, or gets reeled back into its port. */
+  const endDrag = (from: PortRef | null, to: PortRef | null) => {
+    const hangD = rubberRef.current?.getAttribute("d") ?? null;
+    let recoiled = false;
+    if (from && to && !samePort(from, to)) {
+      recoiled = startRecoil(from, to);
+      props.onConnectAttempt(from, to);
+    }
+    if (!recoiled && hangD) startSuck(hangD);
+    setDrag(null);
   };
   // Held in a ref so the window listeners can subscribe once per drag without going stale.
-  const startRecoilRef = useRef(startRecoil);
-  useEffect(() => { startRecoilRef.current = startRecoil; });
+  const endDragRef = useRef(endDrag);
+  useEffect(() => { endDragRef.current = endDrag; });
 
   // Effects below key on drag?.from, NOT drag: setDrag spreads the same `from` object every
   // pointermove, so they subscribe once per drag instead of re-subscribing on every move.
@@ -179,16 +213,11 @@ export function PatchLayer(props: {
     const onUp = () => {
       const from = dragRef.current, snap = snapRef.current;
       dragRef.current = null; snapRef.current = null;
-      // Capture the recoil BEFORE clearing the drag — it reads the cable's current hanging shape.
-      if (from && snap && !samePort(from, snap)) {
-        startRecoilRef.current(from, snap);
-        props.onConnectAttempt(from, snap);
-      }
-      setDrag(null);
+      endDragRef.current(from, snap); // recoils onto a snapped port, else reels back in
     };
     window.addEventListener("pointerup", onUp);
     return () => window.removeEventListener("pointerup", onUp);
-  }, [dragFrom, props]);
+  }, [dragFrom]);
 
   // Rubber-band follows the cursor while dragging (client coords → SVG user-space via the CTM),
   // grabbing the nearest port within SNAP_R.
@@ -273,6 +302,48 @@ export function PatchLayer(props: {
     return () => cancelAnimationFrame(raf);
   }, [recoil]);
 
+  // Unplugging a cable reels it in too: the parent just drops it from the list, so diff for
+  // removals. A cable whose device went with it has no port left to retract into — skip those.
+  const prevConns = useRef(connections);
+  useEffect(() => {
+    const prev = prevConns.current;
+    prevConns.current = connections;
+    for (const c of prev) {
+      if (connections.some((x) => x.id === c.id)) continue;
+      if (c.a.side !== faceSide || c.b.side !== faceSide) continue;
+      const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
+      if (!a || !b) continue;
+      startSuck(cableD(c.a, a, c.b, b)); // routed path starts at `a` → it reels into that port
+    }
+  }, [connections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The reel-in: shorten the visible strand along its own curve, tip first. easeInCubic makes it
+  // accelerate into the port — the slurp. One frame loop drives every strand in flight.
+  useEffect(() => {
+    if (sucks.length === 0) return;
+    const DUR = 380;
+    let raf = 0;
+    const tick = () => {
+      const now = performance.now();
+      const done: string[] = [];
+      for (const s of sucks) {
+        const a = suckAnim.current.get(s.id), el = suckEls.current.get(s.id);
+        if (!a) { done.push(s.id); continue; }
+        const t = Math.min(1, (now - a.t0) / DUR);
+        const visible = a.len * (1 - t * t * t);
+        el?.setAttribute("stroke-dasharray", `${visible} ${a.len + 10}`);
+        if (t >= 1) done.push(s.id);
+      }
+      if (done.length) {
+        for (const id of done) { suckAnim.current.delete(id); suckEls.current.delete(id); }
+        setSucks((s) => s.filter((x) => !done.includes(x.id)));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [sucks]);
+
   // Only cables whose both ends are on the current face are drawable.
   const faceCables = connections.filter((c) => c.a.side === faceSide && c.b.side === faceSide);
 
@@ -329,6 +400,14 @@ export function PatchLayer(props: {
           strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
       )}
 
+      {/* cables being reeled back into their port */}
+      {sucks.map((s) => (
+        <path key={s.id} data-testid="patch-suck" d={s.d}
+          ref={(el) => { if (el) suckEls.current.set(s.id, el); else suckEls.current.delete(s.id); }}
+          fill="none" stroke={BLUE} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round"
+          pointerEvents="none" />
+      ))}
+
       {/* port hit-dots — invisible, carry their PortRef; hovering reports the port (patched or not),
           clicking a patched port selects its run. */}
       {dots.map((d) => (
@@ -352,12 +431,8 @@ export function PatchLayer(props: {
             const from = dragRef.current;
             dragRef.current = null;
             snapRef.current = null;
-            if (target) {
-              const to = parsePort(target);
-              // Capture the recoil BEFORE clearing the drag — it reads the cable's hanging shape.
-              if (!samePort(from, to)) { startRecoil(from, to); props.onConnectAttempt(from, to); }
-            }
-            setDrag(null);
+            // endDrag reads the cable's current hanging shape, so it must run before the clear.
+            endDrag(from, target ? parsePort(target) : null);
           }} />
       ))}
 
