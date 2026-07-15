@@ -9,19 +9,22 @@ import type { SiteSwitchTarget } from "./siteScope";
 
 const BLUE = "#1a55d8";
 
-function FaceSvg({ face, widthIn, rackUnits, rackMounted, highlightIndex }: {
+function FaceSvg({ face, widthIn, rackUnits, rackMounted, highlightIndex, offsetX }: {
   face: Face;
-  widthIn: number; rackUnits: number; rackMounted: boolean; highlightIndex?: number;
+  widthIn: number; rackUnits: number; rackMounted: boolean; highlightIndex?: number; offsetX?: number;
 }) {
   const opts = { widthIn, rackUnits, rackMounted };
   const dims = frameDims(opts);
   const highlight = highlightIndex === undefined
     ? undefined
     : [{ groupId: ENDPOINT_GROUP_ID, portIndex: highlightIndex, color: BLUE }];
+  const movePreview = offsetX === undefined
+    ? undefined
+    : [{ groupId: ENDPOINT_GROUP_ID, offsetX }];
   return (
     <svg data-testid="endpoint-face" viewBox={`0 0 ${dims.frameWidthPx} ${dims.heightPx}`}
       className="h-auto w-full" preserveAspectRatio="xMidYMid meet">
-      {renderFace(face, opts, highlight)}
+      {renderFace(face, opts, highlight, movePreview)}
     </svg>
   );
 }
@@ -38,7 +41,7 @@ export function EndpointFaceView(props: EndpointFaceViewProps) {
     // Just wide enough for the ports, with a port's width of margin each side.
     const widthIn = ((cols + 2) * CELL_W) / PX_PER_IN;
     return <FaceSvg face={face} widthIn={widthIn} rackUnits={1} rackMounted={false}
-      highlightIndex={props.landingPortIndex} />;
+      highlightIndex={props.landingPortIndex} offsetX={CELL_W} />;
   }
   if (props.kind === "device") {
     const { target } = props;
