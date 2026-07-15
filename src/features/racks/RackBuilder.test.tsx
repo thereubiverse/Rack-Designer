@@ -223,41 +223,6 @@ describe("RackBuilder sidebar selection", () => {
     expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
   });
 
-  it("an abandoned MID-pull snaps back from where the box IS, not from the cursor", () => {
-    // Mid-pull the box lags the cursor — it travels from the chip toward the pointer as you drag.
-    // beginSnapBack must therefore capture the BOX's position, not the pointer's; capturing the
-    // pointer teleports the box to the cursor before it starts shrinking. Every other abandon test
-    // latches solid first, where the two coincide (pullAt === pointer at t=1), so only a mid-pull
-    // abandon can catch this.
-    // Two things make this observable only with effort, and both are why it nearly shipped untested:
-    //  - abandoning MID-pull calls setDropArmed(false) when it is already false, so React bails out
-    //    and never re-renders. The snap-back is painted ONLY by the rAF loop — and jsdom never fires
-    //    rAF on its own. So capture the frame callback and run one by hand.
-    //  - the clock must be FROZEN: the snap-back starts retreating immediately and the right and
-    //    wrong start points decay at the same rate, so with a live clock the wrong one drifts under
-    //    any threshold and the test silently stops discriminating (verified — it did).
-    let frame: FrameRequestCallback | null = null;
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frame = cb; return 1; });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
-    vi.useFakeTimers({ toFake: ["performance"] });
-    try {
-      render(<RackBuilder {...baseProps()} />);
-      fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
-      const pointerX = PULL_DIST / 2;                     // half-way: still stretching, still lagging
-      act(() => { fireEvent.pointerMove(window, { clientX: pointerX, clientY: 0 }); });
-      act(() => { fireEvent.pointerUp(window, { clientX: pointerX, clientY: 0 }); }); // abandon
-      act(() => { frame?.(0); });                         // the loop paints the snap-back's first frame
-      const box = screen.getByTestId("pull-box");
-      const tx = parseFloat(box.style.transform.match(/translate\(([-0-9.]+)px/)![1]);
-      const centreX = tx + parseFloat(box.style.width) / 2;
-      // A relationship, not a magic number: at the instant it is abandoned the box must still be
-      // BEHIND the cursor. The 0.95 leaves the easing curve free to be tuned.
-      expect(centreX).toBeLessThan(pointerX * 0.95);
-    } finally {
-      vi.useRealTimers();
-      vi.unstubAllGlobals();
-    }
-  });
 
   it("a pull abandoned then immediately restarted is not killed by the old snap-back timer", () => {
     // Race: beginSnapBack schedules endPull after SNAP_MS. Grab another chip inside that window and

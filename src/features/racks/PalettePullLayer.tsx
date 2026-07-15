@@ -5,12 +5,17 @@
 // splitting, carried as a featureless blob, and solidified into a blank rack device only once it
 // nears the rack. Fixed, pointer-events:none, above the palette and canvas.
 //
-// The liquid is a METABALL, not hand-drawn geometry. The chip and the blob are two ordinary shapes
-// in one group; a blur + alpha-contrast filter fuses anything close into a single mass, so the
-// bulge, the stretching waist, the pinch and the snap all emerge from the filter as they separate.
-// That is why there is no neck path here: the old one drew a tapered spike from the chip's CENTRE,
-// which showed as a stray arrow while the blob still lagged inside the chip's own bounds — and it
-// could never have produced a real pinch.
+// The chip's OWN OUTLINE is what tears. Chip + neck + blob sit in one group behind a small blur +
+// alpha-contrast filter, so the filter's only job is to fillet the neck's joins into the chip and
+// the blob; the neck itself spans the distance. The chip's rectangle NEVER moves — only its exit
+// point does, because that is where the neck happens to be rooted this frame.
+// Two things this is deliberately NOT:
+//  - not a metaball alone: a metaball fuses only within ~2x its blur, so the blob would tear free
+//    the moment it cleared the chip's edge, with no thread. And a blur wide enough to bridge the
+//    gap rounds the whole chip into a pill.
+//  - not a centre-rooted neck: that always has length, so it drew a spike across the chip's face
+//    even while the blob was still inside it (the "arrow"). Rooting at chipExit() gives zero length
+//    while the cursor is inside the chip, so nothing appears until it actually leaves.
 //
 // The outline is the standard two-pass trick: draw the same shapes fused and fattened in the border
 // colour, then again fused and white on top. What's left showing is a hairline that follows the
@@ -32,14 +37,20 @@ export type { PullPhase, PullState } from "./palettePull";
 
 type Geo = ReturnType<typeof pullGeometry>;
 
-/** Fusion strength. stdDeviation sets how far apart two shapes still merge — i.e. how long the waist
- *  stretches before it snaps; the alpha contrast re-hardens the blurred edge back to a crisp one.
- *  Both are tuning knobs: more blur = gooier and stringier. */
-const GOO_BLUR = 14;
-const GOO_CONTRAST = 22;
-/** How far the border pass is fattened past the fill pass — the visible hairline. */
-const OUTLINE_PX = 1.25;
-const BORDER = "#d4d4d4";
+/** Fillet strength. The filter's ONLY job is to melt the neck's joins into the chip and the blob —
+ *  the neck itself spans the distance (see neckPath). Keep it SMALL: the blur rounds every corner it
+ *  touches, so a large value liquefies the whole chip into a pill instead of leaving it a crisp
+ *  rectangle with one molten exit point. At 14 the entire chip visibly deformed; ~4 rounds the
+ *  corners by a couple of px against their existing 8px radius, which reads as unchanged.
+ *  Tuning knob: more blur = gooier joins, but a softer chip. */
+const GOO_BLUR = 4;
+const GOO_CONTRAST = 24;
+/** The hairline: how far the border pass is fattened past the fill pass. MUST match the real chip
+ *  button's own border (`border border-neutral-200` = 1px #e5e5e5) — the goo redraws the chip over
+ *  the live button, so any difference shows as a doubled or mismatched edge, and the blob's outline
+ *  has to read as the same line the chip is drawn with. */
+const OUTLINE_PX = 1;
+const BORDER = "#e5e5e5";
 
 export function PalettePullLayer({ pullRef, scaleOf }: {
   pullRef: MutableRefObject<PullState | null>;
@@ -50,6 +61,7 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   const boxRef = useRef<HTMLDivElement | null>(null);
   // [border pass, fill pass] for each of the two shapes — the loop writes all four.
   const chipRef = useRef<(SVGRectElement | null)[]>([null, null]);
+  const neckRef = useRef<(SVGPathElement | null)[]>([null, null]);
   const blobRef = useRef<(SVGEllipseElement | null)[]>([null, null]);
 
   useEffect(() => {
@@ -59,7 +71,7 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
       const p = pullRef.current;
       if (!p) return;
       paint(p, pullGeometry(p, scaleOf(), performance.now()),
-        { goo: gooRef.current, label: labelRef.current, box: boxRef.current, chip: chipRef.current, blob: blobRef.current });
+        { goo: gooRef.current, label: labelRef.current, box: boxRef.current, neck: neckRef.current, blob: blobRef.current });
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -95,6 +107,10 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
                 rx={8 + pass.grow} ry={8 + pass.grow}
                 x={p.chip.x - p.chipSize.w / 2 - pass.grow} y={p.chip.y - p.chipSize.h / 2 - pass.grow}
                 width={p.chipSize.w + pass.grow * 2} height={p.chipSize.h + pass.grow * 2} />
+              {/* The molten thread out of the chip's edge. Stroked, not just filled, so the border
+                  pass fattens it exactly like the other two shapes. */}
+              <path ref={(el) => { neckRef.current[i] = el; }} data-testid={`pull-neck-${i}`}
+                d={g.neck} stroke={pass.fill} strokeWidth={pass.grow * 2} strokeLinejoin="round" />
               <ellipse ref={(el) => { blobRef.current[i] = el; }} data-testid={`pull-blob-${i}`}
                 cx={g.at.x} cy={g.at.y} rx={g.size.w / 2 + pass.grow} ry={g.size.h / 2 + pass.grow} />
             </g>
@@ -123,12 +139,13 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
 
 function paint(p: PullState, g: Geo, el: {
   goo: SVGGElement | null; label: SVGTextElement | null; box: HTMLDivElement | null;
-  chip: (SVGRectElement | null)[]; blob: (SVGEllipseElement | null)[];
+  neck: (SVGPathElement | null)[]; blob: (SVGEllipseElement | null)[];
 }) {
   if (el.goo) { el.goo.style.display = g.solid ? "none" : "block"; el.goo.setAttribute("opacity", String(g.opacity)); }
   if (el.label) el.label.style.display = g.solid ? "none" : "block";
   for (const i of [0, 1]) {
     const grow = i === 0 ? OUTLINE_PX : 0;
+    el.neck[i]?.setAttribute("d", g.neck);
     const blob = el.blob[i];
     if (blob) {
       blob.setAttribute("cx", String(g.at.x));
