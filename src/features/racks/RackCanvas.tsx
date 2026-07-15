@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, type RackPlacementRender } from "./RackFrame";
+import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, RK_GRIP, type RackPlacementRender } from "./RackFrame";
 import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
@@ -23,6 +23,8 @@ const MAX_SCALE = 3;
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 /** How far the selection box sits outside the device it wraps. */
 const SELECT_OUTSET = 2;
+/** Grip handle width — must stay in step with its `w-4` class (used to centre it on the ear). */
+const GRIP_W = 16;
 
 export type RackCanvasHandle = { zoomBy: (factor: number) => void };
 
@@ -147,6 +149,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // NO React re-render per frame, so the device tracks the pointer 1:1 with zero render latency.
   // React state changes only on start/end; the move is committed once (snapped to a free RU) on release.
   const [dragId, setDragId] = useState<string | null>(null);
+  const [hoverU, setHoverU] = useState<number | null>(null);
   const dragRef = useRef<{ id: string; startY: number; origU: number; ru: number; ghostU: number } | null>(null);
   useEffect(() => {
     if (!dragId) return;
@@ -313,12 +316,14 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
           onClick={() => { props.onSelect(null); props.onSelectConnection(null); setSelectedPort(null); setPinShown(false); setPendingSource(null); }}>
           <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId}
-            highlight={portHighlights} selectedId={selectedId} />
+            highlight={portHighlights} selectedId={selectedId} hoverU={hoverU} />
         </svg>
-        {/* free-RU click strips */}
+        {/* free-RU click strips — hovering one also lights that RU's rails (see RackFrame) */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
           <div key={u} data-testid={`ru-hit-${u}`} title={`Add device at U${u}`}
             onClick={(e) => { e.stopPropagation(); props.onAddAt(u); }}
+            onMouseEnter={() => setHoverU(u)}
+            onMouseLeave={() => setHoverU((cur) => (cur === u ? null : cur))}
             className="absolute cursor-pointer rounded hover:bg-blue-50/60"
             style={{ left: ix, top: ruTopY(u, 1, heightU), width: RACK_INTERIOR_W, height: RU_PX }} />
         ))}
@@ -338,6 +343,10 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
             ? [{ key: "l", left: 0 }, { key: "r", left: RACK_INTERIOR_W - earPx }]
             : [{ key: "full", left: 0 }];
           const earW = earPx > 0 ? earPx : RACK_INTERIOR_W;
+          // Centre the grip ON the right ear (it takes the ear's blue, so the two read as one
+          // piece) instead of hanging it off the device's right edge. An ear-less device has no
+          // ear to sit in, so tuck the grip just inside the body edge.
+          const gripRight = earPx > 0 ? (earPx - GRIP_W) / 2 : 2;
           return (
             <div key={p.id} data-testid={`rack-dev-${p.id}`}
               className={`absolute ${selected ? "z-10" : ""}`}
@@ -363,7 +372,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
                       dragRef.current = { id: p.id, startY: e.clientY, origU: p.startU, ru: p.template.rackUnits, ghostU: p.startU };
                       setDragId(p.id);
                     }}
-                    className="pointer-events-auto absolute -right-1 top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded bg-blue-600 text-white">
+                    className="pointer-events-auto absolute top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded text-white"
+                    style={{ right: gripRight, backgroundColor: RK_GRIP }}>
                     <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>
                   </div>
                 </>
