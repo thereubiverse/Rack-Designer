@@ -12,10 +12,10 @@ import type { SiteScope } from "./siteScope";
 // Pure UI-wiring tests: the rack builder must never touch the network/DB. Saves are debounced
 // 600ms and mocked out here so a stray timer firing mid-test can't hit a real server action.
 vi.mock("./actions", () => ({
-  saveRackLayoutAction: vi.fn(),
-  saveConnectionsAction: vi.fn(),
-  saveEndpointsAction: vi.fn(),
-  updateRackAction: vi.fn(),
+  saveRackLayoutAction: vi.fn().mockResolvedValue({ ok: true }),
+  saveConnectionsAction: vi.fn().mockResolvedValue({ ok: true }),
+  saveEndpointsAction: vi.fn().mockResolvedValue({ ok: true }),
+  updateRackAction: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 const g = (id: string): PortGroup => ({
@@ -151,5 +151,17 @@ describe("RackBuilder sidebar selection", () => {
     clickEmptyCanvas(container);
     expect(screen.getByTestId("rack-settings")).toBeInTheDocument();
     expect(screen.queryByTestId("connection-details")).toBeNull();
+  });
+
+  it("Delete removes the selected device, not the previously selected cable", () => {
+    // Regression for the unwired half of selection exclusion on the device side: selectDevice
+    // must clear selectedConnectionId, or else RackCanvas's Delete handler (which prefers
+    // selectedConnectionId) silently disconnects the stale cable instead of deleting the device
+    // that's visibly selected in the sidebar.
+    const { container } = render(<RackBuilder {...baseProps()} />);
+    clickCable(container, "c1");
+    fireEvent.click(screen.getByTestId("rack-dev-ear-l-sw"));
+    act(() => { fireEvent.keyDown(window, { key: "Delete" }); });
+    expect(screen.queryByTestId("rack-dev-sw")).toBeNull();
   });
 });
