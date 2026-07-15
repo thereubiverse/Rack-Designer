@@ -8,7 +8,7 @@ import type { PortEndpoint } from "./endpointOps";
 import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
-import { SNAP_MS, PULL_DIST } from "./palettePull";
+import { SNAP_MS, RACK_LATCH_X } from "./palettePull";
 import { RACK_GUTTER_L, RACK_INTERIOR_W } from "./RackFrame";
 
 // Pure UI-wiring tests: the rack builder must never touch the network/DB. Saves are debounced
@@ -178,10 +178,8 @@ describe("RackBuilder sidebar selection", () => {
   });
 
   it("pressing a palette chip and dropping on a free RU opens the picker at that RU", () => {
-    // The whole gesture: press the chip, pull past PULL_DIST so it latches solid, release on a strip.
-    // jsdom reports a zero-size rect for the chip, so its centre is (0,0) and the pointer's distance
-    // is simply clientX. Aim at the rack: past PULL_DIST (so the neck snaps) AND near the rack centre
-    // (so it solidifies) — both are now required.
+    // The whole gesture: press the chip, carry it to the rack so it opens into a device, release on
+    // a strip. Reaching the rack's centre line is the ONLY thing that opens it now.
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
@@ -190,11 +188,12 @@ describe("RackBuilder sidebar selection", () => {
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
   });
 
-  it("a chip press released before it solidifies opens nothing", () => {
+  it("a chip released just short of the rack opens nothing", () => {
+    // Derived from RACK_LATCH_X rather than hardcoded, so tuning the threshold can't break this.
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST / 10, clientY: 0 }); }); // short of PULL_DIST
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX() - RACK_LATCH_X - 20, clientY: 0 }); });
     fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
     expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
   });
@@ -212,10 +211,10 @@ describe("RackBuilder sidebar selection", () => {
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
   });
 
-  it("a blob carried far from the rack never solidifies, so it cannot be dropped", () => {
-    // The RACK is what turns slime into a device. Pull the neck clean off (far past PULL_DIST) but
-    // stay away from the rack's centre line: it must stay a blob, the drop must not arm, and
-    // releasing on a strip must do nothing. Distance from the chip alone is no longer enough.
+  it("a chip carried far PAST the rack never opens, so it cannot be dropped", () => {
+    // The RACK is what turns a carried chip into a device. Carry it way beyond the rack's centre
+    // line and it must stay a chip, the drop must not arm, and releasing on a strip must do nothing.
+    // Distance travelled is not the test — proximity to the rack is.
     render(<RackBuilder {...baseProps()} />);
     fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
     act(() => { fireEvent.pointerMove(window, { clientX: 10000, clientY: 0 }); }); // free, but nowhere near
