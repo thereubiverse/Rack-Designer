@@ -57,6 +57,19 @@ out of the Location → Floor → Room → Rack hierarchy* (PatchDocs' model).
 `device`/`rack` store no type or name — both are derived from the referenced row, so they can never
 drift out of sync with the thing they point at.
 
+**The type select** lists: every `category='floor'` device type **except `RK`** (offered instead as
+the `rack` kind, since an uplink is a real reference), then two built-in entries — *Switch (another
+rack)* → `device`, and *Rack uplink* → `rack`.
+
+**`port_count` is editable for `TO` only** (1/2/3/4/6). Every other described type uses its built-in
+face's port count, which is 1; the field is not shown for them. `landing_port_index` is therefore
+always 0 for single-port types, but `landing_port_label` stays editable for all of them — it is the
+jack/outlet label the run terminates at.
+
+**The `device` picker lists rack devices whose device type is Switch (`SW`)**, in racks *other than*
+this one, on this site. (Widening it to any rack device is a one-line change if that proves too
+strict in practice.)
+
 ## Architecture
 
 Seven isolated components, mirroring Slice 1's split (table → pure ops → action → component):
@@ -66,8 +79,8 @@ Seven isolated components, mirroring Slice 1's split (table → pure ops → act
 3. **`src/features/racks/endpointFaces.ts`** (new, pure) — built-in `Face` per floor type + port count.
 4. **`src/features/racks/endpointsRepository.ts` + `saveEndpointsAction`** — load-by-rack and a
    reconcile save with server-side re-validation, mirroring `saveConnectionsAction`.
-5. **Site-scope query** — racks (and their switch devices) in the same site, via `room → floor → site`.
-   Feeds the pickers and the server-side same-site check.
+5. **Site-scope query** — the other racks in this site, and their Switch-type devices, via
+   `room → floor → site`. Feeds both pickers and the server-side same-site check.
 6. **`src/features/racks/ConnectionDetails.tsx`** (new) — the right panel; presentational + callbacks only.
 7. **RackBuilder wiring** — `endpoints` joins the unified `RackState`, history, and autosave.
 
