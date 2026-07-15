@@ -8,7 +8,7 @@
 // cap on top and a ventilation-slat plinth + feet on the bottom.
 // No interactivity — RackCanvas overlays that (same split as Faceplate/EditorCanvas).
 import { memo } from "react";
-import { renderFace, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
+import { renderFace, CORNER_R, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { RU_PX, PX_PER_IN, RAIL_WIDTH_IN } from "@/domain/faceplate-geometry";
 import { type Face } from "@/domain/faceplate";
 
@@ -170,8 +170,9 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
       {dragId != null && (() => {
         const dp = placements.find((p) => p.id === dragId);
         if (!dp) return null;
+        // Sits exactly on the device's footprint, so it takes the device's own corner radius.
         return <rect data-testid="rack-ghost" x={ix} y={ruTopY(dp.startU, dp.template.rackUnits, heightU)}
-          width={RACK_INTERIOR_W} height={dp.template.rackUnits * RU_PX} rx={2}
+          width={RACK_INTERIOR_W} height={dp.template.rackUnits * RU_PX} rx={CORNER_R}
           fill="#3b82f6" fillOpacity={0.08} stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="7 5" />;
       })()}
 
