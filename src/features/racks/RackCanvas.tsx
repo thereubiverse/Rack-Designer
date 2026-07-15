@@ -6,7 +6,7 @@ import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
 import { samePort, portConnection, isConnected, portsOf, type Connection, type PortRef } from "./connectionOps";
-import type { HighlightPort } from "@/features/device-library/faceplate/Faceplate";
+import { CORNER_R, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 
 // Exact PatchDocs colours (their --color-primary-blue / highlighted amber).
 const BLUE = "#1a55d8";
@@ -21,6 +21,8 @@ const FIT_MARGIN = 16;      // gap kept around the rack when fitted
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 3;
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+/** How far the selection box sits outside the device it wraps. */
+const SELECT_OUTSET = 2;
 
 export type RackCanvasHandle = { zoomBy: (factor: number) => void };
 
@@ -347,7 +349,10 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
               ))}
               {selected && (
                 <>
-                  <div className="pointer-events-none absolute -inset-0.5 rounded border-2 border-blue-500" />
+                  {/* Offsetting a rounded rect outward grows its radius by the same amount, so the
+                      box only hugs the device's curve at CORNER_R + its own outset. */}
+                  <div className="pointer-events-none absolute border-2 border-blue-500"
+                    style={{ inset: -SELECT_OUTSET, borderRadius: CORNER_R + SELECT_OUTSET }} />
                   <div data-testid={`rack-grip-${p.id}`} title="Drag to move"
                     onPointerDown={(e) => {
                       if (e.button !== 0) return;

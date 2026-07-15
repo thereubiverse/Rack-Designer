@@ -25,7 +25,9 @@ export interface FaceplateOptions {
 // right edge when there are no ears) — no external gutter. LABEL_INSET_PX is how far the
 // label's center sits from the right edge when there are no ears.
 const LABEL_INSET_PX = 18;
-const CORNER_R = 6; // frame corner radius
+/** Frame corner radius. Exported so anything drawn AROUND a device (the rack's selection box, the
+ *  drag ghost) can match the curve instead of guessing at it. */
+export const CORNER_R = 6;
 
 // Ear paths round only their OUTER corners (to sit flush inside the frame's
 // rounded corners); the inner edge against the body stays square so there is
