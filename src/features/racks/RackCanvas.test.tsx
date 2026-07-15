@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
-import { ruTopY, RACK_GUTTER_L, RK_SELECT, RK_HINT } from "./RackFrame";
+import { ruTopY, RACK_GUTTER_L, RACK_RAIL_W, RK_SELECT, RK_HINT } from "./RackFrame";
 import { EAR_GREY } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -92,6 +92,19 @@ describe("RackCanvas", () => {
 
     fireEvent.mouseLeave(screen.getByTestId("ru-hit-4"));
     expect(rails()).toHaveLength(0);
+  });
+
+  it("the RU hover tint never covers the rails it would wash out", () => {
+    // Regression: the strip spans rail-to-rail and paints ABOVE the rack SVG. Tinting the strip
+    // itself (it used to carry `hover:bg-blue-50/60`) laid a pale wash straight over the rails
+    // that light up beneath it, so they read pale however dark their fill was.
+    render(<RackCanvas {...base} selectedId={null} />);
+    const strip = screen.getByTestId("ru-hit-4");
+    expect(strip.className).not.toMatch(/hover:bg-/); // the tint must live on the inset child
+    const tint = screen.getByTestId("ru-tint-4");
+    expect(tint.style.left).toBe(`${RACK_RAIL_W}px`);
+    expect(tint.style.right).toBe(`${RACK_RAIL_W}px`);
+    expect(RACK_RAIL_W).toBeGreaterThan(0); // an inset of 0 would silently re-cover the rails
   });
 
   it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {

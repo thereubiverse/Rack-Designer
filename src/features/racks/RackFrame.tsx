@@ -47,6 +47,9 @@ const RK_CODE_SELECTED = "#ffffff";
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
 const EAR_OUT = 270;                // ear outer edge (= mount half-width) — fixed
 const EAR_W = 0.75 * PX_PER_IN;     // 36px — mounting-ear width; matches the faceplate's 0.75" device ear
+/** Rail width, exported so the RU hover strips — which sit ABOVE this SVG and span rail-to-rail —
+ *  can inset their pale tint off the rails and leave the lit RK_SELECT showing. */
+export const RACK_RAIL_W = EAR_W;
 const MOAT = 60;                    // white gap inner-wall → ear — widened to give patch cables room
                                     // to breathe next to the rack (PatchDocs proportion: ~70 ref units)
 const IW = EAR_OUT + MOAT;          // 330 — inner wall
