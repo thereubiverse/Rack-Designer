@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullGeometry, nearRack, restingJiggle } from "./palettePull";
+import { SNAP_MS, pullGeometry, nearRack, restingFlex } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -111,7 +111,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
       phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-      vx: 0, vy: 0, lastMoveAt: performance.now(), jiggle: restingJiggle(),
+      vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
     setPullMounted(true);
     setDropArmed(false);
@@ -122,7 +122,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     const onMove = (e: PointerEvent) => {
       const p = pullRef.current;
       if (!p || p.phase === "snapback") return;
-      // Velocity for the jiggle, from the real gap between moves. Guarded against a 0ms delta:
+      // Velocity for the outline's flex, from the real gap between moves. Guarded against a 0ms delta:
       // coalesced pointer events can arrive in the same millisecond and would divide by zero.
       const t = performance.now();
       const dt = Math.max(t - p.lastMoveAt, 1) / 1000;

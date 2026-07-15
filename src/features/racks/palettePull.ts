@@ -45,10 +45,10 @@ export interface PullState {
   snapStart: number;      // performance.now() at the start of the snap-back (also the open clock)
   snapSize: Size | null;  // how big the box was when abandoned — the snap-back shrinks from THERE,
                           // whether it was still a chip or had already opened into a device
-  vx: number;             // tracked cursor velocity, px/s — drives the jiggle
+  vx: number;             // tracked cursor velocity, px/s — drives the flex
   vy: number;
   lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
-  jiggle: Jiggle;         // the soft-body spring, stepped once per frame by the layer
+  flex: Flex;             // the outline's elastic spring, stepped once per frame by the layer
 }
 
 /** Carried opacity — translucent so the rack and its rails read through what you are holding. */
@@ -66,53 +66,60 @@ export function latchGrow(k: number): number {
   return Math.pow(2, -10 * c) * Math.sin(((c - period / 4) * (2 * Math.PI)) / period) + 1;
 }
 
-// ---- jiggle -----------------------------------------------------------------------------------
-// The carried chip is a soft body: it leans into the way it is being flung and squashes across, then
+// ---- flex -------------------------------------------------------------------------------------
+// The carried chip's outline is a little elastic: it flexes with how you move and how fast, then
 // springs back and RINGS when you stop. The ring is the point, which is why this is a spring and not
-// a lerp — a lerp eases to the target and stops dead, it can never overshoot.
+// a lerp — a lerp eases to its target and stops dead, it can never overshoot.
+//
+// AXIS-ALIGNED, never rotated. An earlier version rotated the chip into its direction of travel,
+// which sent it spinning around as you dragged; a device chip must stay upright and read as itself.
+// So the flex is a single SIGNED number instead of an angled axis: + is wide-and-short, - is
+// narrow-and-tall, and there is no angle to track at all.
 
-/** Cursor speed (px/s) that produces the full lean. STARTING GUESS — tune in the browser. */
-export const JIGGLE_SPEED_FULL = 1600;
-/** Hardest squash-and-stretch. Deliberately gentle: this is a device chip being carried, not slime
- *  — it should feel alive, not gelatinous. (It was 0.45 when the carried thing WAS a blob.) */
-export const JIGGLE_MAX = 0.16;
+/** Cursor speed (px/s), per axis, that produces the full flex. STARTING GUESS — tune in the browser. */
+export const FLEX_SPEED_FULL = 1600;
+/** Hardest flex, as a fraction. Deliberately gentle: this is a device chip being carried, not slime
+ *  — its outline should give a little, not wobble like jelly. */
+export const FLEX_MAX = 0.16;
 /** Spring constant and damping. Lower damping = looser, wobblier. STARTING GUESSES. */
-export const JIGGLE_STIFF = 260;
-export const JIGGLE_DAMP = 13;
+export const FLEX_STIFF = 260;
+export const FLEX_DAMP = 13;
 /** Per-second decay of the tracked velocity when the cursor stops sending moves. Without it the chip
- *  would stay leaning forever the moment you held still. */
+ *  would stay flexed forever the moment you held still. */
 export const VEL_DECAY = 0.006;
 
-export interface Jiggle {
-  stretch: number;  // current squash-and-stretch, 0 = at rest
+export interface Flex {
+  stretch: number;  // SIGNED: >0 wide-and-short, <0 narrow-and-tall, 0 = the chip's true shape
   v: number;        // the spring's velocity — what carries it past the target and back
-  angle: number;    // radians; the direction the lean points, HELD when the cursor stops
 }
 
-export const restingJiggle = (): Jiggle => ({ stretch: 0, v: 0, angle: 0 });
+export const restingFlex = (): Flex => ({ stretch: 0, v: 0 });
 
-/** How much lean the chip WANTS at a given cursor speed. Clamped: flinging it faster than
- *  JIGGLE_SPEED_FULL cannot stretch it into a needle. */
-export function jiggleTarget(speed: number): number {
-  return Math.min(JIGGLE_MAX, (Math.abs(speed) / JIGGLE_SPEED_FULL) * JIGGLE_MAX);
+const axisFlex = (v: number) => Math.min(FLEX_MAX, (Math.abs(v) / FLEX_SPEED_FULL) * FLEX_MAX);
+
+/** How the chip WANTS to be flexed for a given velocity. Moving sideways stretches it wide and
+ *  squashes it short; moving up or down does the reverse; a perfect diagonal cancels to no flex,
+ *  which is the honest answer when the shape cannot rotate. */
+export function flexTarget(vx: number, vy: number): number {
+  return axisFlex(vx) - axisFlex(vy);
 }
 
-/** One step of the jiggle spring. `dt` in SECONDS. Pure: the caller owns the state, this only
- *  advances it (same split as the patch cable's rope).
+/** One step of the flex spring. `dt` in SECONDS. Pure: the caller owns the state, this only advances
+ *  it (same split as the patch cable's rope).
  *  dt is clamped: a backgrounded tab hands back a huge dt on its first frame, and an unclamped
  *  spring integrates that into a violent explosion. */
-export function stepJiggle(j: Jiggle, target: number, angle: number, dt: number): Jiggle {
+export function stepFlex(f: Flex, target: number, dt: number): Flex {
   const d = Math.min(Math.max(dt, 0), 1 / 30);
-  const a = (target - j.stretch) * JIGGLE_STIFF - j.v * JIGGLE_DAMP;
-  const v = j.v + a * d;
-  return { stretch: j.stretch + v * d, v, angle: target > 0.001 ? angle : j.angle };
+  const a = (target - f.stretch) * FLEX_STIFF - f.v * FLEX_DAMP;
+  const v = f.v + a * d;
+  return { stretch: f.stretch + v * d, v };
 }
 
-/** Squash-and-stretch scales. Volume-preserving: whatever it gains along the direction of travel it
- *  gives back across it, so the chip never appears to grow or shrink as it leans. */
-export function jiggleScale(stretch: number): { along: number; across: number } {
-  const along = Math.max(0.05, 1 + stretch);
-  return { along, across: 1 / along };
+/** Per-axis scale. Volume-preserving: what it gains across it gives back down, so the chip never
+ *  appears to grow or shrink as it flexes. Clamped so an overshoot can never invert it. */
+export function flexScale(stretch: number): { sx: number; sy: number } {
+  const sx = Math.max(0.2, 1 + stretch);
+  return { sx, sy: 1 / sx };
 }
 
 /** Is the carried chip close enough to the rack to open into a device? Horizontal distance only —
@@ -130,9 +137,9 @@ export function nearRack(boxX: number, rackCentreX: number | null): boolean {
  *  pop — so anything used as an opacity must clamp it. */
 export function pullGeometry(p: PullState, scale: number, now: number): {
   at: Vec; size: Size; radius: number; opacity: number; openness: number;
-  jiggle: { along: number; across: number; angle: number };
+  flex: { sx: number; sy: number };
 } {
-  const jiggle = { ...jiggleScale(p.jiggle.stretch), angle: p.jiggle.angle };
+  const flex = flexScale(p.flex.stretch);
 
   if (p.phase === "snapback") {
     const k = clamp01((now - p.snapStart) / SNAP_MS);
@@ -140,7 +147,7 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     const at = { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k };
     const s = p.snapSize ?? p.chipSize;
     return { at, size: { w: s.w * (1 - k), h: s.h * (1 - k) }, radius: CHIP_R,
-      opacity: (1 - k) * BOX_OPACITY, openness: 0, jiggle };
+      opacity: (1 - k) * BOX_OPACITY, openness: 0, flex };
   }
 
   const at = { x: p.x, y: p.y };
@@ -150,9 +157,9 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
     return { at, size: lerpSize(p.chipSize, full, g),
       radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(g),
-      opacity: BOX_OPACITY, openness: g, jiggle };
+      opacity: BOX_OPACITY, openness: g, flex };
   }
 
   // Still a chip: exactly the size you picked up, under the cursor.
-  return { at, size: p.chipSize, radius: CHIP_R, opacity: BOX_OPACITY, openness: 0, jiggle };
+  return { at, size: p.chipSize, radius: CHIP_R, opacity: BOX_OPACITY, openness: 0, flex };
 }

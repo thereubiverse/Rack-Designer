@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { restingJiggle, JIGGLE_MAX, jiggleScale, SNAP_MS } from "./palettePull";
+import { restingFlex, FLEX_MAX, flexScale, SNAP_MS } from "./palettePull";
 
 const CHIP = { w: 132, h: 34 };
 
@@ -12,7 +12,7 @@ function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, chipSize: CHIP,
     x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, jiggle: restingJiggle(), ...over,
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), ...over,
   };
 }
 const mount = (state: PullState | null) => {
@@ -88,16 +88,20 @@ describe("PalettePullLayer", () => {
     }
   });
 
-  it("leans into the direction of travel and squashes across it", () => {
-    const { container } = mount(pull({ x: 300, y: 100, jiggle: { stretch: JIGGLE_MAX, v: 0, angle: Math.PI / 2 } }));
-    const { along, across } = jiggleScale(JIGGLE_MAX);
+  it("flexes on the X/Y axes and NEVER rotates — the chip stays upright", () => {
+    // Rotating it into its direction of travel sent it spinning around as you dragged. It must read
+    // as the same device chip the whole way, just with a slightly elastic outline.
+    const { container } = mount(pull({ x: 300, y: 100, flex: { stretch: FLEX_MAX, v: 0 } }));
+    const { sx, sy } = flexScale(FLEX_MAX);
     const t = box(container).style.transform;
-    expect(t).toContain("rotate(90deg)");
-    expect(t).toContain(`scale(${along}, ${across})`);
+    expect(t).toContain(`scale(${sx}, ${sy})`);
+    expect(t).not.toContain("rotate");
   });
 
   it("is an undeformed chip at rest", () => {
-    expect(box(mount(pull({ x: 300, y: 100 })).container).style.transform).toContain("scale(1, 1)");
+    const t = box(mount(pull({ x: 300, y: 100 })).container).style.transform;
+    expect(t).toContain("scale(1, 1)");
+    expect(t).not.toContain("rotate");
   });
 
   it("is translucent, so the rack reads through what you are holding", () => {
