@@ -30,6 +30,15 @@ const RK_HOLE = "#ffffff";  // ear holes + device interior
  *  selected device read as two mismatched pieces. */
 export const RK_SELECT = "#3b82f6";
 const RK_PLUS = RK_SELECT;  // free-slot ⊕ marker
+/** The grip handle's blue — a selected device's ears take it so the grip sits IN the ear as one
+ *  piece rather than reading as a separate tab stuck on the side.
+ *  This is the literal Tailwind v4 `blue-600` renders (lab(44.06 29.03 -86.04) → rgb(21,93,252)),
+ *  NOT v3's `#2563eb`/rgb(37,99,235). Both the grip and the ears take it FROM HERE — a class on
+ *  one and a hex on the other is how the ear/box blues silently drifted apart before. */
+export const RK_GRIP = "#155dfc";
+/** Vertical code tag on the left ear: grey normally, white once the ear turns blue under it. */
+const RK_CODE = "#6b7280";
+const RK_CODE_SELECTED = "#ffffff";
 
 // Frame half-widths (ref units from centre). The mounting ears stay at the mount edge (270); the
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
@@ -77,8 +86,9 @@ export function ruTopY(startU: number, rackUnits: number, heightU: number): numb
 
 // Static rack chrome — depends only on heightU + occupancy, so it's a memo() child (see the grip-
 // drag note: this keeps a drag re-render cheap). RackFrame itself stays hook-free / callable.
-const RackChrome = memo(function RackChrome({ heightU, placements }: {
+const RackChrome = memo(function RackChrome({ heightU, placements, hoverU = null }: {
   heightU: number; placements: RackPlacementRender[];
+  hoverU?: number | null; // free RU under the cursor — its rail segment lights up as an add hint
 }) {
   const unitsBottom = TOP + heightU * RU_PX;
   const occupied = new Set<number>();
@@ -104,6 +114,15 @@ const RackChrome = memo(function RackChrome({ heightU, placements }: {
       <rect x={CX - hx(250)} y={TOP} width={hx(500)} height={heightU * RU_PX} fill={RK_HOLE} />
       <rect x={CX - hx(EAR_OUT)} y={TOP} width={EAR_W} height={heightU * RU_PX} fill={RK_EAR} />
       <rect x={CX + hx(EAR_OUT) - EAR_W} y={TOP} width={EAR_W} height={heightU * RU_PX} fill={RK_EAR} />
+
+      {/* hovering a free RU lights that RU's rail on both sides. Drawn over the rails but BEFORE
+          the holes below, so the holes stay punched out of the blue instead of being covered. */}
+      {hoverU != null && (
+        <g data-testid="rail-hover">
+          <rect x={CX - hx(EAR_OUT)} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
+          <rect x={CX + hx(EAR_OUT) - EAR_W} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
+        </g>
+      )}
 
       {/* ear holes — 3 white square holes per ear on every RU (the installed device's opaque ear
           draws over the ones it covers). Offsets 4/22/40 from RU top. */}
@@ -161,16 +180,17 @@ const RackChrome = memo(function RackChrome({ heightU, placements }: {
   );
 });
 
-export function RackFrame({ heightU, placements, side, dragId = null, highlight = null, selectedId = null }: {
+export function RackFrame({ heightU, placements, side, dragId = null, highlight = null, selectedId = null, hoverU = null }: {
   heightU: number; placements: RackPlacementRender[]; side: "FRONT" | "BACK";
   dragId?: string | null;  // id of the device being grip-dragged (its faceplate + this ghost move imperatively)
   highlight?: HighlightPort[] | null; // ports to colour (glyph + label); matched per-device by groupId + color
-  selectedId?: string | null; // selected device — its mounting ears take the selection blue
+  selectedId?: string | null; // selected device — its mounting ears take the grip's blue
+  hoverU?: number | null;     // free RU under the cursor — lights that RU's rail
 }) {
   const ix = RACK_GUTTER_L + RACK_PAD; // device-mount left edge (faceplate origin)
   return (
     <g data-testid="rack-frame">
-      <RackChrome heightU={heightU} placements={placements} />
+      <RackChrome heightU={heightU} placements={placements} hoverU={hoverU} />
 
       {/* ghost slot: where a grip-dragged device will snap on release — mounted at the device's
           current RU, then repositioned imperatively during the drag (see RackCanvas). */}
@@ -188,10 +208,11 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
         const dragging = p.id === dragId; // its transform is driven imperatively during the drag
         const y = ruTopY(p.startU, p.template.rackUnits, heightU);
         const face = side === "FRONT" ? p.template.frontFace : p.template.backFace;
+        const selected = p.id === selectedId;
         const opts = {
           widthIn: p.template.widthIn, rackUnits: p.template.rackUnits, rackMounted: p.template.rackMounted,
-          // A selected device paints its ears the same blue as the selection box around it.
-          earColor: p.id === selectedId ? RK_SELECT : undefined,
+          // A selected device paints its ears the same blue as the grip handle sitting in one.
+          earColor: selected ? RK_GRIP : undefined,
         };
         return (
           <g key={p.id} data-testid={`rack-device-${p.id}`} transform={`translate(${ix}, ${y})`}
@@ -199,7 +220,8 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
             {renderFace(face, opts, highlight ?? undefined)}
             {p.code && (() => {
               const midY = (p.template.rackUnits * RU_PX) / 2;
-              return <text x={18} y={midY} fontSize={16} fontWeight={600} fill="#6b7280"
+              return <text data-testid={`rack-code-${p.id}`} x={18} y={midY} fontSize={16} fontWeight={600}
+                fill={selected ? RK_CODE_SELECTED : RK_CODE}
                 textAnchor="middle" dominantBaseline="central"
                 transform={`rotate(-90 18 ${midY})`}>{p.code}</text>;
             })()}
