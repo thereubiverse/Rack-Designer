@@ -2,8 +2,10 @@
 // An endpoint belongs to a PORT, so it survives unplugging/re-patching the cable.
 import { samePort, type PortRef } from "./connectionOps";
 
-export type OutletPortCount = 1 | 2 | 3 | 4 | 6;
-export const OUTLET_PORT_COUNTS: OutletPortCount[] = [1, 2, 3, 4, 6];
+// 0 = a blank plate: the run reaches the outlet but is unterminated or covered, so it has no
+// landing port (see validateEndpoint, which skips the landing rule for it).
+export type OutletPortCount = 0 | 1 | 2 | 3 | 4 | 6;
+export const OUTLET_PORT_COUNTS: OutletPortCount[] = [0, 1, 2, 3, 4, 6];
 
 export type PortEndpoint =
   | { id: string; port: PortRef; kind: "described"; deviceTypeId: string; name: string;
@@ -44,7 +46,9 @@ export function validateEndpoint(ep: PortEndpoint, ctx: EndpointContext): string
 
   if (ep.kind === "described") {
     if (!ctx.floorTypeIds.has(ep.deviceTypeId)) return "That endpoint type is not a floor device type";
-    if (!OUTLET_PORT_COUNTS.includes(ep.portCount)) return "An outlet must have 1, 2, 3, 4 or 6 ports";
+    if (!OUTLET_PORT_COUNTS.includes(ep.portCount)) return "An outlet must have 0, 1, 2, 3, 4 or 6 ports";
+    // A blank (0-port) plate has no landing port at all — the run is unterminated or covered.
+    if (ep.portCount === 0) return ep.landingPortIndex === 0 ? null : "A blank plate has no ports to land on";
     if (ep.landingPortIndex < 0 || ep.landingPortIndex >= ep.portCount) return "That port is not on the faceplate";
     return null;
   }

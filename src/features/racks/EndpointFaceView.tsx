@@ -1,10 +1,15 @@
 "use client";
-// The endpoint visualisation. Every kind draws faceplate-style through the existing pure
-// renderFace — a described endpoint via its built-in face, a switch via its REAL snapshot face.
+// The endpoint visualisation, one branch per kind:
+//   described + data outlet  -> a realistic keystone wall plate (outletFaceplate)
+//   described, anything else -> its single-port built-in face, via the existing pure renderFace
+//   device                   -> the referenced switch's REAL snapshot face, via renderFace
+//   rack                     -> a small rack outline
 import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { frameDims, CELL_W, PX_PER_IN } from "@/domain/faceplate-geometry";
 import type { Face } from "@/domain/faceplate";
 import { faceForDescribed, ENDPOINT_GROUP_ID } from "./endpointFaces";
+import { OutletFaceplate, OUTLET_TYPE_CODE } from "./outletFaceplate";
+import type { OutletPortCount } from "./endpointOps";
 import type { SiteSwitchTarget } from "./siteScope";
 
 const BLUE = "#1a55d8";
@@ -36,12 +41,17 @@ export type EndpointFaceViewProps =
 
 export function EndpointFaceView(props: EndpointFaceViewProps) {
   if (props.kind === "described") {
+    // A data outlet is a wall plate, not a rack face — draw the real thing.
+    if (props.typeCode === OUTLET_TYPE_CODE) {
+      return <OutletFaceplate portCount={props.portCount as OutletPortCount}
+        landingPortIndex={props.portCount === 0 ? undefined : props.landingPortIndex} />;
+    }
+    // Every other described type is a single-port device.
     const face = faceForDescribed(props);
-    const cols = face.portGroups[0].cols;
-    // Just wide enough for the ports, with a port's width of margin each side.
-    const widthIn = ((cols + 2) * CELL_W) / PX_PER_IN;
+    // Just wide enough for the port, with a port's width of margin each side.
+    const widthIn = (3 * CELL_W) / PX_PER_IN;
     return <FaceSvg face={face} widthIn={widthIn} rackUnits={1} rackMounted={false}
-      highlightIndex={props.landingPortIndex} offsetX={CELL_W} />;
+      highlightIndex={0} offsetX={CELL_W} />;
   }
   if (props.kind === "device") {
     const { target } = props;

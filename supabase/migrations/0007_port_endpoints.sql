@@ -16,7 +16,8 @@ create table port_endpoints (
   -- kind='described'
   device_type_id     uuid references device_types(id) on delete restrict,
   name               text not null default '',
-  port_count         int  not null default 1 check (port_count in (1,2,3,4,6)),
+  -- 0 = a blank plate (the run is unterminated or covered); it has no landing port.
+  port_count         int  not null default 1 check (port_count in (0,1,2,3,4,6)),
   landing_port_index int  not null default 0 check (landing_port_index >= 0),
   landing_port_label text not null default '',
 
@@ -32,7 +33,9 @@ create table port_endpoints (
   -- arbiter (that's the PK), so ON CONFLICT (id) still works. Same reasoning as
   -- rack_devices_rack_id_code_key in 0004_rack_devices.sql.
   constraint port_endpoints_port_uniq unique (rack_device_id, side, group_id, port_index) deferrable initially deferred,
-  constraint port_endpoints_landing_ck check (landing_port_index < port_count),
+  -- A blank plate has no ports, so no landing index can be < port_count; it stores 0 and means
+  -- "nothing to land on". Every other count must name a real opening.
+  constraint port_endpoints_landing_ck check (port_count = 0 or landing_port_index < port_count),
   constraint port_endpoints_kind_ck check (
     (kind='described' and device_type_id is not null and target_rack_device_id is null and target_rack_id is null)
  or (kind='device'    and target_rack_device_id is not null and device_type_id is null and target_rack_id is null)

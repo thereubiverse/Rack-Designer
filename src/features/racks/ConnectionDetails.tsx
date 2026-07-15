@@ -3,7 +3,7 @@
 // is emitted upward; RackBuilder owns the state, history and autosave.
 import type { Connection, PortRef } from "./connectionOps";
 import { endpointForPort, OUTLET_PORT_COUNTS, type OutletPortCount, type PortEndpoint } from "./endpointOps";
-import { OUTLET_TYPE_CODE } from "./endpointFaces";
+import { OUTLET_TYPE_CODE } from "./outletFaceplate";
 import type { SiteScope } from "./siteScope";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import { EndpointFaceView } from "./EndpointFaceView";
@@ -112,16 +112,23 @@ function EndpointEditor({ port, endpoints, floorTypes, siteScope, portLabel, onC
               <select data-testid={`endpoint-portcount-${k}`} value={ep.portCount}
                 onChange={(e) => {
                   const portCount = Number(e.target.value) as OutletPortCount;
-                  onChange({ ...ep, portCount, landingPortIndex: Math.min(ep.landingPortIndex, portCount - 1) });
+                  // A blank plate has no port to land on; otherwise keep the landing port on the
+                  // plate when it shrinks.
+                  onChange({ ...ep, portCount,
+                    landingPortIndex: portCount === 0 ? 0 : Math.min(ep.landingPortIndex, portCount - 1) });
                 }}
-                className="w-1/2 rounded-md border border-neutral-300 px-2 py-1 text-sm">
-                {OUTLET_PORT_COUNTS.map((n) => <option key={n} value={n}>{n} port</option>)}
+                className={`${ep.portCount === 0 ? "w-full" : "w-1/2"} rounded-md border border-neutral-300 px-2 py-1 text-sm`}>
+                {OUTLET_PORT_COUNTS.map((n) => (
+                  <option key={n} value={n}>{n === 0 ? "Blank (no ports)" : `${n} port`}</option>
+                ))}
               </select>
-              <select data-testid={`endpoint-landing-${k}`} value={ep.landingPortIndex}
-                onChange={(e) => onChange({ ...ep, landingPortIndex: Number(e.target.value) })}
-                className="w-1/2 rounded-md border border-neutral-300 px-2 py-1 text-sm">
-                {Array.from({ length: ep.portCount }, (_, i) => <option key={i} value={i}>Port {i + 1}</option>)}
-              </select>
+              {ep.portCount > 0 && (
+                <select data-testid={`endpoint-landing-${k}`} value={ep.landingPortIndex}
+                  onChange={(e) => onChange({ ...ep, landingPortIndex: Number(e.target.value) })}
+                  className="w-1/2 rounded-md border border-neutral-300 px-2 py-1 text-sm">
+                  {Array.from({ length: ep.portCount }, (_, i) => <option key={i} value={i}>Port {i + 1}</option>)}
+                </select>
+              )}
             </div>
           )}
           <input data-testid={`endpoint-label-${k}`} value={ep.landingPortLabel} placeholder="Endpoint label"

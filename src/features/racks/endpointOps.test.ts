@@ -62,7 +62,17 @@ describe("endpointOps", () => {
   // guard is a real runtime check, not dead code.
   it("rejects an outlet with an invalid port count", () => {
     const ep = described("e", p(0), { deviceTypeId: "to", portCount: 5 as unknown as OutletPortCount });
-    expect(validateEndpoint(ep, ctx)).toBe("An outlet must have 1, 2, 3, 4 or 6 ports");
+    expect(validateEndpoint(ep, ctx)).toBe("An outlet must have 0, 1, 2, 3, 4 or 6 ports");
+  });
+
+  it("accepts a blank (0-port) plate, which has no landing port", () => {
+    const ep = described("e", p(0), { deviceTypeId: "to", portCount: 0, landingPortIndex: 0 });
+    expect(validateEndpoint(ep, ctx)).toBeNull();
+  });
+
+  it("rejects a blank plate that claims a landing port", () => {
+    const ep = described("e", p(0), { deviceTypeId: "to", portCount: 0, landingPortIndex: 1 });
+    expect(validateEndpoint(ep, ctx)).toBe("A blank plate has no ports to land on");
   });
 
   it("rejects a device endpoint that is not a switch on this site", () => {
