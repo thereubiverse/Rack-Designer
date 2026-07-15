@@ -173,10 +173,17 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   // RackSettings instead of rendering nothing.
   const selectedConnection = connections.find((c) => c.id === selectedConnectionId) ?? null;
   // Device selection and connection selection are mutually exclusive in the sidebar (and in the
-  // Delete-key handler in RackCanvas), so picking a device always clears any selected connection.
+  // Delete-key handler in RackCanvas), so picking a device always clears any selected connection,
+  // and vice versa. The `if (id)` guards preserve the "click empty canvas clears everything" path
+  // (RackCanvas calls onSelect(null) then onSelectConnection(null)) — neither clear should
+  // resurrect the other selection.
   function selectDevice(id: string | null) {
     setSelectedId(id);
     if (id) setSelectedConnectionId(null);
+  }
+  function selectConnection(id: string | null) {
+    setSelectedConnectionId(id);
+    if (id) setSelectedId(null);
   }
   const codeError = selected
     ? validateDeviceCode(selected.code) ??
@@ -267,7 +274,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
             }}
             connections={connections}
             selectedConnectionId={selectedConnectionId}
-            onSelectConnection={setSelectedConnectionId}
+            onSelectConnection={selectConnection}
             onDisconnect={(id) => { commitConnections(removeConnection(connections, id)); setSelectedConnectionId(null); }}
             onPatch={(a, b) => {
               const fs = faceSide();

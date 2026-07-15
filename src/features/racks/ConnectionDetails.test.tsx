@@ -139,6 +139,7 @@ describe("ConnectionDetails", () => {
     render(<ConnectionDetails {...base} endpoints={[outlet]} onChange={onChange} />);
     fireEvent.change(screen.getByTestId("endpoint-landing-pp-front-g-pp-0"), { target: { value: "3" } });
     const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    expect(ep.kind).toBe("described");
     if (ep.kind === "described") expect(ep.landingPortIndex).toBe(3);
   });
 
@@ -149,6 +150,7 @@ describe("ConnectionDetails", () => {
     render(<ConnectionDetails {...base} endpoints={[cam]} onChange={onChange} />);
     fireEvent.change(screen.getByTestId("endpoint-label-pp-front-g-pp-0"), { target: { value: "Lobby" } });
     const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    expect(ep.kind).toBe("described");
     if (ep.kind === "described") expect(ep.landingPortLabel).toBe("Lobby");
   });
 
