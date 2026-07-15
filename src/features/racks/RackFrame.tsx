@@ -23,7 +23,13 @@ const RK_LINE = "#3f3f46";  // frame outline, ruler, ventilation slats
 const RK_EAR = "#a3a3a3";   // mounting ears — matches the device screw-hole gray
 const RK_SEP = "#e4e4e7";   // dashed RU separators (lighter)
 const RK_HOLE = "#ffffff";  // ear holes + device interior
-const RK_PLUS = "#3b82f6";  // free-slot ⊕ marker (Tailwind blue-500 — matches selection box + ghost)
+/** The one selection blue: free-slot ⊕, drag ghost, the selection box, and a selected device's
+ *  mounting ears. Everything that marks "selected" MUST take it from here.
+ *  NOT Tailwind's `blue-500` class: under Tailwind v4 that resolves through oklch to rgb(43,127,255),
+ *  which is visibly a different blue from this hex's rgb(59,130,246) — mixing the two makes a
+ *  selected device read as two mismatched pieces. */
+export const RK_SELECT = "#3b82f6";
+const RK_PLUS = RK_SELECT;  // free-slot ⊕ marker
 
 // Frame half-widths (ref units from centre). The mounting ears stay at the mount edge (270); the
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
@@ -155,10 +161,11 @@ const RackChrome = memo(function RackChrome({ heightU, placements }: {
   );
 });
 
-export function RackFrame({ heightU, placements, side, dragId = null, highlight = null }: {
+export function RackFrame({ heightU, placements, side, dragId = null, highlight = null, selectedId = null }: {
   heightU: number; placements: RackPlacementRender[]; side: "FRONT" | "BACK";
   dragId?: string | null;  // id of the device being grip-dragged (its faceplate + this ghost move imperatively)
   highlight?: HighlightPort[] | null; // ports to colour (glyph + label); matched per-device by groupId + color
+  selectedId?: string | null; // selected device — its mounting ears take the selection blue
 }) {
   const ix = RACK_GUTTER_L + RACK_PAD; // device-mount left edge (faceplate origin)
   return (
@@ -181,7 +188,11 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
         const dragging = p.id === dragId; // its transform is driven imperatively during the drag
         const y = ruTopY(p.startU, p.template.rackUnits, heightU);
         const face = side === "FRONT" ? p.template.frontFace : p.template.backFace;
-        const opts = { widthIn: p.template.widthIn, rackUnits: p.template.rackUnits, rackMounted: p.template.rackMounted };
+        const opts = {
+          widthIn: p.template.widthIn, rackUnits: p.template.rackUnits, rackMounted: p.template.rackMounted,
+          // A selected device paints its ears the same blue as the selection box around it.
+          earColor: p.id === selectedId ? RK_SELECT : undefined,
+        };
         return (
           <g key={p.id} data-testid={`rack-device-${p.id}`} transform={`translate(${ix}, ${y})`}
             opacity={dragging ? 0.95 : 1} style={dragging ? { filter: "drop-shadow(0 3px 4px rgba(0,0,0,0.25))" } : undefined}>

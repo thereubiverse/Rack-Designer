@@ -19,7 +19,13 @@ export interface FaceplateOptions {
   widthIn: number;
   rackUnits: number;
   rackMounted: boolean;
+  /** Mounting-ear colour. Defaults to the unpainted grey; the rack tints a SELECTED device's ears
+   *  with the selection blue. Ignored when the device isn't rack-mounted (it has no ears). */
+  earColor?: string;
 }
+
+/** Unpainted mounting ear. */
+export const EAR_GREY = "#d4d4d4";
 
 // The FRONT/BACK label sits inside the frame (on the right ear, or just inside the body's
 // right edge when there are no ears) — no external gutter. LABEL_INSET_PX is how far the
@@ -101,6 +107,7 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
   const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
   const svgWidth = dims.frameWidthPx;
   const svgHeight = dims.heightPx;
+  const earFill = opts.earColor ?? EAR_GREY;
 
   return (
     <>
@@ -108,14 +115,15 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           so its weight stays even and the ear corners render crisply (a per-shape stroke on
           the outer edges gets clipped to ~half by the viewBox boundary). */}
       <rect x={0} y={0} width={svgWidth} height={svgHeight} rx={CORNER_R} fill="#ffffff" />
-      {/* ears — fills only; outer corners rounded to match the frame */}
+      {/* ears — fills only; outer corners rounded to match the frame. The seams take the same
+          colour so a tinted ear reads as one piece. */}
       {dims.earWidthPx > 0 && (
         <>
-          <path d={leftEarPath(dims.earWidthPx, svgHeight)} fill="#d4d4d4" />
-          <path d={rightEarPath(svgWidth - dims.earWidthPx, dims.earWidthPx, svgHeight)} fill="#d4d4d4" />
+          <path data-testid="face-ear" d={leftEarPath(dims.earWidthPx, svgHeight)} fill={earFill} />
+          <path data-testid="face-ear" d={rightEarPath(svgWidth - dims.earWidthPx, dims.earWidthPx, svgHeight)} fill={earFill} />
           {/* seam lines where the ears meet the body */}
-          <line x1={dims.earWidthPx} y1={0} x2={dims.earWidthPx} y2={svgHeight} stroke="#d4d4d4" />
-          <line x1={svgWidth - dims.earWidthPx} y1={0} x2={svgWidth - dims.earWidthPx} y2={svgHeight} stroke="#d4d4d4" />
+          <line x1={dims.earWidthPx} y1={0} x2={dims.earWidthPx} y2={svgHeight} stroke={earFill} />
+          <line x1={svgWidth - dims.earWidthPx} y1={0} x2={svgWidth - dims.earWidthPx} y2={svgHeight} stroke={earFill} />
         </>
       )}
       {/* screw holes */}

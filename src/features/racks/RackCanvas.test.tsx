@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
-import { ruTopY, RACK_GUTTER_L } from "./RackFrame";
+import { ruTopY, RACK_GUTTER_L, RK_SELECT } from "./RackFrame";
+import { EAR_GREY } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import type { PortRef } from "./connectionOps";
@@ -23,6 +24,25 @@ describe("RackCanvas", () => {
     render(<RackCanvas {...base} selectedId={null} onAddAt={onAddAt} />);
     fireEvent.click(screen.getByTestId("ru-hit-4"));
     expect(onAddAt).toHaveBeenCalledWith(4);
+  });
+  it("a selected device paints its ears the SAME blue as its selection box", () => {
+    const { rerender, container } = render(<RackCanvas {...base} selectedId={null} />);
+    const earFills = () => [...container.querySelectorAll('[data-testid="face-ear"]')]
+      .map((e) => e.getAttribute("fill"));
+    // unselected: unpainted grey, no box
+    expect(earFills().length).toBeGreaterThan(0);
+    expect(earFills().every((f) => f === EAR_GREY)).toBe(true);
+    expect(container.querySelector('[data-testid="rack-select-box-d1"]')).toBeNull();
+
+    rerender(<RackCanvas {...base} selectedId="d1" />);
+    // The point of the test: the two must be the SAME value, not two blues that merely look
+    // close. (Tailwind v4's blue-500 resolves to rgb(43,127,255), NOT this hex's rgb(59,130,246).)
+    const box = container.querySelector('[data-testid="rack-select-box-d1"]') as HTMLElement;
+    expect(box).toBeTruthy();
+    expect(earFills().every((f) => f === RK_SELECT)).toBe(true);
+    // the DOM normalises the hex, so compare like for like
+    const n = parseInt(RK_SELECT.slice(1), 16);
+    expect(box.style.borderColor).toBe(`rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`);
   });
   it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {
     const onSelect = vi.fn(), onMove = vi.fn();

@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, type RackPlacementRender } from "./RackFrame";
+import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, type RackPlacementRender } from "./RackFrame";
 import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
@@ -312,7 +312,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
           onClick={() => { props.onSelect(null); props.onSelectConnection(null); setSelectedPort(null); setPinShown(false); setPendingSource(null); }}>
-          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId} highlight={portHighlights} />
+          <RackFrame heightU={heightU} placements={placements} side={side} dragId={dragId}
+            highlight={portHighlights} selectedId={selectedId} />
         </svg>
         {/* free-RU click strips */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
@@ -350,9 +351,11 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
               {selected && (
                 <>
                   {/* Offsetting a rounded rect outward grows its radius by the same amount, so the
-                      box only hugs the device's curve at CORNER_R + its own outset. */}
-                  <div className="pointer-events-none absolute border-2 border-blue-500"
-                    style={{ inset: -SELECT_OUTSET, borderRadius: CORNER_R + SELECT_OUTSET }} />
+                      box only hugs the device's curve at CORNER_R + its own outset. Colour comes
+                      from RK_SELECT, not a `border-blue-500` class — see that constant. */}
+                  <div data-testid={`rack-select-box-${p.id}`} className="pointer-events-none absolute border-2"
+                    style={{ inset: -SELECT_OUTSET, borderRadius: CORNER_R + SELECT_OUTSET,
+                      borderStyle: "solid", borderColor: RK_SELECT }} />
                   <div data-testid={`rack-grip-${p.id}`} title="Drag to move"
                     onPointerDown={(e) => {
                       if (e.button !== 0) return;
