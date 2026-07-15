@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, RK_GRIP, type RackPlacementRender } from "./RackFrame";
+import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, type RackPlacementRender } from "./RackFrame";
 import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
@@ -361,7 +361,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
                 <>
                   {/* Offsetting a rounded rect outward grows its radius by the same amount, so the
                       box only hugs the device's curve at CORNER_R + its own outset. Colour comes
-                      from RK_SELECT, not a `border-blue-500` class — see that constant. */}
+                      from RK_SELECT — the same value the ears and grip take, not a Tailwind
+                      class that only looks close. See that constant. */}
                   <div data-testid={`rack-select-box-${p.id}`} className="pointer-events-none absolute border-2"
                     style={{ inset: -SELECT_OUTSET, borderRadius: CORNER_R + SELECT_OUTSET,
                       borderStyle: "solid", borderColor: RK_SELECT }} />
@@ -373,7 +374,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
                       setDragId(p.id);
                     }}
                     className="pointer-events-auto absolute top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded text-white"
-                    style={{ right: gripRight, backgroundColor: RK_GRIP }}>
+                    style={{ right: gripRight, backgroundColor: RK_SELECT }}>
                     <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>
                   </div>
                 </>

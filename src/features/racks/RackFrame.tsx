@@ -28,14 +28,16 @@ const RK_HOLE = "#ffffff";  // ear holes + device interior
  *  NOT Tailwind's `blue-500` class: under Tailwind v4 that resolves through oklch to rgb(43,127,255),
  *  which is visibly a different blue from this hex's rgb(59,130,246) — mixing the two makes a
  *  selected device read as two mismatched pieces. */
-export const RK_SELECT = "#3b82f6";
-const RK_PLUS = RK_SELECT;  // free-slot ⊕ marker
-/** The grip handle's blue — a selected device's ears take it so the grip sits IN the ear as one
- *  piece rather than reading as a separate tab stuck on the side.
- *  This is the literal Tailwind v4 `blue-600` renders (lab(44.06 29.03 -86.04) → rgb(21,93,252)),
- *  NOT v3's `#2563eb`/rgb(37,99,235). Both the grip and the ears take it FROM HERE — a class on
- *  one and a hex on the other is how the ear/box blues silently drifted apart before. */
-export const RK_GRIP = "#155dfc";
+/** "You could put a device here" blue — the free-slot ⊕, the drag ghost, and the rail under a
+ *  hovered free RU. Deliberately the LIGHTER of the two so a hint never reads as a selection. */
+export const RK_HINT = "#3b82f6";
+const RK_PLUS = RK_HINT;  // free-slot ⊕ marker
+/** Selected-device blue — the mounting ears, the grip sitting in one, and the box drawn around
+ *  them all read THIS one value, so the chrome around a selection is a single colour.
+ *  It is the literal Tailwind v4 `blue-600` renders (lab(44.06 29.03 -86.04) → rgb(21,93,252)),
+ *  NOT v3's `#2563eb`/rgb(37,99,235). Sourcing one of these from a class and another from a hex
+ *  is exactly how the ear/box and ear/grip blues silently drifted apart, twice. */
+export const RK_SELECT = "#155dfc";
 /** Vertical code tag on the left ear: grey normally, white once the ear turns blue under it. */
 const RK_CODE = "#6b7280";
 const RK_CODE_SELECTED = "#ffffff";
@@ -119,8 +121,8 @@ const RackChrome = memo(function RackChrome({ heightU, placements, hoverU = null
           the holes below, so the holes stay punched out of the blue instead of being covered. */}
       {hoverU != null && (
         <g data-testid="rail-hover">
-          <rect x={CX - hx(EAR_OUT)} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
-          <rect x={CX + hx(EAR_OUT) - EAR_W} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
+          <rect x={CX - hx(EAR_OUT)} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_HINT} />
+          <rect x={CX + hx(EAR_OUT) - EAR_W} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_HINT} />
         </g>
       )}
 
@@ -200,7 +202,7 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
         // Sits exactly on the device's footprint, so it takes the device's own corner radius.
         return <rect data-testid="rack-ghost" x={ix} y={ruTopY(dp.startU, dp.template.rackUnits, heightU)}
           width={RACK_INTERIOR_W} height={dp.template.rackUnits * RU_PX} rx={CORNER_R}
-          fill="#3b82f6" fillOpacity={0.08} stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="7 5" />;
+          fill={RK_HINT} fillOpacity={0.08} stroke={RK_HINT} strokeWidth={1.5} strokeDasharray="7 5" />;
       })()}
 
       {/* placements: faceplate + vertical code tag at the left edge */}
@@ -211,8 +213,9 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
         const selected = p.id === selectedId;
         const opts = {
           widthIn: p.template.widthIn, rackUnits: p.template.rackUnits, rackMounted: p.template.rackMounted,
-          // A selected device paints its ears the same blue as the grip handle sitting in one.
-          earColor: selected ? RK_GRIP : undefined,
+          // A selected device paints its ears the selection blue — the same one the grip sitting
+          // in the ear and the box drawn around the device take.
+          earColor: selected ? RK_SELECT : undefined,
         };
         return (
           <g key={p.id} data-testid={`rack-device-${p.id}`} transform={`translate(${ix}, ${y})`}
