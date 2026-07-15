@@ -55,10 +55,52 @@ function samplePath(d: string, n: number): Pt[] {
 }
 const polyD = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" ");
 
-function pathLength(d: string): number {
-  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  p.setAttribute("d", d);
-  return p.getTotalLength();
+// ── The cable is simulated as a rope, not drawn as a curve ────────────────────────────────
+// A chain of points under gravity, with each link relaxed back to a rest length (Verlet). That is
+// what makes it behave like a noodle: it has momentum, so it swings, overshoots and whips instead
+// of easing tidily from A to B. Slurping is just the same rope with its rest length driven to zero.
+const ROPE_N = 24;      // points in the chain
+const GRAVITY = 1.15;   // svg units per frame², pulling the slack down
+const DAMP = 0.96;      // near-1 keeps momentum, which is where the chaos comes from
+const RELAX = 10;       // constraint passes per frame — fewer = floppier links
+
+type Rope = { pts: Pt[]; prev: Pt[] };
+const makeRope = (pts: Pt[]): Rope => ({ pts: pts.map((p) => ({ ...p })), prev: pts.map((p) => ({ ...p })) });
+const polyLength = (p: Pt[]) => p.reduce((s, q, i) => (i ? s + Math.hypot(q.x - p[i - 1].x, q.y - p[i - 1].y) : 0), 0);
+
+/** One Verlet step: integrate, then relax every link toward `rest`. `pins` are held fixed. */
+function stepRope(r: Rope, rest: number, pins: Map<number, Pt>) {
+  const { pts, prev } = r;
+  for (let i = 0; i < pts.length; i++) {
+    if (pins.has(i)) continue;
+    const p = pts[i], q = prev[i];
+    const vx = (p.x - q.x) * DAMP, vy = (p.y - q.y) * DAMP; // implicit velocity
+    q.x = p.x; q.y = p.y;
+    p.x += vx; p.y += vy + GRAVITY;
+  }
+  for (let k = 0; k < RELAX; k++) {
+    for (const [i, pos] of pins) { pts[i].x = pos.x; pts[i].y = pos.y; }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.hypot(dx, dy) || 1e-6;
+      const k2 = ((d - rest) / d) * 0.5;
+      const ox = dx * k2, oy = dy * k2;
+      if (!pins.has(i)) { a.x += ox; a.y += oy; }
+      if (!pins.has(i + 1)) { b.x -= ox; b.y -= oy; }
+    }
+  }
+  for (const [i, pos] of pins) { pts[i].x = pos.x; pts[i].y = pos.y; }
+}
+
+/** Smooth a chain of points into a path (midpoint quadratics), so the noodle reads as a cable. */
+function smoothD(p: Pt[]): string {
+  if (p.length < 2) return "";
+  let d = `M ${p[0].x} ${p[0].y}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    d += ` Q ${p[i].x} ${p[i].y} ${(p[i].x + p[i + 1].x) / 2} ${(p[i].y + p[i + 1].y) / 2}`;
+  }
+  return `${d} L ${p[p.length - 1].x} ${p[p.length - 1].y}`;
 }
 
 /** Does a connection join the same two ports as the recoiling drop (either way round)? */
@@ -127,21 +169,21 @@ export function PatchLayer(props: {
   const cursorRef = useRef({ x: 0, y: 0 });
   const rubberRef = useRef<SVGPathElement>(null);
   const plugRef = useRef<SVGCircleElement>(null);
-  const springRef = useRef({ x: 0, y: 0, vx: 0, vy: 0 });
+  const ropeRef = useRef<Rope | null>(null);
   // A dropped cable recoils into its routed position; while it does, the real cable is suppressed
   // and this path IS the cable.
   const [recoil, setRecoil] = useState<{ a: PortRef; b: PortRef } | null>(null);
   const recoilRef = useRef<SVGPathElement>(null);
   const recoilAnim = useRef<{ from: Pt[]; to: Pt[]; t0: number } | null>(null);
   // Cables being reeled back into their port: a dropped-short drag, or an unplugged connection.
-  const [sucks, setSucks] = useState<{ id: string; d: string }[]>([]);
+  const [sucks, setSucks] = useState<{ id: string }[]>([]);
   const suckEls = useRef(new Map<string, SVGPathElement>());
-  const suckAnim = useRef(new Map<string, { len: number; t0: number }>());
+  const suckSim = useRef(new Map<string, { rope: Rope; anchor: Pt; L0: number; t0: number }>());
 
   /** How near a port has to be for the cable to grab it (SVG units; the dot itself is r=9). */
   const SNAP_R = 16;
   /** Cable paid out per unit dragged: the farther from the port, the more slack hangs. */
-  const SLACK = 0.18;
+  const SLACK = 0.35;
 
   /** The routed patch line for a connection — the shape a dropped cable recoils into. */
   const cableD = (aRef: PortRef, a: PortDot, bRef: PortRef, b: PortDot) => {
@@ -156,15 +198,16 @@ export function PatchLayer(props: {
     ], 14);
   };
 
-  /** Reel a cable back into the port it came out of: the strand shortens along its own curve, tip
-   *  first, accelerating as it goes. `d` must START at the port doing the sucking. */
-  const startSuck = (d: string) => {
-    let len: number;
-    try { len = pathLength(d); } catch { return; }
-    if (!(len > 0)) return;
+  /** Slurp a cable back into the port it came out of. The strand keeps simulating as it goes — its
+   *  rest length is driven to zero while gravity and momentum stay on, so it whips and flails its
+   *  way in rather than tidily shrinking. `pts[0]` must be the port doing the sucking. */
+  const startSuck = (pts: Pt[]) => {
+    if (pts.length < 2) return;
+    const L0 = polyLength(pts);
+    if (!(L0 > 0)) return;
     const id = crypto.randomUUID();
-    suckAnim.current.set(id, { len, t0: performance.now() });
-    setSucks((s) => [...s, { id, d }]);
+    suckSim.current.set(id, { rope: makeRope(pts), anchor: { ...pts[0] }, L0, t0: performance.now() });
+    setSucks((s) => [...s, { id }]);
   };
 
   /** Kick off the recoil from the cable's current hanging shape into its routed position. Returns
@@ -185,15 +228,16 @@ export function PatchLayer(props: {
     return true;
   };
 
-  /** Every drag ends here: it either recoils into a new cable, or gets reeled back into its port. */
+  /** Every drag ends here: it either recoils into a new cable, or gets slurped back into its port. */
   const endDrag = (from: PortRef | null, to: PortRef | null) => {
-    const hangD = rubberRef.current?.getAttribute("d") ?? null;
+    const rope = ropeRef.current;
     let recoiled = false;
     if (from && to && !samePort(from, to)) {
       recoiled = startRecoil(from, to);
       props.onConnectAttempt(from, to);
     }
-    if (!recoiled && hangD) startSuck(hangD);
+    // Hand the LIVE rope to the slurp so it keeps whatever swing it had — it does not restart.
+    if (!recoiled && rope) startSuck(rope.pts);
     setDrag(null);
   };
   // Held in a ref so the window listeners can subscribe once per drag without going stale.
@@ -246,36 +290,32 @@ export function PatchLayer(props: {
     return () => window.removeEventListener("pointermove", move);
   }, [dragFrom, dots]);
 
-  // The cable pulls out of the port like a retractable reel: the farther you drag, the more it pays
-  // out, and the slack HANGS — the curve's control point is a damped spring chasing a point sagged
-  // below the midpoint, so the loop swings and settles as you move it around. Grabbing a port pulls
-  // it taut. Driven imperatively per frame — React never re-renders for it.
+  // The cable is a rope pinned at the port and at the plug in your hand. It pays out MORE length
+  // than the straight run, so the excess hangs and swings under gravity as you drag it around;
+  // grabbing a port takes the slack up and pulls it taut. Driven imperatively per frame — React
+  // never re-renders for it.
   useEffect(() => {
     if (!dragFrom) return;
     const from = dotByKey.get(keyOf(dragFrom));
     if (!from) return;
-    springRef.current = { x: from.x, y: from.y, vx: 0, vy: 0 }; // unspools from the port
-    const STIFF = 0.18, DAMP = 0.78; // underdamped → the loop swings before it settles
+    // Starts coiled inside the port: every link sits on the glyph and gets dragged out.
+    ropeRef.current = makeRope(Array.from({ length: ROPE_N }, () => ({ x: from.x, y: from.y })));
     let raf = 0;
     const tick = () => {
+      const rope = ropeRef.current;
+      if (!rope) return;
       const snapDot = snapRef.current ? dotByKey.get(keyOf(snapRef.current)) : undefined;
       const end = snapDot ?? cursorRef.current;
-      const s = springRef.current;
       const dist = Math.hypot(end.x - from.x, end.y - from.y);
-      // Sag grows with how much cable is out; snapping to a port takes up the slack.
-      const sag = snapDot ? 0 : dist * SLACK;
-      const midX = (from.x + end.x) / 2;
-      const midY = (from.y + end.y) / 2 + sag * 2; // a quadratic dips half its control offset
-      s.vx = (s.vx + (midX - s.x) * STIFF) * DAMP;
-      s.vy = (s.vy + (midY - s.y) * STIFF) * DAMP;
-      s.x += s.vx; s.y += s.vy;
-      rubberRef.current?.setAttribute("d", `M ${from.x} ${from.y} Q ${s.x} ${s.y} ${end.x} ${end.y}`);
+      const total = dist * (snapDot ? 1 : 1 + SLACK); // the farther you pull, the more slack hangs
+      stepRope(rope, total / (ROPE_N - 1), new Map([[0, from], [ROPE_N - 1, end]]));
+      rubberRef.current?.setAttribute("d", smoothD(rope.pts));
       plugRef.current?.setAttribute("cx", String(end.x));
       plugRef.current?.setAttribute("cy", String(end.y));
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); ropeRef.current = null; };
   }, [dragFrom, dotByKey]);
 
   // Drop → the slack whips out of the cable and it settles into its routed position. Both shapes
@@ -285,8 +325,11 @@ export function PatchLayer(props: {
     if (!recoil) return;
     const anim = recoilAnim.current;
     if (!anim) { setRecoil(null); return; }
-    const DUR = 420;
-    const ease = (t: number) => { const c1 = 1.5, c3 = c1 + 1, u = t - 1; return 1 + c3 * u * u * u + c1 * u * u; };
+    const DUR = 700;
+    // easeOutElastic: overshoots the routed line and rings past it a few times before settling —
+    // the cable snapping taut and bouncing, rather than gliding into place.
+    const ease = (t: number) =>
+      t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -8 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1;
     let raf = 0;
     const tick = () => {
       const t = Math.min(1, (performance.now() - anim.t0) / DUR);
@@ -313,29 +356,32 @@ export function PatchLayer(props: {
       if (c.a.side !== faceSide || c.b.side !== faceSide) continue;
       const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
       if (!a || !b) continue;
-      startSuck(cableD(c.a, a, c.b, b)); // routed path starts at `a` → it reels into that port
+      // Sampled into a rope; the routed path starts at `a`, so that is the port it slurps into.
+      try { startSuck(samplePath(cableD(c.a, a, c.b, b), ROPE_N - 1)); } catch { /* degenerate */ }
     }
   }, [connections]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The reel-in: shorten the visible strand along its own curve, tip first. easeInCubic makes it
-  // accelerate into the port — the slurp. One frame loop drives every strand in flight.
+  // The slurp: keep simulating the rope, but haul its rest length to zero. Only the port end is
+  // pinned, so the free tail keeps its swing and gets whipped in — gravity and momentum do the
+  // flailing, no easing curve could. One frame loop drives every strand in flight.
   useEffect(() => {
     if (sucks.length === 0) return;
-    const DUR = 380;
+    const DUR = 620;
     let raf = 0;
     const tick = () => {
       const now = performance.now();
       const done: string[] = [];
       for (const s of sucks) {
-        const a = suckAnim.current.get(s.id), el = suckEls.current.get(s.id);
-        if (!a) { done.push(s.id); continue; }
-        const t = Math.min(1, (now - a.t0) / DUR);
-        const visible = a.len * (1 - t * t * t);
-        el?.setAttribute("stroke-dasharray", `${visible} ${a.len + 10}`);
+        const sim = suckSim.current.get(s.id);
+        if (!sim) { done.push(s.id); continue; }
+        const t = Math.min(1, (now - sim.t0) / DUR);
+        const total = sim.L0 * (1 - t * t); // reels in faster the further it goes
+        stepRope(sim.rope, total / (ROPE_N - 1), new Map([[0, sim.anchor]]));
+        suckEls.current.get(s.id)?.setAttribute("d", smoothD(sim.rope.pts));
         if (t >= 1) done.push(s.id);
       }
       if (done.length) {
-        for (const id of done) { suckAnim.current.delete(id); suckEls.current.delete(id); }
+        for (const id of done) { suckSim.current.delete(id); suckEls.current.delete(id); }
         setSucks((s) => s.filter((x) => !done.includes(x.id)));
       }
       raf = requestAnimationFrame(tick);
@@ -400,9 +446,9 @@ export function PatchLayer(props: {
           strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
       )}
 
-      {/* cables being reeled back into their port */}
+      {/* cables being slurped back into their port — the `d` is driven by the rope sim each frame */}
       {sucks.map((s) => (
-        <path key={s.id} data-testid="patch-suck" d={s.d}
+        <path key={s.id} data-testid="patch-suck"
           ref={(el) => { if (el) suckEls.current.set(s.id, el); else suckEls.current.delete(s.id); }}
           fill="none" stroke={BLUE} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round"
           pointerEvents="none" />
