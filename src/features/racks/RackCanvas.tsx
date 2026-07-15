@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RK_SELECT, type RackPlacementRender } from "./RackFrame";
+import { RackFrame, rackSvgSize, ruTopY, RACK_GUTTER_L, RACK_PAD, RACK_INTERIOR_W, RACK_RAIL_W, RK_SELECT, type RackPlacementRender } from "./RackFrame";
 import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { fitScale, clampPan, type FitMode } from "./rackOps";
 import { PatchLayer } from "./PatchLayer";
@@ -324,8 +324,14 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
             onClick={(e) => { e.stopPropagation(); props.onAddAt(u); }}
             onMouseEnter={() => setHoverU(u)}
             onMouseLeave={() => setHoverU((cur) => (cur === u ? null : cur))}
-            className="absolute cursor-pointer rounded hover:bg-blue-50/60"
-            style={{ left: ix, top: ruTopY(u, 1, heightU), width: RACK_INTERIOR_W, height: RU_PX }} />
+            className="group absolute cursor-pointer"
+            style={{ left: ix, top: ruTopY(u, 1, heightU), width: RACK_INTERIOR_W, height: RU_PX }}>
+            {/* The strip spans rail-to-rail and paints ABOVE the rack SVG, so tinting the strip
+                itself washes the lit rails underneath back to pale. The hit area stays full
+                width; only the tint is inset to the white interior. */}
+            <div data-testid={`ru-tint-${u}`} className="pointer-events-none absolute inset-y-0 rounded group-hover:bg-blue-50/60"
+              style={{ left: RACK_RAIL_W, right: RACK_RAIL_W }} />
+          </div>
         ))}
         {/* device hit boxes — ONLY the mounting ears select a device. The container is
            pointer-events:none so clicks on the faceplate body (and the port dots in the overlay
