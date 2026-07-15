@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectionDetails } from "./ConnectionDetails";
 import type { Connection, PortRef } from "./connectionOps";
 import type { PortEndpoint } from "./endpointOps";
+import type { SiteScope } from "./siteScope";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 
 const a: PortRef = { rackDeviceId: "sw", side: "front", groupId: "g-sw", portIndex: 0 };
@@ -89,5 +90,53 @@ describe("ConnectionDetails", () => {
     expect(screen.getAllByTestId("endpoint-face").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByTestId("endpoint-remove-pp-front-g-pp-0"));
     expect(onRemove).toHaveBeenCalledWith("e1");
+  });
+
+  it("a rack endpoint lists site racks, emits a rack endpoint, and renders a face", () => {
+    const onChange = vi.fn();
+    render(<ConnectionDetails {...base} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-type-pp-front-g-pp-0"), { target: { value: "rack" } });
+    const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    expect(ep.kind).toBe("rack");
+    if (ep.kind === "rack") expect(ep.targetRackId).toBe("rack-2");
+
+    const rack: PortEndpoint = { id: "e1", port: b, kind: "rack", targetRackId: "rack-2" };
+    render(<ConnectionDetails {...base} endpoints={[rack]} />);
+    expect(screen.getByTestId("endpoint-rack-pp-front-g-pp-0")).toBeTruthy();
+    expect(screen.getAllByTestId("endpoint-face").length).toBeGreaterThan(0);
+  });
+
+  it("shrinking the port count clamps landingPortIndex to stay on the faceplate", () => {
+    const onChange = vi.fn();
+    const outlet: PortEndpoint = { id: "e1", port: b, kind: "described", deviceTypeId: "to",
+      name: "OUT-12", portCount: 4, landingPortIndex: 3, landingPortLabel: "Desk A" };
+    render(<ConnectionDetails {...base} endpoints={[outlet]} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-portcount-pp-front-g-pp-0"), { target: { value: "2" } });
+    const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    if (ep.kind === "described") {
+      expect(ep.portCount).toBe(2);
+      expect(ep.landingPortIndex).toBe(1);
+    }
+  });
+
+  it("choosing No endpoint on a set endpoint calls onRemove with that endpoint's id", () => {
+    const onRemove = vi.fn();
+    const onChange = vi.fn();
+    const cam: PortEndpoint = { id: "e1", port: b, kind: "described", deviceTypeId: "cam",
+      name: "CAM01", portCount: 1, landingPortIndex: 0, landingPortLabel: "" };
+    render(<ConnectionDetails {...base} endpoints={[cam]} onRemove={onRemove} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-type-pp-front-g-pp-0"), { target: { value: "" } });
+    expect(onRemove).toHaveBeenCalledWith("e1");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("disables the switch and rack options when the site has none to offer", () => {
+    const emptyScope = { racks: [] as SiteScope["racks"], switches: [] as SiteScope["switches"] };
+    render(<ConnectionDetails {...base} siteScope={emptyScope} />);
+    const sel = screen.getByTestId("endpoint-type-pp-front-g-pp-0") as HTMLSelectElement;
+    const deviceOption = [...sel.options].find((o) => o.value === "device")!;
+    const rackOption = [...sel.options].find((o) => o.value === "rack")!;
+    expect(deviceOption.disabled).toBe(true);
+    expect(rackOption.disabled).toBe(true);
   });
 });

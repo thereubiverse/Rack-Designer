@@ -85,8 +85,14 @@ function EndpointEditor({ port, endpoints, floorTypes, siteScope, portLabel, onC
         className="mt-2 w-full rounded-md border border-neutral-300 px-2 py-1 text-sm">
         <option value="">No endpoint</option>
         {describedTypes.map((t) => <option key={t.id} value={`described:${t.id}`}>{t.name}</option>)}
-        <option value="device">Switch (another rack)</option>
-        <option value="rack">Rack uplink</option>
+        <option value="device" disabled={siteScope.switches.length === 0}
+          title={siteScope.switches.length === 0 ? "No switches in other racks on this site" : undefined}>
+          Switch (another rack)
+        </option>
+        <option value="rack" disabled={siteScope.racks.length === 0}
+          title={siteScope.racks.length === 0 ? "No other racks on this site" : undefined}>
+          Rack uplink
+        </option>
       </select>
 
       {ep?.kind === "described" && (
