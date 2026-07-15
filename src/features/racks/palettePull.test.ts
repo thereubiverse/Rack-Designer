@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, pullProgress, easeOutCubic, easeInLag, latchGrow,
-  blobTarget, blobSize, pullGeometry, pullAt, nearRack, type PullState,
+  PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, NECK_SNAP, pullProgress, easeOutCubic, latchGrow,
+  blobTarget, blobSize, pullGeometry, chipExit, neckRootW, neckPath, nearRack, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -37,14 +37,6 @@ describe("easings", () => {
     expect(latchGrow(1.5)).toBe(1);             // clamps — the solid branch feeds k unclamped
     const samples = Array.from({ length: 50 }, (_, i) => latchGrow(i / 49));
     expect(Math.max(...samples)).toBeGreaterThan(1);
-  });
-  it("easeInLag is pinned at both ends and lags a linear travel the whole way", () => {
-    expect(easeInLag(0)).toBe(0);
-    expect(easeInLag(1)).toBe(1);
-    for (let t = 0.1; t < 1; t += 0.1) expect(easeInLag(t)).toBeLessThan(t);
-  });
-  it("easeInLag lags far harder than the ease-OUT the size uses (which gave ~no visible lag)", () => {
-    expect(easeInLag(0.5)).toBeLessThan(easeOutCubic(0.5) / 2);
   });
 });
 
@@ -151,28 +143,74 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   });
 });
 
-describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to the cursor", () => {
+
+describe("the tear — the chip's own outline is what splits", () => {
   const chip = { x: 100, y: 100 };
-  const base = { typeId: "t", label: "Switch", chip, chipSize: CHIP, phase: "pulling" as const,
-    snapFrom: null, snapStart: 0, snapSize: null };
+  const base: PullState = {
+    typeId: "t1", label: "Switch", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
+    snapFrom: null, snapStart: 0, snapSize: null,
+  };
 
-  it("sits ON the chip at t=0 — the blob is still part of the slime, not under your finger", () => {
-    expect(pullAt({ ...base, x: chip.x, y: chip.y })).toEqual(chip);
+  it("the blob sits EXACTLY under the cursor — no lag curve", () => {
+    const p: PullState = { ...base, x: 260, y: 175 };
+    expect(pullGeometry(p, 1, 0).at).toEqual({ x: 260, y: 175 });
   });
 
-  it("has arrived at the pointer by the time the neck snaps", () => {
-    expect(pullAt({ ...base, phase: "solid" as const, x: 900, y: 400 })).toEqual({ x: 900, y: 400 });
+  it("chipExit clamps to the chip's box, so it IS the cursor while still inside it", () => {
+    // That zero length is what stops anything being drawn before the cursor leaves the chip.
+    const inside = { x: 110, y: 104 };
+    expect(chipExit(base, inside)).toEqual(inside);
   });
 
-  it("LAGS the cursor mid-pull — strictly between the chip and the pointer", () => {
-    const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
-    const at = pullAt(p);
-    expect(at.x).toBeGreaterThan(chip.x);
-    expect(at.x).toBeLessThan(p.x);
+  it("chipExit sits on the chip's edge once outside — the tear point, never the centre", () => {
+    const out = { x: 400, y: 100 };
+    const e = chipExit(base, out);
+    expect(e.x).toBe(chip.x + CHIP.w / 2);      // the near edge
+    expect(e.y).toBe(100);
+    expect(e).not.toEqual(chip);                // NOT the centre: that is what drew the "arrow"
   });
 
-  it("pullGeometry paints the box at that lagged position, not at the pointer", () => {
-    const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
-    expect(pullGeometry(p, 1, 0).at).toEqual(pullAt(p));
+  it("REGRESSION: no neck at all while the cursor is inside the chip", () => {
+    // The old centre-rooted neck always had length, so it drew a spike across the chip's own face
+    // whenever the blob lagged inside it. Rooted at the exit point there is nothing to span.
+    for (const at of [{ x: 100, y: 100 }, { x: 150, y: 108 }, { x: 40, y: 92 }]) {
+      const p: PullState = { ...base, x: at.x, y: at.y };
+      expect(pullGeometry(p, 1, 0).neck).toBe("");
+    }
+  });
+
+  it("a neck appears once the cursor leaves the chip, and thins to nothing as it pulls away", () => {
+    const near: PullState = { ...base, x: chip.x + CHIP.w / 2 + 10, y: 100 };
+    expect(pullGeometry(near, 1, 0).neck).not.toBe("");
+    let prev = Infinity;
+    for (let gap = 0; gap <= NECK_SNAP; gap += NECK_SNAP / 8) {
+      const w = neckRootW(CHIP.h, gap);
+      expect(w).toBeLessThanOrEqual(prev);
+      prev = w;
+    }
+    expect(neckRootW(CHIP.h, NECK_SNAP)).toBe(0);   // snapped
+  });
+
+  it("the neck is gone once it has snapped, however far you drag", () => {
+    const far: PullState = { ...base, x: chip.x + CHIP.w / 2 + NECK_SNAP + 50, y: 100 };
+    expect(pullGeometry(far, 1, 0).neck).toBe("");
+  });
+
+  it("the neck spans exit -> blob without NaN, and is a closed ribbon", () => {
+    const d = neckPath({ x: 10, y: 10 }, { x: 90, y: 40 }, 12, 6);
+    expect(d.startsWith("M ")).toBe(true);
+    expect(d.endsWith("Z")).toBe(true);
+    expect(d).toContain("Q");
+    expect(d).not.toContain("NaN");
+  });
+
+  it("a zero-length or snapped neck draws nothing rather than a degenerate sliver", () => {
+    expect(neckPath({ x: 10, y: 10 }, { x: 10, y: 10 }, 12, 6)).toBe("");
+    expect(neckPath({ x: 10, y: 10 }, { x: 90, y: 40 }, 0, 6)).toBe("");
+  });
+
+  it("solid draws no neck — it has long since let go", () => {
+    const p: PullState = { ...base, phase: "solid", x: 800, y: 300, snapStart: 0 };
+    expect(pullGeometry(p, 1, 0).neck).toBe("");
   });
 });

@@ -99,21 +99,49 @@ export function pullT(p: PullState): number {
   return p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
 }
 
-/** The blob's travel curve, chip -> cursor. Ease-IN on purpose, and NOT the ease-OUT the size uses:
- *  the lump resists near the chip and only whips to the cursor as it tears free, which is what makes
- *  the pull read as sticky. With easeOutCubic here the box was 99% caught up at 77% of the pull — a
- *  ~1px lag, i.e. no visible lag at all. The exponent is a tuning knob: higher = gooier. */
-export function easeInLag(t: number): number {
-  const c = clamp01(t);
-  return c * c;
+/** How far the blob must get from the chip's edge before the neck has thinned to nothing and let go.
+ *  STARTING GUESS — tune in the browser. */
+export const NECK_SNAP = 90;
+
+/** The point on the chip's OUTLINE the goo tears from: the closest point on the chip's box to the
+ *  blob. Clamping to the box means that while the cursor is still inside the chip this returns the
+ *  blob's own centre — length zero, so no neck is drawn at all and nothing appears. That is the
+ *  whole trick, and it is why the neck must never be rooted at the chip's CENTRE: a centre-rooted
+ *  neck always has length, so it drew a spike across the chip's own face (the "arrow"). */
+export function chipExit(p: PullState, at: Vec): Vec {
+  const hw = p.chipSize.w / 2, hh = p.chipSize.h / 2;
+  return {
+    x: Math.max(p.chip.x - hw, Math.min(p.chip.x + hw, at.x)),
+    y: Math.max(p.chip.y - hh, Math.min(p.chip.y + hh, at.y)),
+  };
 }
 
-/** Where the box's centre sits. At t=0 it is ON the chip — the blob is still part of the slime, not
- *  under your finger — and it travels to the pointer as you pull, arriving as it tears free.
- *  Not valid for `snapback` (that lerps snapFrom -> chip instead); callers must not use it there. */
-export function pullAt(p: PullState): Vec {
-  const e = easeInLag(pullT(p));
-  return { x: p.chip.x + (p.x - p.chip.x) * e, y: p.chip.y + (p.y - p.chip.y) * e };
+/** Half-width of the neck where it leaves the chip's edge. Thins to nothing as the blob pulls away,
+ *  which is what pinches the waist and finally snaps it. */
+export function neckRootW(chipH: number, gap: number): number {
+  return (chipH * 0.42) * (1 - clamp01(gap / NECK_SNAP));
+}
+
+/** The molten thread between the chip's exit point and the blob: a closed ribbon, pinched at the
+ *  waist. Empty once the root has thinned away, or while the blob is still inside the chip (where
+ *  exit === at, so there is nothing to span).
+ *  The goo filter alone cannot do this: a metaball only fuses within ~2x its blur, so at any usable
+ *  blur the blob would tear free the instant it cleared the chip's edge, with no thread at all. The
+ *  filter's job is only to fillet this ribbon's joins into the chip and the blob. */
+export function neckPath(exit: Vec, at: Vec, rootW: number, tipW: number): string {
+  const dx = at.x - exit.x, dy = at.y - exit.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.5 || rootW <= 0) return "";
+  const nx = -dy / len, ny = dx / len;
+  const mx = (exit.x + at.x) / 2, my = (exit.y + at.y) / 2;
+  const waist = Math.min(rootW, tipW) * 0.45;
+  return [
+    `M ${exit.x + nx * rootW} ${exit.y + ny * rootW}`,
+    `Q ${mx + nx * waist} ${my + ny * waist} ${at.x + nx * tipW} ${at.y + ny * tipW}`,
+    `L ${at.x - nx * tipW} ${at.y - ny * tipW}`,
+    `Q ${mx - nx * waist} ${my - ny * waist} ${exit.x - nx * rootW} ${exit.y - ny * rootW}`,
+    "Z",
+  ].join(" ");
 }
 
 /** Is the blob close enough to the rack to solidify? Horizontal distance only — see RACK_LATCH_X.
@@ -126,10 +154,10 @@ export function nearRack(boxX: number, rackCentreX: number | null): boolean {
  *  Both the first paint and the rAF loop call THIS — computing the geometry twice, in two places,
  *  is how they drifted apart (the box collapsed to nothing the frame after it latched solid).
  *  `solid` tells the painter WHICH shape to draw: a gooey blob, or the blank device. The blob needs
- *  no "am I still over the chip?" flag — the goo filter merges the two into a single outlined mass
- *  while they overlap, so there is never a stray outline inside the chip to suppress. */
+ *  no "am I still over the chip?" flag — while it is inside the chip the neck has zero length and the
+ *  union's silhouette is just the chip, so nothing appears on its own. */
 export function pullGeometry(p: PullState, scale: number, now: number): {
-  at: Vec; size: Size; opacity: number; solid: boolean;
+  at: Vec; size: Size; opacity: number; solid: boolean; neck: string;
 } {
   if (p.phase === "snapback") {
     // Melts back into slime on the way home: whatever it was, it retreats as a blob and is sucked
@@ -138,18 +166,30 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     const from = p.snapFrom ?? p.chip;
     const at = { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k };
     const s = p.snapSize ?? blobTarget(p.chipSize);
-    return { at, size: { w: s.w * (1 - k), h: s.h * (1 - k) }, opacity: (1 - k) * BOX_OPACITY, solid: false };
+    const size = { w: s.w * (1 - k), h: s.h * (1 - k) };
+    const exit = chipExit(p, at);
+    const gap = Math.hypot(at.x - exit.x, at.y - exit.y);
+    return { at, size, opacity: (1 - k) * BOX_OPACITY, solid: false,
+      neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2) };
   }
 
-  const at = pullAt(p);
+  // The blob is exactly under the cursor. No lag curve: the thing you are dragging is where you
+  // point. (An earlier version eased its travel out of the chip, which read as the blob sliding
+  // around under your finger.)
+  const at = { x: p.x, y: p.y };
 
   if (p.phase === "solid") {
     // Reached the rack: grow the lump into a full RU, springing past it and ringing back. It starts
     // at the blob's size, so latchGrow's 0-at-k=0 is exactly right here.
     const k = (now - p.snapStart) / SNAP_MS;
     const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
-    return { at, size: lerpSize(blobTarget(p.chipSize), full, latchGrow(k)), opacity: BOX_OPACITY, solid: true };
+    return { at, size: lerpSize(blobTarget(p.chipSize), full, latchGrow(k)), opacity: BOX_OPACITY,
+      solid: true, neck: "" };
   }
 
-  return { at, size: blobSize(pullT(p), p.chipSize), opacity: BOX_OPACITY, solid: false };
+  const size = blobSize(pullT(p), p.chipSize);
+  const exit = chipExit(p, at);
+  const gap = Math.hypot(at.x - exit.x, at.y - exit.y);
+  return { at, size, opacity: BOX_OPACITY, solid: false,
+    neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2) };
 }

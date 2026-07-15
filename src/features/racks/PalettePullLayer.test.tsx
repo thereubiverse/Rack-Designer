@@ -35,19 +35,34 @@ describe("PalettePullLayer", () => {
     expect(shown(container.querySelector('[data-testid="pull-box"]'))).toBe(false);
   });
 
-  it("the goo is the chip and the blob FUSED — one mass, so no stray outline inside the chip", () => {
-    // The whole reason there is no "am I over the chip?" flag: the metaball filter merges the two
-    // while they overlap, and the outline follows the fused silhouette. Both shapes must therefore
-    // sit in a filtered group, twice over — a fattened border pass and a white fill pass on top.
-    const { container } = mount(pull({ x: 140, y: 100 }));   // blob still overlapping the chip
+  it("chip, neck and blob all sit in BOTH filtered passes — the filter fillets their joins", () => {
+    const { container } = mount(pull({ x: 300, y: 100 }));
     const filtered = [...container.querySelectorAll('[data-testid="pull-goo"] g[filter]')];
     expect(filtered).toHaveLength(2);
     for (const g of filtered) {
       expect(g.querySelector('[data-testid^="pull-chip-"]')).toBeTruthy();
+      expect(g.querySelector('[data-testid^="pull-neck-"]')).toBeTruthy();
       expect(g.querySelector('[data-testid^="pull-blob-"]')).toBeTruthy();
     }
     expect(container.querySelector("filter#palette-goo feGaussianBlur")).toBeTruthy();
     expect(container.querySelector("filter#palette-goo feColorMatrix")).toBeTruthy();
+  });
+
+  it("nothing is drawn separately while the cursor is still inside the chip", () => {
+    // No oval forms on click: the blob is under the cursor, inside the chip, and the neck has zero
+    // length — so the union's silhouette is just the chip itself.
+    const { container } = mount(pull({ x: 120, y: 104 }));   // inside the 132x34 chip
+    expect(container.querySelector('[data-testid="pull-neck-1"]')!.getAttribute("d")).toBe("");
+  });
+
+  it("the chip NEVER moves — only its exit point does", () => {
+    const a = mount(pull({ x: 300, y: 100 }));
+    const b = mount(pull({ x: 260, y: 300 }));   // cursor somewhere else entirely
+    const rect = (r: ReturnType<typeof mount>) => {
+      const el = r.container.querySelector('[data-testid="pull-chip-1"]') as SVGRectElement;
+      return ["x", "y", "width", "height"].map((k) => el.getAttribute(k));
+    };
+    expect(rect(a)).toEqual(rect(b));
   });
 
   it("the border pass is fatter than the fill pass — that gap IS the outline", () => {
@@ -59,12 +74,11 @@ describe("PalettePullLayer", () => {
     expect(border.parentElement!.getAttribute("fill")).not.toBe("#ffffff");
   });
 
-  it("the blob rides the cursor while the chip stays put — that separation is what tears the goo", () => {
-    const { container } = mount(pull({ x: 300, y: 100 }));
-    const chip = container.querySelector('[data-testid="pull-chip-1"]') as SVGRectElement;
+  it("the blob is exactly under the cursor", () => {
+    const { container } = mount(pull({ x: 300, y: 172 }));
     const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
-    expect(parseFloat(chip.getAttribute("x")!)).toBe(100 - 132 / 2);   // anchored at the chip
-    expect(parseFloat(blob.getAttribute("cx")!)).toBeGreaterThan(100); // dragged out toward 300
+    expect(parseFloat(blob.getAttribute("cx")!)).toBe(300);
+    expect(parseFloat(blob.getAttribute("cy")!)).toBe(172);
   });
 
   it("redraws the chip's label — the goo covers the real button's text", () => {
