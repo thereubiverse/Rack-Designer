@@ -20,7 +20,7 @@ const Ky = RU_PX / 50;                                    // reference RU 50 →
  *  cabinet. Every line the rack draws takes this — cabinet outline, ruler, ticks, RU separators —
  *  so the art stays one uniform weight. PAD_Y derives from it, so the viewBox padding that keeps
  *  the outermost lines from being clipped tracks any change here. */
-const LINE_W = hx(1) + 1;                                 // ~2.69
+const LINE_W = hx(1) + 2;                                 // ~3.69
 
 // Palette (ref classes): foreground/80 outline, light-gray ears, white holes/interior, blue ⊕.
 const RK_LINE = "#3f3f46";  // frame outline, ruler, ventilation slats
@@ -46,9 +46,6 @@ const RK_CODE_SELECTED = "#ffffff";
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
 const EAR_OUT = 270;                // ear outer edge (= mount half-width) — fixed
 const EAR_W = 0.75 * PX_PER_IN;     // 36px — mounting-ear width; matches the faceplate's 0.75" device ear
-/** Rail width, exported so the RU hover strips — which sit ABOVE this SVG and span rail-to-rail —
- *  can inset their pale tint off the rails and leave the lit RK_SELECT showing. */
-export const RACK_RAIL_W = EAR_W;
 const MOAT = 60;                    // white gap inner-wall → ear — widened to give patch cables room
                                     // to breathe next to the rack (PatchDocs proportion: ~70 ref units)
 const IW = EAR_OUT + MOAT;          // 330 — inner wall
@@ -169,11 +166,13 @@ const RackChrome = memo(function RackChrome({ heightU, placements, hoverU = null
           textAnchor="end" dominantBaseline="middle" fontSize={16 * Ky} fontWeight={500} fill={RK_LINE}>{u}</text>
       ))}
 
-      {/* free-slot ⊕ markers (Tabler circle-plus: r 9, plus ±3 — scaled) */}
+      {/* free-slot ⊕ markers (Tabler circle-plus: r 9, plus ±3 — scaled). Pale by default; the
+          hovered RU's marker takes the selection blue, alongside that RU's lit rails. */}
       {units.filter((u) => !occupied.has(u)).map((u) => {
         const cy = ruTopY(u, 1, heightU) + RU_PX / 2;
         return (
-          <g key={`slot${u}`} stroke={RK_PLUS} strokeWidth={2 * Ky} strokeLinecap="round" fill="none" data-testid="rack-slot">
+          <g key={`slot${u}`} stroke={u === hoverU ? RK_SELECT : RK_PLUS} strokeWidth={2 * Ky} strokeLinecap="round"
+            fill="none" data-testid="rack-slot" data-u={u}>
             <circle cx={CX} cy={cy} r={9 * Ky} />
             <path d={`M ${CX - 3 * Ky} ${cy} h ${6 * Ky} M ${CX} ${cy - 3 * Ky} v ${6 * Ky}`} />
           </g>
