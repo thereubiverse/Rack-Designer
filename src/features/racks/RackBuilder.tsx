@@ -7,10 +7,13 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
-import { saveRackLayoutAction, saveConnectionsAction, updateRackAction } from "./actions";
+import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
 import { createHistory, push, undo, redo, canUndo, canRedo, type History } from "./history";
 import { validatePatch, addConnection, removeConnection, portsOf, type Connection, type PortRef } from "./connectionOps";
+import { upsertEndpoint, removeEndpoint, type PortEndpoint } from "./endpointOps";
+import type { SiteScope } from "./siteScope";
+import { ConnectionDetails } from "./ConnectionDetails";
 
 function fromRow(r: RackDeviceRow): PlacementDraft {
   return {
@@ -33,18 +36,21 @@ function toInput(d: PlacementDraft): RackDeviceInput {
   };
 }
 
-type RackState = { placements: PlacementDraft[]; connections: Connection[] };
+type RackState = { placements: PlacementDraft[]; connections: Connection[]; endpoints: PortEndpoint[] };
 
-export function RackBuilder({ rack, initialDevices, initialConnections, types, templatesByType }: {
+export function RackBuilder({ rack, initialDevices, initialConnections, initialEndpoints, siteScope, floorTypes, types, templatesByType }: {
   rack: RackRow;
   initialDevices: RackDeviceRow[];
   initialConnections: Connection[];
+  initialEndpoints: PortEndpoint[];
+  siteScope: SiteScope;
+  floorTypes: DeviceTypeRow[];
   types: DeviceTypeRow[];
   templatesByType: Record<string, PickerTemplate[]>;
 }) {
   const [hist, setHist] = useState<History<RackState>>(() =>
-    createHistory({ placements: initialDevices.map(fromRow), connections: initialConnections }));
-  const { placements, connections } = hist.present;
+    createHistory({ placements: initialDevices.map(fromRow), connections: initialConnections, endpoints: initialEndpoints }));
+  const { placements, connections, endpoints } = hist.present;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [side, setSide] = useState<"FRONT" | "BACK">("FRONT");
@@ -86,11 +92,12 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
     setSaveState("saving"); setError(null);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const [layout, conns] = await Promise.all([
+      const [layout, conns, eps] = await Promise.all([
         saveRackLayoutAction(rack.id, next.placements.map(toInput)),
         saveConnectionsAction(rack.id, next.connections),
+        saveEndpointsAction(rack.id, next.endpoints),
       ]);
-      const bad = !layout.ok ? layout : !conns.ok ? conns : null;
+      const bad = !layout.ok ? layout : !conns.ok ? conns : !eps.ok ? eps : null;
       if (bad) { setSaveState("error"); setError(bad.error ?? "Save failed"); return; }
       setSaveState("saved");
     }, 600);
@@ -99,18 +106,22 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
   // same-value edit (e.g. re-selecting the current status) would otherwise create a dead undo
   // step that visibly does nothing when the user hits ⌘Z.
   function commitState(next: RackState) {
-    if (next.placements === placements && next.connections === connections) return;
+    if (next.placements === placements && next.connections === connections && next.endpoints === endpoints) return;
     setHist((h) => push(h, next));
     queueSave(next);
   }
   // Keep the placement-only helper for the many existing call sites.
   function commit(nextPlacements: PlacementDraft[]) {
     if (nextPlacements === placements) return;
-    commitState({ placements: nextPlacements, connections });
+    commitState({ placements: nextPlacements, connections, endpoints });
   }
   function commitConnections(nextConns: Connection[]) {
     if (nextConns === connections) return;
-    commitState({ placements, connections: nextConns });
+    commitState({ placements, connections: nextConns, endpoints });
+  }
+  function commitEndpoints(nextEps: PortEndpoint[]) {
+    if (nextEps === endpoints) return;
+    commitState({ placements, connections, endpoints: nextEps });
   }
 
   // Undo/redo — buttons + keyboard.
@@ -229,6 +240,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
               commitState({
                 placements: placements.filter((p) => p.id !== id),
                 connections: connections.filter((c) => c.a.rackDeviceId !== id && c.b.rackDeviceId !== id),
+                endpoints: endpoints.filter((e) =>
+                  e.port.rackDeviceId !== id && !(e.kind === "device" && e.targetRackDeviceId === id)),
               });
               setSelectedId(null);
             }}
@@ -271,6 +284,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
               commitState({
                 placements: placements.filter((p) => p.id !== selected.id),
                 connections: connections.filter((c) => c.a.rackDeviceId !== selected.id && c.b.rackDeviceId !== selected.id),
+                endpoints: endpoints.filter((e) =>
+                  e.port.rackDeviceId !== selected.id && !(e.kind === "device" && e.targetRackDeviceId === selected.id)),
               });
               setSelectedId(null);
             }}
@@ -284,7 +299,21 @@ export function RackBuilder({ rack, initialDevices, initialConnections, types, t
             }}>Disconnect</button>
           </div>
         ))}
-        {!selected && (
+        {!selected && selectedConnectionId && (() => {
+          const c = connections.find((x) => x.id === selectedConnectionId);
+          return c ? (
+            <ConnectionDetails
+              connection={c}
+              endpoints={endpoints}
+              floorTypes={floorTypes}
+              siteScope={siteScope}
+              portLabel={labelForPort}
+              onChange={(ep) => commitEndpoints(upsertEndpoint(endpoints, ep))}
+              onRemove={(id) => commitEndpoints(removeEndpoint(endpoints, id))}
+            />
+          ) : null;
+        })()}
+        {!selected && !selectedConnectionId && (
           <RackSettings rack={rack} minHeight={minHeight} heightU={heightU} onHeightChange={changeHeight} />
         )}
       </div>
