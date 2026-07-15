@@ -3,7 +3,7 @@ import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { ruTopY, RACK_GUTTER_L, RACK_RAIL_W, RK_SELECT, RK_HINT } from "./RackFrame";
-import { EAR_GREY } from "@/features/device-library/faceplate/Faceplate";
+import { EAR_GREY, CORNER_R } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import type { PortRef } from "./connectionOps";
@@ -52,6 +52,16 @@ describe("RackCanvas", () => {
     expect(earFills().every((f) => f === RK_SELECT)).toBe(true);
     expect(grip.style.backgroundColor).toBe(rgbOf(RK_SELECT));
     expect(box.style.borderColor).toBe(rgbOf(RK_SELECT));
+  });
+
+  it("the selection box sits ON the device outline, not floating outside it", () => {
+    const { container } = render(<RackCanvas {...base} selectedId="d1" />);
+    const box = container.querySelector('[data-testid="rack-select-box-d1"]') as HTMLElement;
+    // Spans the exact device footprint. A negative inset would float the box off the outline,
+    // and would also need a grown radius to still hug the curve (offsetting a rounded rect
+    // outward grows its radius by the offset) — the two used to drift apart independently.
+    expect(box.className).toContain("inset-0");
+    expect(box.style.borderRadius).toBe(`${CORNER_R}px`);
   });
 
   it("the 'add here' hint blue stays distinct from the selection blue", () => {

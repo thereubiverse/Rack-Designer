@@ -22,7 +22,6 @@ const MIN_SCALE = 0.05;
 const MAX_SCALE = 3;
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 /** How far the selection box sits outside the device it wraps. */
-const SELECT_OUTSET = 2;
 /** Grip handle width — must stay in step with its `w-4` class (used to centre it on the ear). */
 const GRIP_W = 16;
 
@@ -365,13 +364,13 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
               ))}
               {selected && (
                 <>
-                  {/* Offsetting a rounded rect outward grows its radius by the same amount, so the
-                      box only hugs the device's curve at CORNER_R + its own outset. Colour comes
-                      from RK_SELECT — the same value the ears and grip take, not a Tailwind
-                      class that only looks close. See that constant. */}
-                  <div data-testid={`rack-select-box-${p.id}`} className="pointer-events-none absolute border-2"
-                    style={{ inset: -SELECT_OUTSET, borderRadius: CORNER_R + SELECT_OUTSET,
-                      borderStyle: "solid", borderColor: RK_SELECT }} />
+                  {/* Sits ON the device's own outline rather than floating outside it: the box
+                      spans the exact device footprint (inset 0), so it takes the device's own
+                      CORNER_R and its border paints straight over the 1px frame outline.
+                      Colour comes from RK_SELECT — the same value the ears and grip take, not a
+                      Tailwind class that only looks close. See that constant. */}
+                  <div data-testid={`rack-select-box-${p.id}`} className="pointer-events-none absolute inset-0 border-2"
+                    style={{ borderRadius: CORNER_R, borderStyle: "solid", borderColor: RK_SELECT }} />
                   <div data-testid={`rack-grip-${p.id}`} title="Drag to move"
                     onPointerDown={(e) => {
                       if (e.button !== 0) return;
