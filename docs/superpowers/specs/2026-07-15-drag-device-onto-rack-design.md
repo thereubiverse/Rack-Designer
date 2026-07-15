@@ -44,7 +44,7 @@ Established by reading the code, not assumed:
   ears" — the visual this feature needs, with no new artwork.
   Use **17.5**, not 19: `frameDims` sets `frameWidthIn = rackMounted ? RAIL_WIDTH_IN : bodyWidthIn`,
   so any rack-mounted device is `RACK_INTERIOR_W` (912px) wide regardless of `widthIn` — but 19 is an
-  *invalid body width* (`isValidBodyWidth` rejects `> MAX_BODY_WIDTH_IN`, which is 17.5) that would
+  *invalid body width* (`isValidWidthIn` rejects `> MAX_BODY_WIDTH_IN`, which is 17.5) that would
   only render correctly by accident, via the `Math.min(widthIn, MAX_BODY_WIDTH_IN)` clamp. 17.5 is
   the value every real template and test uses, and it yields the same 0.75" ears.
 - **`findFreeSlot(placements, ru, heightU, rackHeight, preferredU = 1)`** returns every placeable
