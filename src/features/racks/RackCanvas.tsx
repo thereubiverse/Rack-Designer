@@ -352,8 +352,19 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
               style={{ left: ix, top, width: RACK_INTERIOR_W, height: h, pointerEvents: "none" }}>
               {ears.map((ear) => (
                 <div key={ear.key} data-testid={`rack-dev-ear-${ear.key}-${p.id}`}
+                  // Press selects AND arms the move, so an unselected device can be grabbed and
+                  // dragged in one gesture instead of click-to-select-then-find-the-grip. A press
+                  // with no movement ends on the same RU, which RackBuilder's onMove no-ops.
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    props.onSelect(p.id);
+                    dragRef.current = { id: p.id, startY: e.clientY, origU: p.startU, ru: p.template.rackUnits, ghostU: p.startU };
+                    setDragId(p.id);
+                  }}
+                  // Belt and braces for clicks that arrive without a pointerdown (synthetic//a11y).
                   onClick={(e) => { e.stopPropagation(); props.onSelect(p.id); }}
-                  className="absolute top-0 h-full cursor-pointer"
+                  className="absolute top-0 h-full cursor-grab"
                   style={{ left: ear.left, width: earW, pointerEvents: "auto" }} />
               ))}
               {selected && (

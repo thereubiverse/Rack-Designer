@@ -126,6 +126,35 @@ describe("RackCanvas", () => {
     }
   });
 
+  it("press-dragging an UNSELECTED device's ear selects it and moves it in one gesture", () => {
+    const onSelect = vi.fn(), onMove = vi.fn();
+    // stays selectedId={null} throughout: the drag must not depend on being selected first
+    render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
+    const ear = screen.getByTestId("rack-dev-ear-l-d1");
+    fireEvent.pointerDown(ear, { clientX: 0, clientY: 100, button: 0 });
+    expect(onSelect).toHaveBeenCalledWith("d1"); // selected on PRESS, not on release
+    fireEvent.pointerMove(window, { clientX: 0, clientY: 100 - RU_PX }); // up one RU → U3
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 100 - RU_PX });
+    expect(onMove.mock.calls.at(-1)).toEqual(["d1", 3]);
+  });
+
+  it("pressing an ear without moving selects but commits no move", () => {
+    const onSelect = vi.fn(), onMove = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
+    const ear = screen.getByTestId("rack-dev-ear-l-d1");
+    fireEvent.pointerDown(ear, { clientX: 0, clientY: 100, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 100 });
+    expect(onSelect).toHaveBeenCalledWith("d1");
+    // it may report the origin RU, but must never report a DIFFERENT one from a still pointer
+    for (const call of onMove.mock.calls) expect(call).toEqual(["d1", 2]);
+  });
+
+  it("a right-click on an ear arms no drag", () => {
+    render(<RackCanvas {...base} selectedId={null} />);
+    fireEvent.pointerDown(screen.getByTestId("rack-dev-ear-l-d1"), { clientX: 0, clientY: 100, button: 2 });
+    expect(screen.queryByTestId("rack-ghost")).toBeNull();
+  });
+
   it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {
     const onSelect = vi.fn(), onMove = vi.fn();
     const { rerender } = render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
