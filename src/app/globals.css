@@ -81,6 +81,27 @@ fieldset:disabled [data-testid$="-trigger"] {
 .rde-modal-backdrop-out { animation: rde-backdrop-out .26s ease both; }
 .rde-modal-card-out { animation: rde-card-out .26s cubic-bezier(.4, 0, 1, 1) both; }
 
+/* Patch-target hint: while a connection is pending (one port picked), every port it can be
+   connected to pulses smoothly between the connected blue and a pale blue. Driven via `color`
+   so the glyph (currentColor) and its label (fill:currentColor) flash together. */
+@keyframes patch-flash {
+  0%, 100% { color: #1a55d8; }
+  50% { color: #aac6f7; }
+}
+.patch-flash { animation: patch-flash 1.15s ease-in-out infinite; }
+
+/* Patch drag: when the rubber band grabs a port, a ring radiates off it so the snap is obvious.
+   transform-box:fill-box lets the scale pivot on the circle itself rather than the whole svg. */
+@keyframes patch-snap-pop {
+  0%   { transform: scale(0.55); opacity: 0.9; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+.patch-snap-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: patch-snap-pop 0.6s ease-out infinite;
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

@@ -5,6 +5,7 @@ import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { ruTopY, RACK_GUTTER_L } from "./RackFrame";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
+import type { PortRef } from "./connectionOps";
 
 const scaleOf = (el: HTMLElement) => parseFloat(el.style.transform.match(/scale\(([-0-9.]+)\)/)![1]);
 
@@ -13,7 +14,7 @@ const placements = [{ id: "d1", startU: 2, template: tpl }];
 const base = {
   heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(),
   connections: [], selectedConnectionId: null, onPatch: vi.fn(), onSelectConnection: vi.fn(),
-  onDisconnect: vi.fn(),
+  onDisconnect: vi.fn(), onReplace: vi.fn(), portLabel: (p: PortRef) => `${p.rackDeviceId}/${p.portIndex + 1}`,
 };
 
 describe("RackCanvas", () => {
@@ -23,10 +24,13 @@ describe("RackCanvas", () => {
     fireEvent.click(screen.getByTestId("ru-hit-4"));
     expect(onAddAt).toHaveBeenCalledWith(4);
   });
-  it("clicking a device selects it; grip drag fires onMove with the RU target", () => {
+  it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {
     const onSelect = vi.fn(), onMove = vi.fn();
     const { rerender } = render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
+    // Clicking the body container does not select — only the ear hit-strips do.
     fireEvent.click(screen.getByTestId("rack-dev-d1"));
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("rack-dev-ear-l-d1"));
     expect(onSelect).toHaveBeenCalledWith("d1");
     rerender(<RackCanvas {...base} selectedId="d1" onSelect={onSelect} onMove={onMove} />);
     const grip = screen.getByTestId("rack-grip-d1");

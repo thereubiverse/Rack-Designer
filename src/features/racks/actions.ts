@@ -8,6 +8,10 @@ import { canPlace, validateDeviceCode, minRackHeight, type PlacementLike } from 
 import { replaceConnections } from "./connectionsRepository";
 import { portsOf, validatePatch, type Connection, type PortRef } from "./connectionOps";
 import { emptyFace, type Face } from "@/domain/faceplate";
+import { replacePortEndpoints } from "./endpointsRepository";
+import { validateEndpoint, type PortEndpoint, type EndpointContext } from "./endpointOps";
+import { listSiteScope } from "./siteScope";
+import { listDeviceTypes } from "@/features/device-library/repository";
 
 function toPlacementLike(rows: { id: string; device_template_id?: string; deviceTemplateId?: string; code: string; start_u?: number; startU?: number }[]): PlacementLike[] {
   return rows.map((r) => ({
@@ -100,5 +104,46 @@ export async function updateRackAction(
   }
   revalidatePath(`/racks/${rackId}`);
   revalidatePath("/racks");
+  return { ok: true };
+}
+
+/** Reconcile the rack's port endpoints. Re-validates every endpoint against FRESH device
+ *  snapshots, floor types and site scope so a stale client can't attach a far end to a vanished
+ *  port, use a non-floor type, or point at a rack/switch off this site. */
+export async function saveEndpointsAction(
+  rackId: string, eps: PortEndpoint[],
+): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    const [devices, types, scope] = await Promise.all([
+      listRackDevices(db, rackId), listDeviceTypes(db), listSiteScope(db, rackId),
+    ]);
+    const portsByDevice: Record<string, PortRef[]> = {};
+    for (const d of devices) {
+      const front = (d.front_face as Face | null) ?? emptyFace();
+      const back = (d.back_face as Face | null) ?? emptyFace();
+      portsByDevice[d.id] = [...portsOf(front, d.id, "front"), ...portsOf(back, d.id, "back")];
+    }
+    const ctx: EndpointContext = {
+      floorTypeIds: new Set(types.filter((t) => t.category === "floor").map((t) => t.id)),
+      portsByDevice,
+      thisRackId: rackId,
+      siteRackIds: new Set(scope.racks.map((r) => r.id)),
+      siteSwitchDeviceIds: new Set(scope.switches.map((s) => s.id)),
+    };
+    // One endpoint per port, checked across the batch (the DB unique index is the backstop).
+    const seen = new Set<string>();
+    for (const ep of eps) {
+      const key = `${ep.port.rackDeviceId}|${ep.port.side}|${ep.port.groupId}|${ep.port.portIndex}`;
+      if (seen.has(key)) return { ok: false, error: "That port already has an endpoint" };
+      seen.add(key);
+      const err = validateEndpoint(ep, ctx);
+      if (err) return { ok: false, error: err };
+    }
+    await replacePortEndpoints(db, rackId, eps);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath(`/racks/${rackId}`);
   return { ok: true };
 }
