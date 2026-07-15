@@ -284,9 +284,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
               if (err) { setSaveState("error"); setError(err); return; }
               commitConnections(addConnection(connections, a, b));
             }}
-            onReplace={(existingId, a, b) => {
-              // Drop the existing connection on the target port, then patch the new one — one commit.
-              commitConnections(addConnection(removeConnection(connections, existingId), a, b));
+            onReplace={(existingIds, a, b) => {
+              // Drop every connection blocking either end, then patch the new one — one commit, so
+              // it is a single undo step. Both ends can be busy, hence a list.
+              const freed = existingIds.reduce((cs, id) => removeConnection(cs, id), connections);
+              commitConnections(addConnection(freed, a, b));
             }}
             portLabel={labelForPort}
           />
