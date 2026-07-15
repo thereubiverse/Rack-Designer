@@ -30,6 +30,10 @@ export type RackCanvasHandle = {
   /** Live display scale. The palette-pull overlay reads it per frame to size its box to exactly
    *  one RU at the current zoom. scaleRef (not the state) is the authoritative value. */
   getScale: () => number;
+  /** The rack's centre line in VIEWPORT px — the x a dragged blob has to approach before it
+   *  solidifies into a device. Measured from the live transformed content, so it already accounts
+   *  for pan and zoom. null when the canvas isn't mounted/measurable yet. */
+  getRackCentreX: () => number | null;
 };
 
 /** Interactive layer over the pure RackFrame (EditorCanvas pattern). The viewport is a fixed box
@@ -95,7 +99,15 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     const host = hostRef.current;
     zoomAround(factor, (host?.clientWidth ?? 0) / 2, (host?.clientHeight ?? 0) / 2, true);
   }, [zoomAround]);
-  useImperativeHandle(ref, () => ({ zoomBy, getScale: () => scaleRef.current }), [zoomBy]);
+  const getRackCentreX = useCallback(() => {
+    const el = contentRef.current;
+    if (!el) return null;
+    // contentRef IS the translate+scale'd element, so its client rect already carries pan and zoom;
+    // a child at svg-x sits at rect.left + x * scale. RACK_GUTTER_L + RACK_INTERIOR_W / 2 is the
+    // rack's centre in svg coords (RACK_GUTTER_L is defined as CX - MOUNT_HW).
+    return el.getBoundingClientRect().left + (RACK_GUTTER_L + RACK_INTERIOR_W / 2) * scaleRef.current;
+  }, []);
+  useImperativeHandle(ref, () => ({ zoomBy, getScale: () => scaleRef.current, getRackCentreX }), [zoomBy, getRackCentreX]);
 
   // Fit (PatchDocs "fit" toggle): "width" fills the viewport width; "height" fits the whole rack.
   // Recompute the scale + re-centre the pan whenever the mode flips or the viewport resizes. The

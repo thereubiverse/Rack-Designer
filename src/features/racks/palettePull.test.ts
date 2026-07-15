@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PULL_DIST, SNAP_MS, BOX_OPACITY, pullProgress, easeOutCubic, latchScale, boxSize, neckHalfWidth,
-  neckPath, pullGeometry, pullAt, easeInLag, type PullState,
+  PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, pullProgress, easeOutCubic, easeInLag, latchGrow,
+  blobTarget, blobSize, neckHalfWidth, neckPath, pullGeometry, pullAt, nearRack, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -29,31 +29,62 @@ describe("easings", () => {
       prev = v;
     }
   });
-  it("latchScale starts at 1 (the box is already full size when it latches) and overshoots in between", () => {
-    // NOT easeOutElastic, which starts at 0 — that is exactly the collapse bug this replaces.
-    expect(latchScale(0)).toBe(1);
-    expect(latchScale(1)).toBe(1);
-    const samples = Array.from({ length: 50 }, (_, i) => latchScale(i / 49));
+  it("latchGrow runs 0 -> 1 and overshoots in between (that IS the spring)", () => {
+    // Starting at 0 is correct here: the box is still BLOB-sized when it solidifies, so this lerps
+    // blob -> one RU. It is only wrong when applied to a box that is already at its target.
+    expect(latchGrow(0)).toBe(0);
+    expect(latchGrow(1)).toBe(1);
+    expect(latchGrow(1.5)).toBe(1);             // clamps — the solid branch feeds k unclamped
+    const samples = Array.from({ length: 50 }, (_, i) => latchGrow(i / 49));
     expect(Math.max(...samples)).toBeGreaterThan(1);
+  });
+  it("easeInLag is pinned at both ends and lags a linear travel the whole way", () => {
+    expect(easeInLag(0)).toBe(0);
+    expect(easeInLag(1)).toBe(1);
+    for (let t = 0.1; t < 1; t += 0.1) expect(easeInLag(t)).toBeLessThan(t);
+  });
+  it("easeInLag lags far harder than the ease-OUT the size uses (which gave ~no visible lag)", () => {
+    expect(easeInLag(0.5)).toBeLessThan(easeOutCubic(0.5) / 2);
   });
 });
 
-describe("boxSize", () => {
-  it("is EXACTLY one RU of rack at t=1, scaled by the canvas", () => {
-    // The whole point of the gesture: it solidifies at the size of the RU space it will occupy.
-    expect(boxSize(1, 1, CHIP)).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
-    expect(boxSize(1, 0.5, CHIP)).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
+describe("the blob", () => {
+  it("is a nub on the chip at t=0 and a lump at t=1", () => {
+    const nub = blobSize(0, CHIP), lump = blobSize(1, CHIP);
+    expect(lump).toEqual(blobTarget(CHIP));
+    expect(nub.w).toBeLessThan(lump.w);
+    expect(nub.h).toBeLessThan(lump.h);
   });
-  it("starts at the chip's own size at t=0", () => {
-    expect(boxSize(0, 1, CHIP)).toEqual({ w: CHIP.w, h: CHIP.h });
+  it("NEVER reaches RU size, however far you pull — only the rack can do that", () => {
+    // The whole point of this behaviour: carrying it around the page must not look like carrying a
+    // device. Only solidifying at the rack turns it into one.
+    for (let t = 0; t <= 1.0001; t += 0.1) {
+      expect(blobSize(t, CHIP).w).toBeLessThan(RACK_INTERIOR_W);
+      expect(blobSize(t, CHIP).h).toBeLessThan(RU_PX);
+    }
   });
-  it("grows monotonically between", () => {
+  it("swells monotonically", () => {
     let prev = -1;
     for (let t = 0; t <= 1.0001; t += 0.1) {
-      const w = boxSize(t, 1, CHIP).w;
+      const w = blobSize(t, CHIP).w;
       expect(w).toBeGreaterThan(prev);
       prev = w;
     }
+  });
+});
+
+describe("nearRack", () => {
+  it("is true within RACK_LATCH_X of the rack's centre line, on either side", () => {
+    expect(nearRack(500, 500)).toBe(true);
+    expect(nearRack(500 - RACK_LATCH_X, 500)).toBe(true);
+    expect(nearRack(500 + RACK_LATCH_X, 500)).toBe(true);
+  });
+  it("is false beyond it", () => {
+    expect(nearRack(500 - RACK_LATCH_X - 1, 500)).toBe(false);
+    expect(nearRack(500 + RACK_LATCH_X + 1, 500)).toBe(false);
+  });
+  it("is false when the rack cannot be measured — never latch on a guess", () => {
+    expect(nearRack(500, null)).toBe(false);
   });
 });
 
@@ -65,13 +96,14 @@ describe("the neck", () => {
       expect(w).toBeLessThan(prev);
       prev = w;
     }
+    expect(neckHalfWidth(CHIP.h, 0)).toBe(CHIP.h / 2);
     expect(neckHalfWidth(CHIP.h, 1)).toBe(0);
   });
-  it("has snapped — no path at all — once solid", () => {
+  it("has snapped — no path at all — once the blob is free", () => {
     expect(neckPath({ x: 0, y: 0 }, { x: 200, y: 0 }, 1, CHIP.h)).toBe("");
     expect(neckPath({ x: 0, y: 0 }, { x: 200, y: 0 }, 1.5, CHIP.h)).toBe("");
   });
-  it("draws a closed ribbon between chip and box while stretching", () => {
+  it("draws a closed ribbon between chip and blob while stretching", () => {
     const d = neckPath({ x: 10, y: 10 }, { x: 150, y: 40 }, 0.5, CHIP.h);
     expect(d.startsWith("M ")).toBe(true);
     expect(d.endsWith("Z")).toBe(true);
@@ -79,89 +111,86 @@ describe("the neck", () => {
     expect(d).not.toContain("NaN");
   });
   it("survives a zero-length pull without NaN (pointer still on the chip)", () => {
-    const d = neckPath({ x: 10, y: 10 }, { x: 10, y: 10 }, 0, CHIP.h);
-    expect(d).not.toContain("NaN");
+    expect(neckPath({ x: 10, y: 10 }, { x: 10, y: 10 }, 0, CHIP.h)).not.toContain("NaN");
   });
 });
 
 describe("pullGeometry — the single source of truth both paint paths call", () => {
   const chip = { x: 100, y: 100 };
-  const chipSize = CHIP;
   const base: PullState = {
-    typeId: "t1", chip, chipSize, x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapT: 0,
+    typeId: "t1", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
+    snapFrom: null, snapStart: 0, snapSize: null,
   };
 
-  it("REGRESSION: phase solid at the instant it latches (now === snapStart) is full RU size, not 0x0", () => {
-    // This is the collapse bug: easeOutElastic(0) === 0 would zero the box out on the very first
-    // frame after latching, then pop it back to full size. latchScale must start at 1.
+  it("while pulling it is a BLOB, not the device", () => {
+    const p: PullState = { ...base, x: 100 + PULL_DIST / 2, y: 100 };
+    const g = pullGeometry(p, 1, 0);
+    expect(g.solid).toBe(false);              // the painter draws the lump, not the faceplate
+    expect(g.size).toEqual(blobSize(pullProgress(PULL_DIST / 2), CHIP));
+    expect(g.neck).not.toBe("");
+  });
+
+  it("REGRESSION: solid at the instant it latches is the BLOB's size — not 0, not already full", () => {
+    // Two failure modes this pins. Collapse: a spring starting at 0 would zero the box out on the
+    // first frame after latching and pop it back. Teleport: jumping straight to full RU would skip
+    // the grow entirely. It must start at exactly the lump it was.
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
     const g = pullGeometry(p, 1, 1000);
-    expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
+    expect(g.size).toEqual(blobTarget(CHIP));
+    expect(g.size.w).toBeGreaterThan(0);
+    expect(g.size.w).toBeLessThan(RACK_INTERIOR_W);
+    expect(g.solid).toBe(true);               // but it IS drawn as the device from the first frame
   });
 
-  it("phase solid long after snapStart settles to exactly full size", () => {
+  it("solid settles to EXACTLY one RU of rack, scaled by the canvas", () => {
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
-    const g = pullGeometry(p, 1, 1000 + SNAP_MS * 20);
-    expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
+    expect(pullGeometry(p, 1, 1000 + SNAP_MS * 20).size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
+    expect(pullGeometry(p, 0.5, 1000 + SNAP_MS * 20).size).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
   });
 
-  it("phase solid mid-spring overshoots full size (that IS the spring)", () => {
+  it("solid overshoots one RU mid-spring (that IS the spring)", () => {
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
     let overshot = false;
     for (let dt = 0; dt <= SNAP_MS; dt += SNAP_MS / 40) {
-      const g = pullGeometry(p, 1, 1000 + dt);
-      if (g.size.w > RACK_INTERIOR_W) overshot = true;
+      if (pullGeometry(p, 1, 1000 + dt).size.w > RACK_INTERIOR_W) overshot = true;
     }
     expect(overshot).toBe(true);
   });
 
-  it("phase snapback at k=0: at equals snapFrom, neck is empty, opacity is BOX_OPACITY", () => {
-    const snapFrom = { x: 400, y: 100 };
-    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000 };
+  it("snapback melts back to slime and shrinks from the size it actually was", () => {
+    // Whatever it was — blob or full device — it retreats as a blob and is sucked in. snapSize is
+    // captured at abandon so it never jumps to some assumed size first.
+    const snapFrom = { x: 400, y: 100 }, snapSize = { w: 300, h: 40 };
+    const p: PullState = { ...base, phase: "snapback", snapFrom, snapSize, snapStart: 2000 };
     const g = pullGeometry(p, 1, 2000);
     expect(g.at).toEqual(snapFrom);
+    expect(g.size).toEqual(snapSize);
     expect(g.neck).toBe("");
+    expect(g.solid).toBe(false);              // melts back into goo on the way home
     expect(g.opacity).toBeCloseTo(BOX_OPACITY, 5);
   });
 
-  it("REGRESSION: snapback sizes from the box's actual size at abandon, not full RU size", () => {
-    // A pull abandoned early (small box, still stretching) must shrink from THAT size, not jump to
-    // full RU size and then shrink. snapT pins the progress at the moment of abandon; k=0 (the
-    // start of the snap-back) must reproduce boxSize(snapT, ...) exactly, never boxSize(1, ...).
-    const snapFrom = { x: 130, y: 100 };
-    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000, snapT: 0.5 };
-    const g = pullGeometry(p, 1, 2000); // k=0
-    expect(g.size).toEqual(boxSize(0.5, 1, chipSize));
-    expect(g.size).not.toEqual({ w: RACK_INTERIOR_W, h: RU_PX }); // not full RU size
-  });
-
-  it("phase snapback at k>=1: at equals chip, size equals the chip's size, opacity is 0", () => {
-    const snapFrom = { x: 400, y: 100 };
-    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000 };
+  it("snapback ends on the chip, at nothing, invisible", () => {
+    const p: PullState = { ...base, phase: "snapback", snapFrom: { x: 400, y: 100 },
+      snapSize: { w: 300, h: 40 }, snapStart: 2000 };
     const g = pullGeometry(p, 1, 2000 + SNAP_MS * 5);
     expect(g.at).toEqual(chip);
-    expect(g.size).toEqual(chipSize);
+    expect(g.size).toEqual({ w: 0, h: 0 });
     expect(g.opacity).toBe(0);
-  });
-
-  it("phase pulling mid-pull: neck is non-empty", () => {
-    const p: PullState = { ...base, phase: "pulling", x: 100 + PULL_DIST / 2, y: 100 };
-    const g = pullGeometry(p, 1, 0);
-    expect(g.neck).not.toBe("");
   });
 });
 
 describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to the cursor", () => {
   const chip = { x: 100, y: 100 };
-  const base = { typeId: "t", chip, chipSize: CHIP, phase: "pulling" as const, snapFrom: null, snapStart: 0, snapT: 0 };
+  const base = { typeId: "t", chip, chipSize: CHIP, phase: "pulling" as const,
+    snapFrom: null, snapStart: 0, snapSize: null };
 
   it("sits ON the chip at t=0 — the blob is still part of the slime, not under your finger", () => {
     expect(pullAt({ ...base, x: chip.x, y: chip.y })).toEqual(chip);
   });
 
-  it("has arrived at the pointer by the time it latches solid", () => {
-    const p = { ...base, phase: "solid" as const, x: 900, y: 400 };
-    expect(pullAt(p)).toEqual({ x: 900, y: 400 });
+  it("has arrived at the pointer by the time the neck snaps", () => {
+    expect(pullAt({ ...base, phase: "solid" as const, x: 900, y: 400 })).toEqual({ x: 900, y: 400 });
   });
 
   it("LAGS the cursor mid-pull — strictly between the chip and the pointer", () => {
@@ -174,20 +203,5 @@ describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to
   it("pullGeometry paints the box at that lagged position, not at the pointer", () => {
     const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
     expect(pullGeometry(p, 1, 0).at).toEqual(pullAt(p));
-  });
-});
-
-describe("easeInLag — the position curve that makes the pull feel sticky", () => {
-  it("is pinned at both ends, so the blob starts on the chip and arrives exactly at the cursor", () => {
-    expect(easeInLag(0)).toBe(0);
-    expect(easeInLag(1)).toBe(1);
-  });
-  it("lags BEHIND a linear travel for the whole pull — that lag IS the gooeyness", () => {
-    for (let t = 0.1; t < 1; t += 0.1) expect(easeInLag(t)).toBeLessThan(t);
-  });
-  it("lags far harder than the ease-OUT the size uses (which gave ~no visible lag)", () => {
-    // Regression guard on the tuning decision: if someone swaps this back to an ease-out curve the
-    // blob catches the cursor almost immediately and the whole gesture stops reading as sticky.
-    expect(easeInLag(0.5)).toBeLessThan(easeOutCubic(0.5) / 2);
   });
 });
