@@ -16,6 +16,7 @@ const base = {
   heightU: 4, placements, side: "FRONT" as const, onSelect: vi.fn(), onAddAt: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(),
   connections: [], selectedConnectionId: null, onPatch: vi.fn(), onSelectConnection: vi.fn(),
   onDisconnect: vi.fn(), onReplace: vi.fn(), portLabel: (p: PortRef) => `${p.rackDeviceId}/${p.portIndex + 1}`,
+  dropArmed: false, onDropAt: vi.fn(),
 };
 
 describe("RackCanvas", () => {
@@ -231,5 +232,49 @@ describe("RackCanvas", () => {
     const content = screen.getByTestId("rack-canvas-scale");
     expect(content.style.transition).toContain("transform");
     expect(content.style.transform).toContain("translate"); // translate+scale (pannable)
+  });
+
+  it("a strip reports the drop RU on pointerup when a solid pull is armed", () => {
+    const onDropAt = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} dropArmed onDropAt={onDropAt} />);
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-4"));
+    expect(onDropAt).toHaveBeenCalledWith(4);
+  });
+
+  it("a strip reports NOTHING when no pull is armed", () => {
+    // Covers both 'no pull at all' and 'pull not yet solid' — dropArmed is the single gate.
+    const onDropAt = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} dropArmed={false} onDropAt={onDropAt} />);
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-4"));
+    expect(onDropAt).not.toHaveBeenCalled();
+  });
+
+  it("swallows the click that trails a drop, so it can't reopen the picker with no type", () => {
+    // Regression guard: click fires right after pointerup. Without the guard it would call
+    // onAddAt -> setPicker({ initialTypeId: null }), clobbering the type the user just dragged.
+    const onAddAt = vi.fn(), onDropAt = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} dropArmed onAddAt={onAddAt} onDropAt={onDropAt} />);
+    const strip = screen.getByTestId("ru-hit-4");
+    fireEvent.pointerUp(strip);
+    fireEvent.click(strip);            // the browser's trailing click
+    expect(onDropAt).toHaveBeenCalledWith(4);
+    expect(onAddAt).not.toHaveBeenCalled();
+  });
+
+  it("still opens the picker on a normal click when idle", () => {
+    // The guard must not break the everyday free-RU click.
+    const onAddAt = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} dropArmed={false} onAddAt={onAddAt} />);
+    fireEvent.click(screen.getByTestId("ru-hit-4"));
+    expect(onAddAt).toHaveBeenCalledWith(4);
+  });
+
+  it("exposes the live canvas scale on its handle", () => {
+    // The pull overlay needs it to size the box to one RU at the current zoom.
+    const ref = createRef<RackCanvasHandle>();
+    render(<RackCanvas ref={ref} {...base} selectedId={null} />);
+    expect(ref.current!.getScale()).toBe(1);
+    act(() => ref.current!.zoomBy(2));
+    expect(ref.current!.getScale()).toBe(2);
   });
 });

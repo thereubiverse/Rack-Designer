@@ -21,7 +21,8 @@ function setup(onPatch = vi.fn()) {
       onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
       connections={[]} selectedConnectionId={null}
       onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
   );
   return { ...utils, onPatch };
 }
@@ -53,7 +54,8 @@ describe("PatchLayer drag-to-patch", () => {
           b: { rackDeviceId: "pp", side: "front", groupId: "g-pp", portIndex: 0 } }]}
         selectedConnectionId={null} onPatch={() => {}} onSelectConnection={() => {}}
         onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     expect(container.querySelector('[data-testid="cable-c1"]')).toBeTruthy();
   });
@@ -71,7 +73,8 @@ describe("PatchLayer drag-to-patch", () => {
         connections={[conn]} selectedConnectionId={"c1"}
         onPatch={() => {}} onSelectConnection={onSelectConnection}
         onDisconnect={onDisconnect}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     container.querySelector('[data-testid="cable-c1"]'); // present
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete" }));
@@ -93,7 +96,8 @@ describe("PatchLayer drag-to-patch", () => {
         connections={[conn]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={onSelectConnection}
         onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     expect(cable).toBeTruthy();
@@ -114,7 +118,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     expect(cable.getAttribute("stroke")).toBe("#1a55d8"); // blue by default
@@ -135,7 +140,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const cable = container.querySelector('[data-testid="cable-c1"]')!;
     // connected ports render blue at rest (2 endpoints highlighted, no amber).
@@ -167,7 +173,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={conns} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const seg = (id: string) => {
       // d = "M portX portY L wpX wpY Q ..." — n[0..1] the port, n[2..3] the first waypoint.
@@ -193,7 +200,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={onSelectConnection} onDisconnect={onDisconnect}
-        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const dot = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;
     // 1st click: selects the run, no pin yet.
@@ -228,7 +236,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     // click unpatched sw/0 (source), then patched pp/0 (target).
     act(() => { container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
@@ -254,7 +263,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     const src = container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!;   // PATCHED
     const dst = container.querySelector('[data-testid="port-dot-pp-front-g-pp-4"]')!;   // free
@@ -281,7 +291,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[c1, c2]} selectedConnectionId={null}
         onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     // drag sw/0 (on c1) onto pp/1 (on c2) — leaving c2 in place would double-book pp/1
     act(() => { container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1 })); });
@@ -302,7 +313,8 @@ describe("PatchLayer drag-to-patch", () => {
         onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
         connections={[conn]} selectedConnectionId={null}
         onPatch={onPatch} onSelectConnection={() => {}} onDisconnect={() => {}}
-        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`} />,
+        onReplace={onReplace} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+      dropArmed={false} onDropAt={() => {}} />,
     );
     act(() => { container.querySelector('[data-testid="port-dot-sw-front-g-sw-0"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1 })); });
     act(() => { container.querySelector('[data-testid="port-dot-pp-front-g-pp-0"]')!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1 })); });

@@ -291,6 +291,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
               commitConnections(addConnection(freed, a, b));
             }}
             portLabel={labelForPort}
+            dropArmed={false}
+            onDropAt={() => {}}
           />
         </div>
       </div>
