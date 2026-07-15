@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
-import { ruTopY, RACK_GUTTER_L, RK_SELECT, RK_HINT } from "./RackFrame";
+import { ruTopY, RACK_GUTTER_L, RK_SELECT, RK_PLUS, RK_GHOST } from "./RackFrame";
 import { EAR_GREY, CORNER_R } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -64,10 +64,10 @@ describe("RackCanvas", () => {
     expect(box.style.borderRadius).toBe(`${CORNER_R}px`);
   });
 
-  it("the 'add here' hint blue stays distinct from the selection blue", () => {
-    // These two carry different meanings (a hint you could drop a device here vs. this device is
-    // selected). If a later edit collapses them to one value, the UI stops distinguishing them.
-    expect(RK_HINT).not.toBe(RK_SELECT);
+  it("the rack's three blues stay distinct from each other", () => {
+    // Each answers to a different job: an idle ⊕ on every empty RU, a mid-drag ghost, and the
+    // selected/hovered chrome. Collapsing any pair to one value loses a distinction the UI makes.
+    expect(new Set([RK_PLUS, RK_GHOST, RK_SELECT]).size).toBe(3);
   });
 
   it("the grip sits inside the right ear rather than poking out past the device edge", () => {
@@ -109,14 +109,14 @@ describe("RackCanvas", () => {
     const plusFill = (u: number) =>
       container.querySelector(`[data-testid="rack-slot"][data-u="${u}"]`)!.getAttribute("stroke");
     // free RUs are 1, 3, 4 here (d1 occupies U2) — all pale to start
-    expect([1, 3, 4].every((u) => plusFill(u) === RK_HINT)).toBe(true);
+    expect([1, 3, 4].every((u) => plusFill(u) === RK_PLUS)).toBe(true);
 
     fireEvent.mouseEnter(screen.getByTestId("ru-hit-4"));
     expect(plusFill(4)).toBe(RK_SELECT);              // the hovered one
-    expect([1, 3].every((u) => plusFill(u) === RK_HINT)).toBe(true); // and only it
+    expect([1, 3].every((u) => plusFill(u) === RK_PLUS)).toBe(true); // and only it
 
     fireEvent.mouseLeave(screen.getByTestId("ru-hit-4"));
-    expect(plusFill(4)).toBe(RK_HINT);
+    expect(plusFill(4)).toBe(RK_PLUS);
   });
 
   it("no RU strip paints a background — the ⊕ and rails carry the hover, not a wash", () => {

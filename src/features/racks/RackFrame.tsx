@@ -27,11 +27,14 @@ const RK_LINE = "#3f3f46";  // frame outline, ruler, ventilation slats
 const RK_EAR = "#a3a3a3";   // mounting ears — matches the device screw-hole gray
 const RK_SEP = "#e4e4e7";   // dashed RU separators (lighter)
 const RK_HOLE = "#ffffff";  // ear holes + device interior
-/** "You could put a device here" blue — the free-slot ⊕ and the drag ghost. Deliberately the
- *  LIGHTER of the two: these are painted over the white interior, where a pale blue still reads.
- *  The hovered-RU rail is NOT one of these — it lands on the grey rail and takes RK_SELECT. */
-export const RK_HINT = "#3b82f6";
-const RK_PLUS = RK_HINT;  // free-slot ⊕ marker
+/** Drag-ghost blue — where a grip-dragged device will land. Transient and only on screen mid-drag,
+ *  so it stays mid-weight: it has to read at a glance against the white interior. */
+export const RK_GHOST = "#3b82f6";
+/** Free-slot ⊕ — the quietest mark on the canvas. Unlike the ghost it sits on EVERY empty RU all
+ *  the time, so it stays well back and only comes forward (to RK_SELECT) on hover. Its own value
+ *  rather than the ghost's: they look similar but answer to different needs, and pairing them
+ *  means paling one drags the other down with it. */
+export const RK_PLUS = "#93c5fd";
 /** Selected-device blue — the mounting ears, the grip sitting in one, and the box drawn around
  *  them all read THIS one value, so the chrome around a selection is a single colour.
  *  It is the literal Tailwind v4 `blue-600` renders (lab(44.06 29.03 -86.04) → rgb(21,93,252)),
@@ -216,7 +219,7 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
         // Sits exactly on the device's footprint, so it takes the device's own corner radius.
         return <rect data-testid="rack-ghost" x={ix} y={ruTopY(dp.startU, dp.template.rackUnits, heightU)}
           width={RACK_INTERIOR_W} height={dp.template.rackUnits * RU_PX} rx={CORNER_R}
-          fill={RK_HINT} fillOpacity={0.08} stroke={RK_HINT} strokeWidth={1.5} strokeDasharray="7 5" />;
+          fill={RK_GHOST} fillOpacity={0.08} stroke={RK_GHOST} strokeWidth={1.5} strokeDasharray="7 5" />;
       })()}
 
       {/* placements: faceplate + vertical code tag at the left edge */}
