@@ -8,7 +8,7 @@ import { PULL_DIST } from "./palettePull";
 
 function pull(over: Partial<PullState> = {}): PullState {
   return {
-    typeId: "t1", chip: { x: 100, y: 100 }, chipSize: { w: 132, h: 34 },
+    typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, chipSize: { w: 132, h: 34 },
     x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, ...over,
   };
 }
@@ -18,38 +18,64 @@ const mount = (state: PullState | null) => {
   const r = render(<PalettePullLayer pullRef={ref} scaleOf={() => 1} />);
   return { ...r, ref };
 };
+const shown = (el: Element | null) => el !== null && (el as HTMLElement).style.display !== "none";
 
 describe("PalettePullLayer", () => {
   it("renders nothing when there is no pull", () => {
     const { container } = mount(null);
+    expect(container.querySelector('[data-testid="pull-goo"]')).toBeNull();
     expect(container.querySelector('[data-testid="pull-box"]')).toBeNull();
   });
 
-  it("while pulling it shows the BLOB and hides the device", () => {
-    // Both shapes are always mounted (the rAF loop writes styles; it cannot add/remove elements), so
-    // asserting the device's ears merely EXIST would pass even when the device is the hidden one.
-    // Assert what is actually displayed.
+  it("while pulling it shows the goo and hides the device", () => {
+    // Both are always mounted (the rAF loop writes styles; it cannot add/remove React elements), so
+    // asserting either merely EXISTS would pass even when it is the hidden one.
     const { container } = mount(pull({ x: 300, y: 100 }));
-    const blob = container.querySelector('[data-testid="pull-blob"]') as HTMLElement;
-    const face = container.querySelector('[data-testid="pull-face"]') as SVGElement;
-    expect(blob.style.display).not.toBe("none");
-    expect((face as unknown as HTMLElement).style.display).toBe("none");
+    expect(shown(container.querySelector('[data-testid="pull-goo"]'))).toBe(true);
+    expect(shown(container.querySelector('[data-testid="pull-box"]'))).toBe(false);
   });
 
-  it("the blob is featureless — it must not look like the device it will become", () => {
-    const { container } = mount(pull({ x: 300, y: 100 }));
-    const blob = container.querySelector('[data-testid="pull-blob"]') as HTMLElement;
-    expect(blob.style.borderRadius).toBe("50%");   // a lump, not a rack device's rounded rectangle
-    const box = container.querySelector('[data-testid="pull-box"]') as HTMLElement;
-    expect(parseFloat(box.style.width)).toBeLessThan(RACK_INTERIOR_W); // nowhere near RU size
+  it("the goo is the chip and the blob FUSED — one mass, so no stray outline inside the chip", () => {
+    // The whole reason there is no "am I over the chip?" flag: the metaball filter merges the two
+    // while they overlap, and the outline follows the fused silhouette. Both shapes must therefore
+    // sit in a filtered group, twice over — a fattened border pass and a white fill pass on top.
+    const { container } = mount(pull({ x: 140, y: 100 }));   // blob still overlapping the chip
+    const filtered = [...container.querySelectorAll('[data-testid="pull-goo"] g[filter]')];
+    expect(filtered).toHaveLength(2);
+    for (const g of filtered) {
+      expect(g.querySelector('[data-testid^="pull-chip-"]')).toBeTruthy();
+      expect(g.querySelector('[data-testid^="pull-blob-"]')).toBeTruthy();
+    }
+    expect(container.querySelector("filter#palette-goo feGaussianBlur")).toBeTruthy();
+    expect(container.querySelector("filter#palette-goo feColorMatrix")).toBeTruthy();
   });
 
-  it("once solid it shows the blank device — ears, no ports — and hides the blob", () => {
+  it("the border pass is fatter than the fill pass — that gap IS the outline", () => {
+    const { container } = mount(pull({ x: 300, y: 100 }));
+    const border = container.querySelector('[data-testid="pull-blob-0"]') as SVGEllipseElement;
+    const fill = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
+    expect(parseFloat(border.getAttribute("rx")!)).toBeGreaterThan(parseFloat(fill.getAttribute("rx")!));
+    expect(fill.parentElement!.getAttribute("fill")).toBe("#ffffff");
+    expect(border.parentElement!.getAttribute("fill")).not.toBe("#ffffff");
+  });
+
+  it("the blob rides the cursor while the chip stays put — that separation is what tears the goo", () => {
+    const { container } = mount(pull({ x: 300, y: 100 }));
+    const chip = container.querySelector('[data-testid="pull-chip-1"]') as SVGRectElement;
+    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
+    expect(parseFloat(chip.getAttribute("x")!)).toBe(100 - 132 / 2);   // anchored at the chip
+    expect(parseFloat(blob.getAttribute("cx")!)).toBeGreaterThan(100); // dragged out toward 300
+  });
+
+  it("redraws the chip's label — the goo covers the real button's text", () => {
+    const { container } = mount(pull({ x: 300, y: 100 }));
+    expect(container.querySelector('[data-testid="pull-label"]')!.textContent).toBe("Switch");
+  });
+
+  it("once solid it shows the blank device — ears, no ports — and hides the goo", () => {
     const { container } = mount(pull({ phase: "solid", x: 400, y: 100 }));
-    const blob = container.querySelector('[data-testid="pull-blob"]') as HTMLElement;
-    const face = container.querySelector('[data-testid="pull-face"]') as unknown as HTMLElement;
-    expect(face.style.display).not.toBe("none");
-    expect(blob.style.display).toBe("none");
+    expect(shown(container.querySelector('[data-testid="pull-box"]'))).toBe(true);
+    expect(shown(container.querySelector('[data-testid="pull-goo"]'))).toBe(false);
     expect(container.querySelectorAll('[data-testid="face-ear"]').length).toBe(2);
     expect(container.querySelectorAll('[data-testid="port-cell"]').length).toBe(0);
   });
@@ -60,16 +86,6 @@ describe("PalettePullLayer", () => {
     const box = container.querySelector('[data-testid="pull-box"]') as HTMLElement;
     expect(box.style.width).toBe(`${RACK_INTERIOR_W}px`);
     expect(box.style.height).toBe(`${RU_PX}px`);
-  });
-
-  it("shows the gooey neck while stretching and drops it once solid", () => {
-    const mid = mount(pull({ x: 100 + PULL_DIST / 2, y: 100 }));
-    const neck = mid.container.querySelector('[data-testid="pull-neck"]') as SVGPathElement;
-    expect(neck.getAttribute("d")).not.toBe("");
-
-    const solid = mount(pull({ phase: "solid", x: 400, y: 100 }));
-    const gone = solid.container.querySelector('[data-testid="pull-neck"]');
-    expect(gone === null || gone.getAttribute("d") === "").toBe(true);
   });
 
   it("is translucent while carried, so the rack reads through it", () => {
@@ -83,5 +99,11 @@ describe("PalettePullLayer", () => {
     const { container } = mount(pull({ x: 300, y: 100 }));
     const root = container.querySelector('[data-testid="pull-layer"]') as HTMLElement;
     expect(root.className).toContain("pointer-events-none");
+  });
+
+  it("the blob never swells anywhere near RU size while it is still goo", () => {
+    const { container } = mount(pull({ x: 100 + PULL_DIST * 3, y: 100 })); // pulled way out
+    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
+    expect(parseFloat(blob.getAttribute("rx")!) * 2).toBeLessThan(RACK_INTERIOR_W);
   });
 });
