@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   endpointForPort, upsertEndpoint, removeEndpoint, validateEndpoint,
-  type PortEndpoint, type EndpointContext,
+  type PortEndpoint, type EndpointContext, type OutletPortCount,
 } from "./endpointOps";
 import type { PortRef } from "./connectionOps";
 
@@ -56,6 +56,13 @@ describe("endpointOps", () => {
 
   it("accepts a valid described endpoint", () => {
     expect(validateEndpoint(described("e", p(0), { deviceTypeId: "to", portCount: 4, landingPortIndex: 3 }), ctx)).toBeNull();
+  });
+
+  // portCount is typed as OutletPortCount, but it arrives over the wire as arbitrary JSON, so this
+  // guard is a real runtime check, not dead code.
+  it("rejects an outlet with an invalid port count", () => {
+    const ep = described("e", p(0), { deviceTypeId: "to", portCount: 5 as unknown as OutletPortCount });
+    expect(validateEndpoint(ep, ctx)).toBe("An outlet must have 1, 2, 3, 4 or 6 ports");
   });
 
   it("rejects a device endpoint that is not a switch on this site", () => {

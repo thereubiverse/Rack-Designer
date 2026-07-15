@@ -18,7 +18,8 @@ let rackId = "";      // the rack under test
 let otherRackId = ""; // a second rack on the SAME site — the valid uplink target
 let ppId = "";
 let camTypeId = "";
-const ids: { site?: string; templateId?: string } = {};
+let switchId = ""; // a Switch-type rack_device seeded in otherRackId — the valid device-kind target
+const ids: { site?: string; templateId?: string; swTemplateId?: string } = {};
 
 // port_endpoints.group_id is `uuid not null`, so the seeded face's group id must be a real UUID.
 const GROUP_PP = crypto.randomUUID();
@@ -53,6 +54,10 @@ beforeAll(async () => {
   const cam = deviceTypes.find((t) => t.category === "floor" && t.code === "CAM");
   if (!cam) throw new Error("no CAM floor device type available for test");
   camTypeId = cam.id;
+  // The SW rack type specifically — listSiteScope's device-endpoint half only ever surfaces
+  // devices templated off THIS type, so a "device" endpoint round-trip needs one seeded for real.
+  const swType = deviceTypes.find((t) => t.category === "rack" && t.code === "SW");
+  if (!swType) throw new Error("no SW rack device type available for test");
 
   const tpl = (await db.from("device_templates").insert({
     organization_id: org.id, name: "endpoints test tpl", device_type_id: rackType.id,
@@ -61,9 +66,23 @@ beforeAll(async () => {
   }).select().single()).data!;
   ids.templateId = tpl.id;
 
+  const swTpl = (await db.from("device_templates").insert({
+    organization_id: org.id, name: "endpoints test switch tpl", device_type_id: swType.id,
+    rack_units: 1, width_in: 19, rack_mounted: true,
+    front_face: emptyFace(), back_face: emptyFace(),
+  }).select().single()).data!;
+  ids.swTemplateId = swTpl.id;
+
   ppId = (await db.from("rack_devices").insert({
     rack_id: rackId, device_template_id: tpl.id, code: "PP01",
     start_u: 3, front_face: faceWith(GROUP_PP), back_face: emptyFace(), height_u: 1,
+  }).select().single()).data!.id;
+
+  // Placed in otherRackId (NOT rackId) — listSiteScope excludes the current rack, so a switch
+  // living in this rack could never validate as a "device" endpoint target.
+  switchId = (await db.from("rack_devices").insert({
+    rack_id: otherRackId, device_template_id: swTpl.id, code: "SW01",
+    start_u: 1, front_face: emptyFace(), back_face: emptyFace(), height_u: 1,
   }).select().single()).data!.id;
 });
 
@@ -73,6 +92,7 @@ afterAll(async () => {
   if (ids.site) await db.from("sites").delete().eq("id", ids.site);
   // device_templates isn't cascaded from the site (ON DELETE RESTRICT), clean up separately.
   if (ids.templateId) await db.from("device_templates").delete().eq("id", ids.templateId);
+  if (ids.swTemplateId) await db.from("device_templates").delete().eq("id", ids.swTemplateId);
 });
 
 const port = (i: number) => ({ rackDeviceId: ppId, side: "front" as const, groupId: GROUP_PP, portIndex: i });
@@ -120,5 +140,21 @@ describe("saveEndpointsAction", () => {
     const res = await saveEndpointsAction(rackId, []);
     expect(res.ok).toBe(true);
     expect(await listPortEndpoints(db, rackId)).toHaveLength(0);
+  });
+
+  it("saves a device (switch) endpoint and reads it back", async () => {
+    const ep: PortEndpoint = { id: crypto.randomUUID(), port: port(4), kind: "device", targetRackDeviceId: switchId };
+    const res = await saveEndpointsAction(rackId, [ep]);
+    expect(res.ok).toBe(true);
+    const back = await listPortEndpoints(db, rackId);
+    expect(back).toHaveLength(1);
+    expect(back[0]).toMatchObject({ kind: "device", targetRackDeviceId: switchId });
+  });
+
+  it("rejects a device endpoint whose target is not a site switch", async () => {
+    const ep: PortEndpoint = { id: crypto.randomUUID(), port: port(5), kind: "device", targetRackDeviceId: ppId };
+    const res = await saveEndpointsAction(rackId, [ep]);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("Pick a switch in another rack on this site");
   });
 });

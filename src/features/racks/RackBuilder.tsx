@@ -92,8 +92,15 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     setSaveState("saving"); setError(null);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const [layout, conns, eps] = await Promise.all([
-        saveRackLayoutAction(rack.id, next.placements.map(toInput)),
+      // The layout save must land FIRST and be awaited: saveConnectionsAction and
+      // saveEndpointsAction both re-read the rack's devices from the DB to validate ports, so
+      // running them concurrently with the layout write is a race — they can see a device row
+      // BEFORE saveRackLayoutAction re-inserts it (e.g. undoing a device deletion restores the
+      // device + its cable + its endpoint all in one commit) and reject with "That port no
+      // longer exists". Endpoints and connections don't depend on each other, so they stay
+      // parallel once the layout is settled.
+      const layout = await saveRackLayoutAction(rack.id, next.placements.map(toInput));
+      const [conns, eps] = await Promise.all([
         saveConnectionsAction(rack.id, next.connections),
         saveEndpointsAction(rack.id, next.endpoints),
       ]);
@@ -149,7 +156,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       frontFace: t.frontFace, backFace: t.backFace, heightU: t.rackUnits,
     };
     commit([...placements, draft]);
-    setSelectedId(draft.id);
+    selectDevice(draft.id);
     setPicker(null);
   }
 
@@ -161,6 +168,16 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   }
 
   const selected = placements.find((p) => p.id === selectedId) ?? null;
+  // Derived once so the sidebar can never strand on a stale id (e.g. the connection's device was
+  // deleted, or an endpoint's target device vanished): a missing match just falls through to
+  // RackSettings instead of rendering nothing.
+  const selectedConnection = connections.find((c) => c.id === selectedConnectionId) ?? null;
+  // Device selection and connection selection are mutually exclusive in the sidebar (and in the
+  // Delete-key handler in RackCanvas), so picking a device always clears any selected connection.
+  function selectDevice(id: string | null) {
+    setSelectedId(id);
+    if (id) setSelectedConnectionId(null);
+  }
   const codeError = selected
     ? validateDeviceCode(selected.code) ??
       (placements.some((p) => p.id !== selected.id && p.code === selected.code) ? "That ID is already used in this rack" : null)
@@ -228,7 +245,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
             side={side}
             fitMode={fitMode}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={selectDevice}
             onAddAt={(u) => setPicker({ initialTypeId: null, atU: u })}
             onMove={(id, targetU) => {
               const resolved = resolveMove(like, ru, id, targetU, heightU);
@@ -240,10 +257,13 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
               commitState({
                 placements: placements.filter((p) => p.id !== id),
                 connections: connections.filter((c) => c.a.rackDeviceId !== id && c.b.rackDeviceId !== id),
-                endpoints: endpoints.filter((e) =>
-                  e.port.rackDeviceId !== id && !(e.kind === "device" && e.targetRackDeviceId === id)),
+                // A cross-rack target device's deletion is handled by target_rack_device_id's
+                // ON DELETE CASCADE — `id` here is always a device in THIS rack, so it can only
+                // ever match an endpoint's own port, never a "device"-kind endpoint's target.
+                endpoints: endpoints.filter((e) => e.port.rackDeviceId !== id),
               });
               setSelectedId(null);
+              setSelectedConnectionId(null);
             }}
             connections={connections}
             selectedConnectionId={selectedConnectionId}
@@ -284,10 +304,13 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
               commitState({
                 placements: placements.filter((p) => p.id !== selected.id),
                 connections: connections.filter((c) => c.a.rackDeviceId !== selected.id && c.b.rackDeviceId !== selected.id),
-                endpoints: endpoints.filter((e) =>
-                  e.port.rackDeviceId !== selected.id && !(e.kind === "device" && e.targetRackDeviceId === selected.id)),
+                // See the RackCanvas onDelete comment: a cross-rack target's deletion is handled
+                // by the ON DELETE CASCADE on target_rack_device_id, so this only needs to drop
+                // endpoints on the deleted device's own ports.
+                endpoints: endpoints.filter((e) => e.port.rackDeviceId !== selected.id),
               });
               setSelectedId(null);
+              setSelectedConnectionId(null);
             }}
           />
         ) : null}
@@ -299,21 +322,18 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
             }}>Disconnect</button>
           </div>
         ))}
-        {!selected && selectedConnectionId && (() => {
-          const c = connections.find((x) => x.id === selectedConnectionId);
-          return c ? (
-            <ConnectionDetails
-              connection={c}
-              endpoints={endpoints}
-              floorTypes={floorTypes}
-              siteScope={siteScope}
-              portLabel={labelForPort}
-              onChange={(ep) => commitEndpoints(upsertEndpoint(endpoints, ep))}
-              onRemove={(id) => commitEndpoints(removeEndpoint(endpoints, id))}
-            />
-          ) : null;
-        })()}
-        {!selected && !selectedConnectionId && (
+        {!selected && selectedConnection && (
+          <ConnectionDetails
+            connection={selectedConnection}
+            endpoints={endpoints}
+            floorTypes={floorTypes}
+            siteScope={siteScope}
+            portLabel={labelForPort}
+            onChange={(ep) => commitEndpoints(upsertEndpoint(endpoints, ep))}
+            onRemove={(id) => commitEndpoints(removeEndpoint(endpoints, id))}
+          />
+        )}
+        {!selected && !selectedConnection && (
           <RackSettings rack={rack} minHeight={minHeight} heightU={heightU} onHeightChange={changeHeight} />
         )}
       </div>

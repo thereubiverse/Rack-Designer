@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectionDetails } from "./ConnectionDetails";
 import type { Connection, PortRef } from "./connectionOps";
@@ -25,6 +25,8 @@ const base = {
 };
 
 describe("ConnectionDetails", () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it("shows the run and one editor per end", () => {
     render(<ConnectionDetails {...base} />);
     expect(screen.getByText("SW/1 ↔ PP/1")).toBeTruthy();
@@ -94,14 +96,14 @@ describe("ConnectionDetails", () => {
 
   it("a rack endpoint lists site racks, emits a rack endpoint, and renders a face", () => {
     const onChange = vi.fn();
-    render(<ConnectionDetails {...base} onChange={onChange} />);
+    const { rerender } = render(<ConnectionDetails {...base} onChange={onChange} />);
     fireEvent.change(screen.getByTestId("endpoint-type-pp-front-g-pp-0"), { target: { value: "rack" } });
     const ep = onChange.mock.calls[0][0] as PortEndpoint;
     expect(ep.kind).toBe("rack");
     if (ep.kind === "rack") expect(ep.targetRackId).toBe("rack-2");
 
     const rack: PortEndpoint = { id: "e1", port: b, kind: "rack", targetRackId: "rack-2" };
-    render(<ConnectionDetails {...base} endpoints={[rack]} />);
+    rerender(<ConnectionDetails {...base} endpoints={[rack]} />);
     expect(screen.getByTestId("endpoint-rack-pp-front-g-pp-0")).toBeTruthy();
     expect(screen.getAllByTestId("endpoint-face").length).toBeGreaterThan(0);
   });
@@ -128,6 +130,42 @@ describe("ConnectionDetails", () => {
     fireEvent.change(screen.getByTestId("endpoint-type-pp-front-g-pp-0"), { target: { value: "" } });
     expect(onRemove).toHaveBeenCalledWith("e1");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("changing the landing port select emits the new landingPortIndex", () => {
+    const onChange = vi.fn();
+    const outlet: PortEndpoint = { id: "e1", port: b, kind: "described", deviceTypeId: "to",
+      name: "OUT-12", portCount: 4, landingPortIndex: 1, landingPortLabel: "Desk A" };
+    render(<ConnectionDetails {...base} endpoints={[outlet]} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-landing-pp-front-g-pp-0"), { target: { value: "3" } });
+    const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    if (ep.kind === "described") expect(ep.landingPortIndex).toBe(3);
+  });
+
+  it("editing the endpoint label emits the new landingPortLabel (editable for every described type)", () => {
+    const onChange = vi.fn();
+    const cam: PortEndpoint = { id: "e1", port: b, kind: "described", deviceTypeId: "cam",
+      name: "CAM01", portCount: 1, landingPortIndex: 0, landingPortLabel: "" };
+    render(<ConnectionDetails {...base} endpoints={[cam]} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-label-pp-front-g-pp-0"), { target: { value: "Lobby" } });
+    const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    if (ep.kind === "described") expect(ep.landingPortLabel).toBe("Lobby");
+  });
+
+  it("switching between described types preserves the typed name and label", () => {
+    const onChange = vi.fn();
+    const cam: PortEndpoint = { id: "e1", port: b, kind: "described", deviceTypeId: "cam",
+      name: "CAM01", portCount: 1, landingPortIndex: 0, landingPortLabel: "Lobby" };
+    render(<ConnectionDetails {...base} endpoints={[cam]} onChange={onChange} />);
+    fireEvent.change(screen.getByTestId("endpoint-type-pp-front-g-pp-0"), { target: { value: "described:to" } });
+    const ep = onChange.mock.calls[0][0] as PortEndpoint;
+    expect(ep.kind).toBe("described");
+    if (ep.kind === "described") {
+      expect(ep.name).toBe("CAM01");
+      expect(ep.landingPortLabel).toBe("Lobby");
+      expect(ep.portCount).toBe(1);
+      expect(ep.landingPortIndex).toBe(0);
+    }
   });
 
   it("disables the switch and rack options when the site has none to offer", () => {

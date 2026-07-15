@@ -27,7 +27,11 @@ create table port_endpoints (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
-  constraint port_endpoints_port_uniq unique (rack_device_id, side, group_id, port_index),
+  -- Deferred so a single reconcile statement (replacePortEndpoints' upsert) can swap two
+  -- endpoints' ports in one save without transiently colliding; checked at commit. Not the upsert
+  -- arbiter (that's the PK), so ON CONFLICT (id) still works. Same reasoning as
+  -- rack_devices_rack_id_code_key in 0004_rack_devices.sql.
+  constraint port_endpoints_port_uniq unique (rack_device_id, side, group_id, port_index) deferrable initially deferred,
   constraint port_endpoints_landing_ck check (landing_port_index < port_count),
   constraint port_endpoints_kind_ck check (
     (kind='described' and device_type_id is not null and target_rack_device_id is null and target_rack_id is null)

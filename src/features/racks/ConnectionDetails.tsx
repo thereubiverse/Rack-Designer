@@ -27,7 +27,8 @@ export function ConnectionDetails(props: {
       <h3 className="text-sm font-semibold text-neutral-900">Connection</h3>
       <p className="mt-1 text-xs text-neutral-500">{portLabel(connection.a)} ↔ {portLabel(connection.b)}</p>
       {[connection.a, connection.b].map((port) => (
-        <EndpointEditor key={keyOf(port)} port={port} {...props} />
+        <EndpointEditor key={keyOf(port)} port={port} endpoints={props.endpoints} floorTypes={props.floorTypes}
+          siteScope={props.siteScope} portLabel={props.portLabel} onChange={props.onChange} onRemove={props.onRemove} />
       ))}
     </div>
   );
@@ -64,8 +65,14 @@ function EndpointEditor({ port, endpoints, floorTypes, siteScope, portLabel, onC
       return;
     }
     const deviceTypeId = value.slice("described:".length);
-    onChange({ id, port, kind: "described", deviceTypeId, name: "",
-      portCount: 1, landingPortIndex: 0, landingPortLabel: "" });
+    // portCount/landingPortIndex reset because a stale value from the previous type could violate
+    // the DB CHECK (landing_port_index < port_count); name and landingPortLabel are unconstrained
+    // text, so they carry over across a described→described type change instead of being wiped —
+    // otherwise correcting a mis-picked type would silently discard what the user already typed.
+    const carriedName = ep?.kind === "described" ? ep.name : "";
+    const carriedLabel = ep?.kind === "described" ? ep.landingPortLabel : "";
+    onChange({ id, port, kind: "described", deviceTypeId, name: carriedName,
+      portCount: 1, landingPortIndex: 0, landingPortLabel: carriedLabel });
   }
 
   const isOutlet = ep?.kind === "described" && typeById[ep.deviceTypeId]?.code === OUTLET_TYPE_CODE;
