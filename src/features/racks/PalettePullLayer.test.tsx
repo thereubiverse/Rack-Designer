@@ -4,12 +4,13 @@ import { render } from "@testing-library/react";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { PULL_DIST } from "./palettePull";
+import { PULL_DIST, restingJiggle, JIGGLE_MAX, jiggleScale } from "./palettePull";
 
 function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, chipSize: { w: 132, h: 34 },
-    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, ...over,
+    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
+    vx: 0, vy: 0, lastMoveAt: 0, jiggle: restingJiggle(), ...over,
   };
 }
 const mount = (state: PullState | null) => {
@@ -76,9 +77,32 @@ describe("PalettePullLayer", () => {
 
   it("the blob is exactly under the cursor", () => {
     const { container } = mount(pull({ x: 300, y: 172 }));
-    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
-    expect(parseFloat(blob.getAttribute("cx")!)).toBe(300);
-    expect(parseFloat(blob.getAttribute("cy")!)).toBe(172);
+    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGRectElement;
+    expect(blob.getAttribute("transform")).toContain("translate(300 172)");
+  });
+
+  it("the blob is a rounded SQUARE drawn about its own centre, so it can be spun and squashed", () => {
+    const { container } = mount(pull({ x: 300, y: 100 }));
+    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGRectElement;
+    expect(blob.tagName.toLowerCase()).toBe("rect");
+    const w = parseFloat(blob.getAttribute("width")!), h = parseFloat(blob.getAttribute("height")!);
+    expect(w).toBeCloseTo(h, 5);                                       // square
+    expect(parseFloat(blob.getAttribute("x")!)).toBeCloseTo(-w / 2, 5); // centred on the origin
+    expect(parseFloat(blob.getAttribute("y")!)).toBeCloseTo(-h / 2, 5);
+    expect(parseFloat(blob.getAttribute("rx")!)).toBeGreaterThan(0);    // rounded
+  });
+
+  it("a jiggling blob is rotated into its travel and squashed across it", () => {
+    const { container } = mount(pull({ x: 300, y: 100, jiggle: { stretch: JIGGLE_MAX, v: 0, angle: Math.PI / 2 } }));
+    const t = container.querySelector('[data-testid="pull-blob-1"]')!.getAttribute("transform")!;
+    const { along, across } = jiggleScale(JIGGLE_MAX);
+    expect(t).toContain("rotate(90)");
+    expect(t).toContain(`scale(${along} ${across})`);
+  });
+
+  it("a resting blob is an undeformed square", () => {
+    const { container } = mount(pull({ x: 300, y: 100, jiggle: restingJiggle() }));
+    expect(container.querySelector('[data-testid="pull-blob-1"]')!.getAttribute("transform")).toContain("scale(1 1)");
   });
 
   it("redraws the chip's label — the goo covers the real button's text", () => {
@@ -117,7 +141,7 @@ describe("PalettePullLayer", () => {
 
   it("the blob never swells anywhere near RU size while it is still goo", () => {
     const { container } = mount(pull({ x: 100 + PULL_DIST * 3, y: 100 })); // pulled way out
-    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGEllipseElement;
-    expect(parseFloat(blob.getAttribute("rx")!) * 2).toBeLessThan(RACK_INTERIOR_W);
+    const blob = container.querySelector('[data-testid="pull-blob-1"]') as SVGRectElement;
+    expect(parseFloat(blob.getAttribute("width")!)).toBeLessThan(RACK_INTERIOR_W);
   });
 });
