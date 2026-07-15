@@ -192,10 +192,13 @@ Disconnecting a patch cable leaves endpoints untouched — they belong to the po
 - Browser — set a camera endpoint + name, set a switch reference, confirm both faces, reload to prove
   persistence.
 
-> **Test-run hazard:** `*.integration.test.ts` in this repo delete all `sites`, cascading to every
-> rack. Run tests **by explicit filename only** — never a directory or glob (e.g. never
-> `vitest run src/features/racks/`), which silently pulls the integration files in and empties the
-> local DB.
+> **Test-run hazard:** two files wipe the whole local DB — `racks/repository.integration.test.ts:27`
+> and `locations/repository.integration.test.ts:22` run `db.from("sites").delete().neq("id", "000…")`,
+> deleting **all** sites and cascading to every rack. Run tests **by explicit filename only**; never a
+> directory or glob (e.g. never `vitest run src/features/racks/`), which silently pulls the
+> destructive file in. `actions.integration.test.ts` and `connectionsRepository.integration.test.ts`
+> are safe — they seed their own site and delete only it. The new endpoints integration test must
+> follow that **scoped** pattern.
 
 ## Out of scope
 
