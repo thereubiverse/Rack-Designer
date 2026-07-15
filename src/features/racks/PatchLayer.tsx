@@ -59,9 +59,14 @@ const polyD = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`)
 // A chain of points under gravity, with each link relaxed back to a rest length (Verlet). That is
 // what makes it behave like a noodle: it has momentum, so it swings, overshoots and whips instead
 // of easing tidily from A to B. Slurping is just the same rope with its rest length driven to zero.
+// Everything below is tuned to run at HALF speed, so the flailing is easy to watch. Slowing a
+// Verlet sim means shrinking the time step, not just stretching a duration: at half rate gravity
+// scales by ¼ and per-frame damping by ^½, which keeps the SAME trajectory and just plays it out
+// slower. (Stretching only the slurp's duration would let gravity settle the rope instead of
+// whipping it — the chaos would drain away.)
 const ROPE_N = 24;      // points in the chain
-const GRAVITY = 1.15;   // svg units per frame², pulling the slack down
-const DAMP = 0.96;      // near-1 keeps momentum, which is where the chaos comes from
+const GRAVITY = 0.29;   // svg units per frame², pulling the slack down (1.15 at full rate)
+const DAMP = 0.98;      // near-1 keeps momentum, which is where the chaos comes from (0.96 full)
 const RELAX = 10;       // constraint passes per frame — fewer = floppier links
 
 type Rope = { pts: Pt[]; prev: Pt[] };
@@ -325,7 +330,7 @@ export function PatchLayer(props: {
     if (!recoil) return;
     const anim = recoilAnim.current;
     if (!anim) { setRecoil(null); return; }
-    const DUR = 700;
+    const DUR = 1400; // 2× the old 700, so the ring-out is easy to follow
     // easeOutElastic: overshoots the routed line and rings past it a few times before settling —
     // the cable snapping taut and bouncing, rather than gliding into place.
     const ease = (t: number) =>
@@ -366,7 +371,7 @@ export function PatchLayer(props: {
   // flailing, no easing curve could. One frame loop drives every strand in flight.
   useEffect(() => {
     if (sucks.length === 0) return;
-    const DUR = 620;
+    const DUR = 1240; // 2× the old 620 — matches the half-rate physics above
     let raf = 0;
     const tick = () => {
       const now = performance.now();
