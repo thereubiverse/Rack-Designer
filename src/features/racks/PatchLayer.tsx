@@ -215,22 +215,30 @@ export function PatchLayer(props: {
     setSucks((s) => [...s, { id }]);
   };
 
-  /** Kick off the recoil from the cable's current hanging shape into its routed position. Returns
-   *  false when the drop won't actually connect — a patched endpoint raises the replace prompt or
-   *  an error instead, and there would be no cable to land on — so the caller reels it back in. */
-  const startRecoil = (from: PortRef, to: PortRef): boolean => {
+  const RECOIL_N = 48;
+
+  /** Morph `fromD` into the routed line for from↔to — the connect animation. */
+  const recoilFrom = (fromD: string, from: PortRef, to: PortRef): boolean => {
     const a = dotByKey.get(keyOf(from)), b = dotByKey.get(keyOf(to));
-    const hangD = rubberRef.current?.getAttribute("d");
-    if (!a || !b || !hangD) return false;
-    if (portConnection(connections, from) || portConnection(connections, to)) return false;
-    const N = 48;
+    if (!a || !b) return false;
     try {
       recoilAnim.current = {
-        from: samplePath(hangD, N), to: samplePath(cableD(from, a, to, b), N), t0: performance.now(),
+        from: samplePath(fromD, RECOIL_N), to: samplePath(cableD(from, a, to, b), RECOIL_N),
+        t0: performance.now(),
       };
     } catch { return false; } // getTotalLength can throw on a degenerate path; skip the flourish
     setRecoil({ a: from, b: to });
     return true;
+  };
+
+  /** Kick off the recoil from the cable's current hanging shape. Returns false when the drop won't
+   *  actually connect — a patched endpoint raises the replace prompt instead, and there would be no
+   *  cable to land on — so the caller reels it back in. */
+  const startRecoil = (from: PortRef, to: PortRef): boolean => {
+    const hangD = rubberRef.current?.getAttribute("d");
+    if (!hangD) return false;
+    if (portConnection(connections, from) || portConnection(connections, to)) return false;
+    return recoilFrom(hangD, from, to);
   };
 
   /** Every drag ends here: it either recoils into a new cable, or gets slurped back into its port. */
@@ -353,12 +361,22 @@ export function PatchLayer(props: {
     return () => cancelAnimationFrame(raf);
   }, [recoil]);
 
-  // Unplugging a cable reels it in too: the parent just drops it from the list, so diff for
-  // removals. A cable whose device went with it has no port left to retract into — skip those.
+  // The parent only ever hands us a new list, so diff it for what changed and animate both sides.
+  // Removals reel in (unplug, or the cable a Replace dropped). Additions with no drag behind them —
+  // a Replace, click-to-connect, a redo — still snap in with the connect animation, drawn from a
+  // straight run since there is no hanging rope to start from.
   const prevConns = useRef(connections);
   useEffect(() => {
     const prev = prevConns.current;
     prevConns.current = connections;
+    for (const c of connections) {
+      if (prev.some((x) => x.id === c.id)) continue;              // not new
+      if (recoil && pairsMatch(recoil, c)) continue;              // a drop is already recoiling it
+      if (c.a.side !== faceSide || c.b.side !== faceSide) continue;
+      const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
+      if (!a || !b) continue;
+      recoilFrom(`M ${a.x} ${a.y} L ${b.x} ${b.y}`, c.a, c.b);
+    }
     for (const c of prev) {
       if (connections.some((x) => x.id === c.id)) continue;
       if (c.a.side !== faceSide || c.b.side !== faceSide) continue;

@@ -42,7 +42,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   connections: Connection[];
   selectedConnectionId: string | null;
   onPatch: (a: PortRef, b: PortRef) => void;
-  onReplace: (existingConnId: string, a: PortRef, b: PortRef) => void;
+  onReplace: (existingConnIds: string[], a: PortRef, b: PortRef) => void;
   onSelectConnection: (id: string | null) => void;
   onDisconnect: (id: string) => void;
   portLabel: (p: PortRef) => string;
@@ -206,7 +206,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   const [selectedPort, setSelectedPort] = useState<PortRef | null>(null); // patched port picked by 1st click
   const [pinShown, setPinShown] = useState(false);                        // 2nd click on it → disconnect pin
   const [pendingSource, setPendingSource] = useState<PortRef | null>(null); // unpatched port picked to connect FROM
-  const [replacePrompt, setReplacePrompt] = useState<{ existingConnId: string; source: PortRef; target: PortRef } | null>(null);
+  const [replacePrompt, setReplacePrompt] = useState<{ existing: Connection[]; source: PortRef; target: PortRef } | null>(null);
   const faceSide = side === "FRONT" ? "front" : "back";
   const conns = props.connections;
 
@@ -214,8 +214,15 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // replace prompt instead of patching (the parent re-validates and rejects duplicates anyway).
   const attemptConnect = (from: PortRef, to: PortRef) => {
     if (samePort(from, to)) return;
-    const existing = portConnection(conns, to);
-    if (existing) { setReplacePrompt({ existingConnId: existing.id, source: from, target: to }); return; }
+    const onFrom = portConnection(conns, from), onTo = portConnection(conns, to);
+    // Already patched to each other — the user just re-drew the cable they already have.
+    if (onFrom && onTo && onFrom.id === onTo.id) return;
+    // EITHER end being patched means the same thing: the user is moving a cable. Offer to replace
+    // rather than refusing — and take BOTH out when both ends are busy, or the survivor would leave
+    // its port double-booked and the server would reject the save.
+    const existing = [onFrom, onTo].filter((c): c is Connection => !!c)
+      .filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+    if (existing.length > 0) { setReplacePrompt({ existing, source: from, target: to }); return; }
     props.onPatch(from, to);
   };
   // The click state machine: a patched port selects on the 1st click and shows its disconnect pin on
@@ -372,27 +379,42 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         </svg>
       </div>
 
-      {/* Replace-connection prompt: shown when a connect gesture lands on an already-patched port. */}
+      {/* Replace-connection prompt: shown when a connect gesture involves an already-patched port —
+          at EITHER end, since dragging a patched port somewhere new means "move this cable". */}
       {replacePrompt && (() => {
-        const existing = conns.find((c) => c.id === replacePrompt.existingConnId);
-        const otherEnd = existing ? (samePort(existing.a, replacePrompt.target) ? existing.b : existing.a) : null;
         const close = () => { setReplacePrompt(null); setPendingSource(null); };
+        const { existing, source, target } = replacePrompt;
         return (
           <div className="rde-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
             onClick={close}>
             <div className="rde-modal-card w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-sm font-semibold text-neutral-900">Port already connected</h3>
+              <h3 className="text-sm font-semibold text-neutral-900">
+                {existing.length > 1 ? "Both ports are already connected" : "Port already connected"}
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-neutral-600">
-                <span className="font-medium text-neutral-900">{props.portLabel(replacePrompt.target)}</span> is already
-                connected{otherEnd ? <> to <span className="font-medium text-neutral-900">{props.portLabel(otherEnd)}</span></> : null}.
-                {" "}Replace it with{" "}
-                <span className="font-medium text-neutral-900">{props.portLabel(replacePrompt.source)} ↔ {props.portLabel(replacePrompt.target)}</span>?
+                Replacing will disconnect{existing.length > 1 ? ":" : " "}
+                {existing.length > 1 ? null : (
+                  <span className="font-medium text-neutral-900">
+                    {props.portLabel(existing[0].a)} ↔ {props.portLabel(existing[0].b)}
+                  </span>
+                )}
+                {existing.length > 1 && (
+                  <span className="mt-1 block">
+                    {existing.map((c) => (
+                      <span key={c.id} className="block font-medium text-neutral-900">
+                        {props.portLabel(c.a)} ↔ {props.portLabel(c.b)}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {existing.length > 1 ? "" : " "}and connect{" "}
+                <span className="font-medium text-neutral-900">{props.portLabel(source)} ↔ {props.portLabel(target)}</span>.
               </p>
               <div className="mt-5 flex justify-end gap-2">
                 <button type="button" onClick={close}
                   className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-100">Cancel</button>
                 <button type="button" data-testid="replace-confirm"
-                  onClick={() => { props.onReplace(replacePrompt.existingConnId, replacePrompt.source, replacePrompt.target); close(); }}
+                  onClick={() => { props.onReplace(existing.map((c) => c.id), source, target); close(); }}
                   className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700">Replace</button>
               </div>
             </div>
