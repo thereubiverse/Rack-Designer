@@ -330,7 +330,10 @@ export function PatchLayer(props: {
     if (!recoil) return;
     const anim = recoilAnim.current;
     if (!anim) { setRecoil(null); return; }
-    const DUR = 1400; // 2× the old 700, so the ring-out is easy to follow
+    // Connecting is the satisfying half, so it lands a little quicker than the slurp (which stays
+    // at 1240ms). This is a plain point-morph, so the duration is its only knob — the rope's
+    // gravity/damping are untouched and the disconnect is unaffected.
+    const DUR = 1100;
     // easeOutElastic: overshoots the routed line and rings past it a few times before settling —
     // the cable snapping taut and bouncing, rather than gliding into place.
     const ease = (t: number) =>
