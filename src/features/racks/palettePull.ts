@@ -48,6 +48,10 @@ export interface PullState {
   snapStart: number;      // performance.now() at the start of the snap-back (also the latch clock)
   snapSize: Size | null;  // how big the box was when abandoned — the snap-back shrinks from THERE,
                           // whether it was still a blob or had already grown into a device
+  vx: number;             // tracked cursor velocity, px/s — drives the jiggle
+  vy: number;
+  lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
+  jiggle: Jiggle;         // the soft-body spring, stepped once per frame by the layer
 }
 
 /** Carried box opacity — translucent so the rack and its rails read through it. */
@@ -79,10 +83,10 @@ export function latchGrow(k: number): number {
   return Math.pow(2, -10 * c) * Math.sin(((c - period / 4) * (2 * Math.PI)) / period) + 1;
 }
 
-/** The blob at full swell: a featureless lump, proportioned off the chip so it scales with it.
- *  Deliberately nowhere near RU size — the blob must never look like the device it will become. */
+/** The blob at full swell: a featureless SQUARE lump, sized off the chip's height so it scales with
+ *  it. Deliberately nowhere near RU size — the blob must never look like the device it becomes. */
 export function blobTarget(chip: Size): Size {
-  return { w: chip.h * 1.6, h: chip.h };
+  return { w: chip.h, h: chip.h };
 }
 
 /** The blob's size at pull progress `t`: a nub inside the chip that swells into a lump as you pull.
@@ -144,6 +148,55 @@ export function neckPath(exit: Vec, at: Vec, rootW: number, tipW: number): strin
   ].join(" ");
 }
 
+// ---- jiggle -----------------------------------------------------------------------------------
+// The blob is a soft body: it stretches along the way it is being flung and squashes across, then
+// springs back and RINGS when you stop. The ring is the whole point, which is why this is a spring
+// and not a lerp — a lerp eases to the target and stops dead, it can never overshoot.
+
+/** Cursor speed (px/s) that produces the full stretch. STARTING GUESS — tune in the browser. */
+export const JIGGLE_SPEED_FULL = 1600;
+/** Hardest squash-and-stretch, as a fraction. 0.45 = up to 145% along, ~69% across. */
+export const JIGGLE_MAX = 0.45;
+/** Spring constant and damping. Lower damping = looser, wobblier, more rings before it settles.
+ *  STARTING GUESSES — tune in the browser. */
+export const JIGGLE_STIFF = 260;
+export const JIGGLE_DAMP = 13;
+/** Per-second decay applied to the tracked velocity when the cursor stops sending moves. Without
+ *  this the blob would stay stretched forever the moment you held still. */
+export const VEL_DECAY = 0.006;
+
+export interface Jiggle {
+  stretch: number;  // current squash-and-stretch, 0 = a resting square
+  v: number;        // the spring's velocity — this is what carries it past the target and back
+  angle: number;    // radians; the direction the stretch points, held when the cursor stops
+}
+
+export const restingJiggle = (): Jiggle => ({ stretch: 0, v: 0, angle: 0 });
+
+/** How stretched the blob WANTS to be at a given cursor speed. Clamped: flinging it faster than
+ *  JIGGLE_SPEED_FULL cannot tear it into a needle. */
+export function jiggleTarget(speed: number): number {
+  return Math.min(JIGGLE_MAX, (Math.abs(speed) / JIGGLE_SPEED_FULL) * JIGGLE_MAX);
+}
+
+/** One step of the jiggle spring. `dt` in SECONDS. Pure: same input, same output — the caller owns
+ *  the state, this only advances it (same split as the patch cable's rope).
+ *  dt is clamped: a backgrounded tab hands back a huge dt on its first frame, and an unclamped
+ *  spring integrates that into a violent explosion. */
+export function stepJiggle(j: Jiggle, target: number, angle: number, dt: number): Jiggle {
+  const d = Math.min(Math.max(dt, 0), 1 / 30);
+  const a = (target - j.stretch) * JIGGLE_STIFF - j.v * JIGGLE_DAMP;
+  const v = j.v + a * d;
+  return { stretch: j.stretch + v * d, v, angle: target > 0.001 ? angle : j.angle };
+}
+
+/** Squash-and-stretch scales. Volume-preserving: whatever it gains along the direction of travel it
+ *  gives back across it, so the lump never appears to grow or shrink as it jiggles. */
+export function jiggleScale(stretch: number): { along: number; across: number } {
+  const along = Math.max(0.05, 1 + stretch);
+  return { along, across: 1 / along };
+}
+
 /** Is the blob close enough to the rack to solidify? Horizontal distance only — see RACK_LATCH_X.
  *  `rackCentreX` is the rack's centre line in viewport px; null when the canvas isn't measurable. */
 export function nearRack(boxX: number, rackCentreX: number | null): boolean {
@@ -158,6 +211,7 @@ export function nearRack(boxX: number, rackCentreX: number | null): boolean {
  *  union's silhouette is just the chip, so nothing appears on its own. */
 export function pullGeometry(p: PullState, scale: number, now: number): {
   at: Vec; size: Size; opacity: number; solid: boolean; neck: string;
+  jiggle: { along: number; across: number; angle: number };
 } {
   if (p.phase === "snapback") {
     // Melts back into slime on the way home: whatever it was, it retreats as a blob and is sucked
@@ -170,7 +224,8 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     const exit = chipExit(p, at);
     const gap = Math.hypot(at.x - exit.x, at.y - exit.y);
     return { at, size, opacity: (1 - k) * BOX_OPACITY, solid: false,
-      neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2) };
+      neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2),
+      jiggle: { ...jiggleScale(p.jiggle.stretch), angle: p.jiggle.angle } };
   }
 
   // The blob is exactly under the cursor. No lag curve: the thing you are dragging is where you
@@ -183,13 +238,15 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     // at the blob's size, so latchGrow's 0-at-k=0 is exactly right here.
     const k = (now - p.snapStart) / SNAP_MS;
     const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
+    // A solid device does not jiggle — it is a rack device now, not slime.
     return { at, size: lerpSize(blobTarget(p.chipSize), full, latchGrow(k)), opacity: BOX_OPACITY,
-      solid: true, neck: "" };
+      solid: true, neck: "", jiggle: { along: 1, across: 1, angle: 0 } };
   }
 
   const size = blobSize(pullT(p), p.chipSize);
   const exit = chipExit(p, at);
   const gap = Math.hypot(at.x - exit.x, at.y - exit.y);
   return { at, size, opacity: BOX_OPACITY, solid: false,
-    neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2) };
+    neck: neckPath(exit, at, neckRootW(p.chipSize.h, gap), size.h / 2),
+    jiggle: { ...jiggleScale(p.jiggle.stretch), angle: p.jiggle.angle } };
 }

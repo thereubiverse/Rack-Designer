@@ -31,7 +31,7 @@ import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { pullGeometry, type PullState } from "./palettePull";
+import { pullGeometry, stepJiggle, jiggleTarget, VEL_DECAY, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
@@ -62,15 +62,27 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   // [border pass, fill pass] for each of the two shapes — the loop writes all four.
   const chipRef = useRef<(SVGRectElement | null)[]>([null, null]);
   const neckRef = useRef<(SVGPathElement | null)[]>([null, null]);
-  const blobRef = useRef<(SVGEllipseElement | null)[]>([null, null]);
+  const blobRef = useRef<(SVGRectElement | null)[]>([null, null]);
 
   useEffect(() => {
     let raf = 0;
+    let last = performance.now();
     const frame = () => {
       raf = requestAnimationFrame(frame);
       const p = pullRef.current;
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
       if (!p) return;
-      paint(p, pullGeometry(p, scaleOf(), performance.now()),
+      // Step the soft body once per frame. This lives here, not in RackBuilder, for the same reason
+      // the patch cable's rope does: the spring must keep ringing after the cursor STOPS, and
+      // pointermove stops firing the moment it does — only frames keep coming.
+      // The tracked velocity decays continuously, so holding still relaxes the square back to rest.
+      const decay = Math.pow(VEL_DECAY, Math.min(dt, 1 / 30));
+      p.vx *= decay; p.vy *= decay;
+      const speed = Math.hypot(p.vx, p.vy);
+      p.jiggle = stepJiggle(p.jiggle, jiggleTarget(speed), Math.atan2(p.vy, p.vx), dt);
+      paint(p, pullGeometry(p, scaleOf(), now),
         { goo: gooRef.current, label: labelRef.current, box: boxRef.current, neck: neckRef.current, blob: blobRef.current });
     };
     raf = requestAnimationFrame(frame);
@@ -111,8 +123,13 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
                   pass fattens it exactly like the other two shapes. */}
               <path ref={(el) => { neckRef.current[i] = el; }} data-testid={`pull-neck-${i}`}
                 d={g.neck} stroke={pass.fill} strokeWidth={pass.grow * 2} strokeLinejoin="round" />
-              <ellipse ref={(el) => { blobRef.current[i] = el; }} data-testid={`pull-blob-${i}`}
-                cx={g.at.x} cy={g.at.y} rx={g.size.w / 2 + pass.grow} ry={g.size.h / 2 + pass.grow} />
+              {/* A rounded SQUARE, drawn about its own centre so the transform below can rotate it
+                  into the direction of travel and squash-and-stretch it about that axis. */}
+              <rect ref={(el) => { blobRef.current[i] = el; }} data-testid={`pull-blob-${i}`}
+                x={-(g.size.w / 2 + pass.grow)} y={-(g.size.h / 2 + pass.grow)}
+                width={g.size.w + pass.grow * 2} height={g.size.h + pass.grow * 2}
+                rx={g.size.h * 0.28 + pass.grow} ry={g.size.h * 0.28 + pass.grow}
+                transform={blobTransform(g)} />
             </g>
           ))}
         </g>
@@ -137,9 +154,16 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   );
 }
 
+/** translate to the cursor, rotate into the direction of travel, then squash-and-stretch about that
+ *  axis. One transform, so the rect can stay a plain centred square. */
+function blobTransform(g: Geo): string {
+  const deg = (g.jiggle.angle * 180) / Math.PI;
+  return `translate(${g.at.x} ${g.at.y}) rotate(${deg}) scale(${g.jiggle.along} ${g.jiggle.across})`;
+}
+
 function paint(p: PullState, g: Geo, el: {
   goo: SVGGElement | null; label: SVGTextElement | null; box: HTMLDivElement | null;
-  neck: (SVGPathElement | null)[]; blob: (SVGEllipseElement | null)[];
+  neck: (SVGPathElement | null)[]; blob: (SVGRectElement | null)[];
 }) {
   if (el.goo) { el.goo.style.display = g.solid ? "none" : "block"; el.goo.setAttribute("opacity", String(g.opacity)); }
   if (el.label) el.label.style.display = g.solid ? "none" : "block";
@@ -148,10 +172,14 @@ function paint(p: PullState, g: Geo, el: {
     el.neck[i]?.setAttribute("d", g.neck);
     const blob = el.blob[i];
     if (blob) {
-      blob.setAttribute("cx", String(g.at.x));
-      blob.setAttribute("cy", String(g.at.y));
-      blob.setAttribute("rx", String(Math.max(0, g.size.w / 2 + grow)));
-      blob.setAttribute("ry", String(Math.max(0, g.size.h / 2 + grow)));
+      const w = Math.max(0, g.size.w + grow * 2), h = Math.max(0, g.size.h + grow * 2);
+      blob.setAttribute("x", String(-w / 2));
+      blob.setAttribute("y", String(-h / 2));
+      blob.setAttribute("width", String(w));
+      blob.setAttribute("height", String(h));
+      blob.setAttribute("rx", String(g.size.h * 0.28 + grow));
+      blob.setAttribute("ry", String(g.size.h * 0.28 + grow));
+      blob.setAttribute("transform", blobTransform(g));
     }
   }
   const box = el.box;

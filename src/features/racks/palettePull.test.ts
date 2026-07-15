@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, NECK_SNAP, pullProgress, easeOutCubic, latchGrow,
+  PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, NECK_SNAP, JIGGLE_MAX, JIGGLE_SPEED_FULL,
+  restingJiggle, jiggleTarget, stepJiggle, jiggleScale, pullProgress, easeOutCubic, latchGrow,
   blobTarget, blobSize, pullGeometry, chipExit, neckRootW, neckPath, nearRack, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
@@ -85,6 +86,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
+    vx: 0, vy: 0, lastMoveAt: 0, jiggle: restingJiggle(),
   };
 
   it("while pulling it is a BLOB, not the device", () => {
@@ -149,6 +151,7 @@ describe("the tear — the chip's own outline is what splits", () => {
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
+    vx: 0, vy: 0, lastMoveAt: 0, jiggle: restingJiggle(),
   };
 
   it("the blob sits EXACTLY under the cursor — no lag curve", () => {
@@ -212,5 +215,73 @@ describe("the tear — the chip's own outline is what splits", () => {
   it("solid draws no neck — it has long since let go", () => {
     const p: PullState = { ...base, phase: "solid", x: 800, y: 300, snapStart: 0 };
     expect(pullGeometry(p, 1, 0).neck).toBe("");
+  });
+});
+
+describe("the jiggle — a soft square that reacts to how fast you fling it", () => {
+  it("is a SQUARE at rest, not an oval", () => {
+    expect(blobTarget(CHIP).w).toBe(blobTarget(CHIP).h);
+  });
+
+  it("stretches more the faster the cursor moves, and clamps", () => {
+    expect(jiggleTarget(0)).toBe(0);
+    expect(jiggleTarget(JIGGLE_SPEED_FULL / 2)).toBeCloseTo(JIGGLE_MAX / 2, 5);
+    expect(jiggleTarget(JIGGLE_SPEED_FULL)).toBe(JIGGLE_MAX);
+    expect(jiggleTarget(JIGGLE_SPEED_FULL * 10)).toBe(JIGGLE_MAX); // a fling can't tear it to a needle
+    expect(jiggleTarget(-JIGGLE_SPEED_FULL)).toBe(JIGGLE_MAX);     // direction-agnostic: it's a speed
+  });
+
+  it("squash-and-stretch preserves volume — what it gains along it loses across", () => {
+    for (const st of [0, 0.1, JIGGLE_MAX, 1]) {
+      const { along, across } = jiggleScale(st);
+      expect(along * across).toBeCloseTo(1, 10);
+    }
+    expect(jiggleScale(0)).toEqual({ along: 1, across: 1 });      // rest = an undeformed square
+    expect(jiggleScale(0.4).along).toBeGreaterThan(1);
+    expect(jiggleScale(0.4).across).toBeLessThan(1);
+  });
+
+  it("OVERSHOOTS the target — that ring IS the jiggle, and a lerp could never do it", () => {
+    // The point of using a spring. Drive it at a fixed target and it must sail PAST it, not ease in.
+    let j = restingJiggle();
+    let peak = 0;
+    for (let i = 0; i < 200; i++) {
+      j = stepJiggle(j, JIGGLE_MAX, 0, 1 / 60);
+      peak = Math.max(peak, j.stretch);
+    }
+    expect(peak).toBeGreaterThan(JIGGLE_MAX);
+  });
+
+  it("rings back down and settles once the cursor stops", () => {
+    let j = restingJiggle();
+    for (let i = 0; i < 60; i++) j = stepJiggle(j, JIGGLE_MAX, 0, 1 / 60);  // fling
+    for (let i = 0; i < 400; i++) j = stepJiggle(j, 0, 0, 1 / 60);          // let go
+    expect(Math.abs(j.stretch)).toBeLessThan(0.005);
+    expect(Math.abs(j.v)).toBeLessThan(0.05);
+  });
+
+  it("holds its angle when the cursor stops, so a settling square doesn't spin", () => {
+    // atan2(0,0) is 0, so a decaying velocity would otherwise snap the axis back to horizontal
+    // mid-wobble and the square would visibly rotate as it settled.
+    let j = stepJiggle(restingJiggle(), JIGGLE_MAX, 1.2, 1 / 60);
+    expect(j.angle).toBeCloseTo(1.2, 5);
+    j = stepJiggle(j, 0, 0, 1 / 60);   // stopped: target 0, angle argument meaningless
+    expect(j.angle).toBeCloseTo(1.2, 5);
+  });
+
+  it("survives a stalled tab: a huge dt is clamped rather than exploding the spring", () => {
+    const j = stepJiggle(restingJiggle(), JIGGLE_MAX, 0, 30); // 30 SECONDS between frames
+    expect(Number.isFinite(j.stretch)).toBe(true);
+    expect(Math.abs(j.stretch)).toBeLessThan(1);
+    expect(jiggleScale(j.stretch).along).toBeGreaterThan(0);   // never inverts the square
+  });
+
+  it("a solid device does not jiggle — it is a rack device now, not slime", () => {
+    const p: PullState = {
+      typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, chipSize: CHIP, x: 400, y: 100,
+      phase: "solid", snapFrom: null, snapStart: 0, snapSize: null,
+      vx: 9999, vy: 9999, lastMoveAt: 0, jiggle: { stretch: 0.4, v: 3, angle: 1 },
+    };
+    expect(pullGeometry(p, 1, 0).jiggle).toEqual({ along: 1, across: 1, angle: 0 });
   });
 });
