@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { flushSync } from "react-dom";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
+import { PalettePullLayer, type PullState } from "./PalettePullLayer";
+import { SNAP_MS, pullT, pullAt } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -58,6 +61,98 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   // opens straight to that type's templates (palette click). atU is the RU the insert lands on.
   const [picker, setPicker] = useState<{ initialTypeId: string | null; atU: number | null } | null>(null);
   const canvasRef = useRef<RackCanvasHandle>(null); // zoom in/out drive the canvas imperatively
+
+  // Palette -> rack pull. The live values are a REF (mutated per frame, no re-render); React state
+  // is only `pullMounted` (mount the overlay) and `dropArmed` (latched once, when it goes solid).
+  const pullRef = useRef<PullState | null>(null);
+  const [pullMounted, setPullMounted] = useState(false);
+  const [dropArmed, setDropArmed] = useState(false);
+  // The pending snap-back timer, held so a NEW pull can cancel it. Without this, abandoning a pull
+  // and immediately grabbing another chip lets the old timer fire and kill the new pull mid-gesture.
+  const snapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSnapTimer = useCallback(() => {
+    if (snapTimerRef.current !== null) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
+  }, []);
+
+  const endPull = useCallback(() => {
+    clearSnapTimer();
+    pullRef.current = null;
+    setPullMounted(false);
+    setDropArmed(false);
+  }, [clearSnapTimer]);
+
+  const beginSnapBack = useCallback(() => {
+    const p = pullRef.current;
+    if (!p || p.phase === "snapback") return;
+    // Both read the LIVE phase, so both must run BEFORE it flips to "snapback".
+    // snapT: pull progress at the moment of abandon — the snap-back shrinks from the box's actual
+    // size, not from full RU size.
+    p.snapT = pullT(p);
+    // snapFrom: where the box actually IS, which is not the pointer — mid-pull the box lags behind,
+    // travelling from the chip toward the cursor. Capturing the pointer here would teleport the box
+    // to the cursor before it started shrinking.
+    p.snapFrom = pullAt(p);
+    p.snapStart = performance.now();
+    p.phase = "snapback";
+    setDropArmed(false);                  // a retreating box must not be droppable
+    clearSnapTimer();
+    snapTimerRef.current = setTimeout(endPull, SNAP_MS); // the layer animates; this owns when it's over
+  }, [endPull, clearSnapTimer]);
+
+  function startPull(e: React.PointerEvent, typeId: string) {
+    if (e.button !== 0) return;
+    clearSnapTimer(); // a previous pull may still be snapping back — its timer must not end THIS one
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    pullRef.current = {
+      typeId,
+      chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+      chipSize: { w: r.width, h: r.height },
+      x: e.clientX, y: e.clientY,
+      phase: "pulling", snapFrom: null, snapStart: 0, snapT: 0,
+    };
+    setPullMounted(true);
+    setDropArmed(false);
+  }
+
+  useEffect(() => {
+    if (!pullMounted) return;
+    const onMove = (e: PointerEvent) => {
+      const p = pullRef.current;
+      if (!p || p.phase === "snapback") return;
+      p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
+      // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
+      // fired, and the phase machine belongs with the state's owner. This setState runs once.
+      if (p.phase === "pulling" && pullT(p) >= 1) {
+        p.phase = "solid";
+        p.snapStart = performance.now();  // the latch spring's clock
+        // flushSync, not a plain setState: pointermove is continuous priority, so React would
+        // otherwise schedule this render through the Scheduler instead of flushing it inline. The
+        // strip gates the drop on props.dropArmed (not on the ref write above, which IS
+        // synchronous), so a pointerup arriving before that scheduled render still sees
+        // dropArmed=false and silently loses the drop. Only runs once per gesture, so the
+        // flushSync cost is nil. Raising PULL_DIST (a tuning knob, see palettePull.ts) moves the
+        // latch point closer to the rack, WIDENING this window rather than narrowing it — so this
+        // guards against a regression the next tuning pass could otherwise introduce.
+        flushSync(() => setDropArmed(true));
+      }
+    };
+    const onUp = () => {
+      // A drop on a strip already cleared pullRef (its React onPointerUp runs first — the React root
+      // is inside body, so it sees the event before this window listener). Nothing left to do.
+      if (!pullRef.current) return;
+      beginSnapBack();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") beginSnapBack(); };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [pullMounted, beginSnapBack]);
   // PatchDocs' Fit toggle: default fits the whole rack (height); each click flips width ↔ height.
   const [fitMode, setFitMode] = useState<FitMode>("height");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
@@ -211,7 +306,9 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
         <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</p>
         {types.map((t) => (
           <button key={t.id} type="button" data-testid={`palette-type-${t.code}`}
+            onPointerDown={(e) => startPull(e, t.id)}
             onClick={() => setPicker({ initialTypeId: t.id, atU: null })}
+            style={{ touchAction: "none" }}
             className="block w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-sm font-medium hover:bg-neutral-50">
             {t.name}
           </button>
@@ -291,6 +388,12 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
               commitConnections(addConnection(freed, a, b));
             }}
             portLabel={labelForPort}
+            dropArmed={dropArmed}
+            onDropAt={(u) => {
+              const typeId = pullRef.current?.typeId;
+              endPull();                                  // clears pullRef before window's pointerup
+              if (typeId) setPicker({ initialTypeId: typeId, atU: u });
+            }}
           />
         </div>
       </div>
@@ -355,6 +458,10 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
           onInsert={insertTemplate}
           onClose={() => setPicker(null)}
         />
+      )}
+
+      {pullMounted && (
+        <PalettePullLayer pullRef={pullRef} scaleOf={() => canvasRef.current?.getScale() ?? 1} />
       )}
     </div>
   );

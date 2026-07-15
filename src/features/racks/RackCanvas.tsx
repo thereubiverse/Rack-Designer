@@ -25,7 +25,12 @@ const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 /** Grip handle width — must stay in step with its `w-4` class (used to centre it on the ear). */
 const GRIP_W = 16;
 
-export type RackCanvasHandle = { zoomBy: (factor: number) => void };
+export type RackCanvasHandle = {
+  zoomBy: (factor: number) => void;
+  /** Live display scale. The palette-pull overlay reads it per frame to size its box to exactly
+   *  one RU at the current zoom. scaleRef (not the state) is the authoritative value. */
+  getScale: () => number;
+};
 
 /** Interactive layer over the pure RackFrame (EditorCanvas pattern). The viewport is a fixed box
  *  with overflow hidden; the rack lives in a single translate+scale transform. That makes pinch-
@@ -49,6 +54,10 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   onSelectConnection: (id: string | null) => void;
   onDisconnect: (id: string) => void;
   portLabel: (p: PortRef) => string;
+  /** True only while a palette pull is SOLID — i.e. a drop is possible. The canvas deliberately
+   *  never learns which type is being dragged; it only reports which RU was hit. */
+  dropArmed: boolean;
+  onDropAt: (u: number) => void;
 }>(function RackCanvas(props, ref) {
   const { heightU, placements, side, selectedId, fitMode = "height" } = props;
   const { width, height } = rackSvgSize(heightU);
@@ -86,7 +95,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     const host = hostRef.current;
     zoomAround(factor, (host?.clientWidth ?? 0) / 2, (host?.clientHeight ?? 0) / 2, true);
   }, [zoomAround]);
-  useImperativeHandle(ref, () => ({ zoomBy }), [zoomBy]);
+  useImperativeHandle(ref, () => ({ zoomBy, getScale: () => scaleRef.current }), [zoomBy]);
 
   // Fit (PatchDocs "fit" toggle): "width" fills the viewport width; "height" fits the whole rack.
   // Recompute the scale + re-centre the pan whenever the mode flips or the viewport resizes. The
@@ -149,6 +158,15 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // React state changes only on start/end; the move is committed once (snapped to a free RU) on release.
   const [dragId, setDragId] = useState<string | null>(null);
   const [hoverU, setHoverU] = useState<number | null>(null);
+  // A click fires immediately after pointerup. If that pointerup committed a drop, the click must
+  // NOT also run onAddAt — that would reopen the picker with initialTypeId null and throw away the
+  // type the user just dragged. Set on drop, cleared on the next macrotask (the click is dispatched
+  // before timers, so the guard is still up when it arrives).
+  // In the real mouse path this is defence in depth, not the thing that makes the drop work: a
+  // cross-element press/release (chip -> strip) fires the trailing click at the nearest common
+  // ancestor of the two targets, not at the strip, so the strip's own onClick never actually runs.
+  // The guard matters only if a portal or same-element release ever changes that ancestry.
+  const swallowStripClickRef = useRef(false);
   const dragRef = useRef<{ id: string; startY: number; origU: number; ru: number; ghostU: number } | null>(null);
   useEffect(() => {
     if (!dragId) return;
@@ -320,7 +338,17 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         {/* free-RU click strips — hovering one also lights that RU's rails (see RackFrame) */}
         {Array.from({ length: heightU }, (_, i) => i + 1).filter((u) => !occupied.has(u)).map((u) => (
           <div key={u} data-testid={`ru-hit-${u}`} title={`Add device at U${u}`}
-            onClick={(e) => { e.stopPropagation(); props.onAddAt(u); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (swallowStripClickRef.current) return;
+              props.onAddAt(u);
+            }}
+            onPointerUp={(e) => {
+              if (e.button !== 0 || !props.dropArmed) return;
+              swallowStripClickRef.current = true;
+              setTimeout(() => { swallowStripClickRef.current = false; }, 0);
+              props.onDropAt(u);
+            }}
             onMouseEnter={() => setHoverU(u)}
             onMouseLeave={() => setHoverU((cur) => (cur === u ? null : cur))}
             className="absolute cursor-pointer"

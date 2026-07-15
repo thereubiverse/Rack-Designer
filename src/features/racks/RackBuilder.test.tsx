@@ -8,6 +8,7 @@ import type { PortEndpoint } from "./endpointOps";
 import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
+import { SNAP_MS, PULL_DIST } from "./palettePull";
 
 // Pure UI-wiring tests: the rack builder must never touch the network/DB. Saves are debounced
 // 600ms and mocked out here so a stray timer firing mid-test can't hit a real server action.
@@ -163,5 +164,120 @@ describe("RackBuilder sidebar selection", () => {
     fireEvent.click(screen.getByTestId("rack-dev-ear-l-sw"));
     act(() => { fireEvent.keyDown(window, { key: "Delete" }); });
     expect(screen.queryByTestId("rack-dev-sw")).toBeNull();
+  });
+
+  it("pressing a palette chip and dropping on a free RU opens the picker at that RU", () => {
+    // The whole gesture: press the chip, pull past PULL_DIST so it latches solid, release on a strip.
+    // jsdom reports a zero-size rect for the chip, so its centre is (0,0) and the pointer's distance
+    // is simply clientX — PULL_DIST * 4 is comfortably past PULL_DIST regardless of its tuned value.
+    render(<RackBuilder {...baseProps()} />);
+    const chip = screen.getByTestId("palette-type-SW");
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  });
+
+  it("a chip press released before it solidifies opens nothing", () => {
+    render(<RackBuilder {...baseProps()} />);
+    const chip = screen.getByTestId("palette-type-SW");
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST / 10, clientY: 0 }); }); // short of PULL_DIST
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
+  });
+
+  it("right-clicking a chip starts no pull", () => {
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 2 });
+    expect(screen.queryByTestId("pull-box")).toBeNull();
+  });
+
+  it("still opens the picker on a plain chip click", () => {
+    // The existing palette behaviour must survive: click a chip -> picker at that type, no RU.
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("palette-type-SW"));
+    expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  });
+
+  it("an abandoned MID-pull snaps back from where the box IS, not from the cursor", () => {
+    // Mid-pull the box lags the cursor — it travels from the chip toward the pointer as you drag.
+    // beginSnapBack must therefore capture the BOX's position, not the pointer's; capturing the
+    // pointer teleports the box to the cursor before it starts shrinking. Every other abandon test
+    // latches solid first, where the two coincide (pullAt === pointer at t=1), so only a mid-pull
+    // abandon can catch this.
+    // Two things make this observable only with effort, and both are why it nearly shipped untested:
+    //  - abandoning MID-pull calls setDropArmed(false) when it is already false, so React bails out
+    //    and never re-renders. The snap-back is painted ONLY by the rAF loop — and jsdom never fires
+    //    rAF on its own. So capture the frame callback and run one by hand.
+    //  - the clock must be FROZEN: the snap-back starts retreating immediately and the right and
+    //    wrong start points decay at the same rate, so with a live clock the wrong one drifts under
+    //    any threshold and the test silently stops discriminating (verified — it did).
+    let frame: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frame = cb; return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.useFakeTimers({ toFake: ["performance"] });
+    try {
+      render(<RackBuilder {...baseProps()} />);
+      fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
+      const pointerX = PULL_DIST / 2;                     // half-way: still stretching, still lagging
+      act(() => { fireEvent.pointerMove(window, { clientX: pointerX, clientY: 0 }); });
+      act(() => { fireEvent.pointerUp(window, { clientX: pointerX, clientY: 0 }); }); // abandon
+      act(() => { frame?.(0); });                         // the loop paints the snap-back's first frame
+      const box = screen.getByTestId("pull-box");
+      const tx = parseFloat(box.style.transform.match(/translate\(([-0-9.]+)px/)![1]);
+      const centreX = tx + parseFloat(box.style.width) / 2;
+      // A relationship, not a magic number: at the instant it is abandoned the box must still be
+      // BEHIND the cursor. The 0.95 leaves the easing curve free to be tuned.
+      expect(centreX).toBeLessThan(pointerX * 0.95);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a pull abandoned then immediately restarted is not killed by the old snap-back timer", () => {
+    // Race: beginSnapBack schedules endPull after SNAP_MS. Grab another chip inside that window and
+    // the stale timer would clear the NEW pull mid-gesture. startPull must cancel it.
+    vi.useFakeTimers();
+    try {
+      render(<RackBuilder {...baseProps()} />);
+      const chip = screen.getByTestId("palette-type-SW");
+      // pull #1, then abandon it away from the rack -> snap-back timer is now pending
+      fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      act(() => { fireEvent.pointerUp(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      // pull #2 starts INSIDE the snap window
+      fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      act(() => { vi.advanceTimersByTime(SNAP_MS * 2); }); // the OLD timer would fire in here
+      // pull #2 must still be alive and droppable
+      fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+      expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an abandoned solid pull starts its snap-back at full size, not the live pointer distance", () => {
+    // Pins beginSnapBack's capture order: p.phase must be read BEFORE it's overwritten to
+    // "snapback", so a solid pull reads snapT=1 regardless of where the pointer ended up. Drives
+    // the real gesture (unlike palettePull.test.ts, which hand-builds a PullState with snapT
+    // already set and never runs beginSnapBack at all) so reordering those two lines is caught.
+    render(<RackBuilder {...baseProps()} />);
+    const chip = screen.getByTestId("palette-type-SW");
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
+    const solidWidth = screen.getByTestId("pull-box").style.width;
+    expect(parseFloat(solidWidth)).toBeGreaterThan(0);
+
+    // Pull back near the chip — the solid latch is one-way, phase must stay "solid".
+    act(() => { fireEvent.pointerMove(window, { clientX: 5, clientY: 0 }); });
+
+    // Abandon off the rack strips entirely, so the window's pointerup listener runs beginSnapBack.
+    act(() => { fireEvent.pointerUp(window, { clientX: 5, clientY: 0 }); });
+
+    const box = screen.getByTestId("pull-box");
+    expect(parseFloat(box.style.width)).toBeGreaterThan(parseFloat(solidWidth) * 0.8);
   });
 });
