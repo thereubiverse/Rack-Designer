@@ -5,8 +5,8 @@
 // above the palette and canvas.
 //
 // ONE element does the whole gesture. You pick up the chip; it wears the selection blue from the
-// moment you touch it and keeps a little soft-body lean as you fling it around; and as it reaches
-// the rack it springs open into the rack device, already selected — same blue border, blue ears.
+// moment you touch it and its outline flexes a little with how you move it; and as it reaches the
+// rack it springs open into the rack device, already selected — same blue border, blue ears.
 // Because it is one element that only changes size, radius and what is inside it, there is no
 // hand-off, no swap, and nothing to keep in sync.
 //
@@ -22,7 +22,7 @@ import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { pullGeometry, stepJiggle, jiggleTarget, VEL_DECAY, type PullState } from "./palettePull";
+import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
@@ -46,13 +46,13 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
       const dt = (now - last) / 1000;
       last = now;
       if (!p) return;
-      // Step the soft body once per frame. This lives here, not in RackBuilder, for the same reason
-      // the patch cable's rope does: the spring must keep ringing after the cursor STOPS, and
+      // Step the outline's spring once per frame. This lives here, not in RackBuilder, for the same
+      // reason the patch cable's rope does: the spring must keep ringing after the cursor STOPS, and
       // pointermove stops firing the moment it does — only frames keep coming.
-      // The tracked velocity decays continuously, so holding still relaxes the lean away.
+      // The tracked velocity decays continuously, so holding still relaxes the flex away.
       const decay = Math.pow(VEL_DECAY, Math.min(dt, 1 / 30));
       p.vx *= decay; p.vy *= decay;
-      p.jiggle = stepJiggle(p.jiggle, jiggleTarget(Math.hypot(p.vx, p.vy)), Math.atan2(p.vy, p.vx), dt);
+      p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
       paint(pullGeometry(p, scaleOf(), now), { box: boxRef.current, label: labelRef.current, face: faceRef.current });
     };
     raf = requestAnimationFrame(frame);
@@ -94,17 +94,18 @@ const clamp01 = (n: number) => (n > 1 ? 1 : n > 0 ? n : 0);
 const faceOpacity = (g: Geo) => clamp01(g.openness);
 const labelOpacity = (g: Geo) => 1 - clamp01(g.openness);
 
-/** translate to the cursor, lean into the direction of travel, then squash-and-stretch about that
- *  axis. The trailing -50% centres the box on the cursor AFTER the rotate/scale, so both happen
- *  about its middle rather than its top-left corner. */
+/** translate to the cursor, then flex on the X/Y axes. NO rotation: the chip stays upright and reads
+ *  as itself — rotating it into its direction of travel sent it spinning as you dragged.
+ *  The trailing -50% centres the box on the cursor AFTER the scale, so the flex happens about its
+ *  middle rather than its top-left corner. */
 function boxStyle(g: Geo) {
   return {
     width: `${g.size.w}px`,
     height: `${g.size.h}px`,
     borderRadius: `${g.radius}px`,
     opacity: String(g.opacity),
-    transform: `translate(${g.at.x}px, ${g.at.y}px) rotate(${(g.jiggle.angle * 180) / Math.PI}deg)`
-      + ` scale(${g.jiggle.along}, ${g.jiggle.across}) translate(-50%, -50%)`,
+    transform: `translate(${g.at.x}px, ${g.at.y}px) scale(${g.flex.sx}, ${g.flex.sy})`
+      + ` translate(-50%, -50%)`,
     transformOrigin: "0 0",
   };
 }

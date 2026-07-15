@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  SNAP_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, JIGGLE_MAX, JIGGLE_SPEED_FULL,
-  restingJiggle, jiggleTarget, stepJiggle, jiggleScale, latchGrow, pullGeometry, nearRack,
+  SNAP_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
+  restingFlex, flexTarget, stepFlex, flexScale, latchGrow, pullGeometry, nearRack,
   type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
@@ -44,7 +44,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, jiggle: restingJiggle(),
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };
 
   it("what you carry IS the chip: its own size, its own radius, under the cursor", () => {
@@ -100,62 +100,75 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
 
 
 
-describe("the jiggle — a soft square that reacts to how fast you fling it", () => {
-  it("stretches more the faster the cursor moves, and clamps", () => {
-    expect(jiggleTarget(0)).toBe(0);
-    expect(jiggleTarget(JIGGLE_SPEED_FULL / 2)).toBeCloseTo(JIGGLE_MAX / 2, 5);
-    expect(jiggleTarget(JIGGLE_SPEED_FULL)).toBe(JIGGLE_MAX);
-    expect(jiggleTarget(JIGGLE_SPEED_FULL * 10)).toBe(JIGGLE_MAX); // a fling can't tear it to a needle
-    expect(jiggleTarget(-JIGGLE_SPEED_FULL)).toBe(JIGGLE_MAX);     // direction-agnostic: it's a speed
+describe("the flex — an upright chip whose outline gives with movement and speed", () => {
+  it("moving SIDEWAYS makes it wide and short", () => {
+    const t = flexTarget(FLEX_SPEED_FULL, 0);
+    expect(t).toBe(FLEX_MAX);
+    const { sx, sy } = flexScale(t);
+    expect(sx).toBeGreaterThan(1);
+    expect(sy).toBeLessThan(1);
   });
 
-  it("squash-and-stretch preserves volume — what it gains along it loses across", () => {
-    for (const st of [0, 0.1, JIGGLE_MAX, 1]) {
-      const { along, across } = jiggleScale(st);
-      expect(along * across).toBeCloseTo(1, 10);
+  it("moving UP or DOWN makes it narrow and tall — the mirror image", () => {
+    const t = flexTarget(0, FLEX_SPEED_FULL);
+    expect(t).toBe(-FLEX_MAX);
+    const { sx, sy } = flexScale(t);
+    expect(sx).toBeLessThan(1);
+    expect(sy).toBeGreaterThan(1);
+  });
+
+  it("is direction-agnostic: left flexes like right, up like down", () => {
+    expect(flexTarget(-FLEX_SPEED_FULL, 0)).toBe(flexTarget(FLEX_SPEED_FULL, 0));
+    expect(flexTarget(0, -FLEX_SPEED_FULL)).toBe(flexTarget(0, FLEX_SPEED_FULL));
+  });
+
+  it("a perfect diagonal cancels — the honest answer when the shape cannot rotate", () => {
+    expect(flexTarget(900, 900)).toBe(0);
+  });
+
+  it("flexes more the faster it moves, and clamps", () => {
+    expect(flexTarget(0, 0)).toBe(0);
+    expect(flexTarget(FLEX_SPEED_FULL / 2, 0)).toBeCloseTo(FLEX_MAX / 2, 5);
+    expect(flexTarget(FLEX_SPEED_FULL * 10, 0)).toBe(FLEX_MAX);  // a fling can't tear it to a ribbon
+  });
+
+  it("the flex is gentle — this is a device chip, not slime", () => {
+    // It was 0.45 when the carried thing was a blob. A chip that gelatinous reads as broken.
+    expect(FLEX_MAX).toBeLessThan(0.25);
+  });
+
+  it("is volume-preserving, so it never appears to grow as it flexes", () => {
+    for (const st of [-FLEX_MAX, -0.05, 0, 0.05, FLEX_MAX]) {
+      const { sx, sy } = flexScale(st);
+      expect(sx * sy).toBeCloseTo(1, 10);
     }
-    expect(jiggleScale(0)).toEqual({ along: 1, across: 1 });      // rest = an undeformed square
-    expect(jiggleScale(0.4).along).toBeGreaterThan(1);
-    expect(jiggleScale(0.4).across).toBeLessThan(1);
+    expect(flexScale(0)).toEqual({ sx: 1, sy: 1 });   // at rest it is exactly the chip
   });
 
-  it("OVERSHOOTS the target — that ring IS the jiggle, and a lerp could never do it", () => {
-    // The point of using a spring. Drive it at a fixed target and it must sail PAST it, not ease in.
-    let j = restingJiggle();
+  it("never inverts, however hard the spring overshoots", () => {
+    expect(flexScale(-5).sx).toBeGreaterThan(0);
+    expect(flexScale(-5).sy).toBeGreaterThan(0);
+  });
+
+  it("OVERSHOOTS the target — that ring IS the flex, and a lerp could never do it", () => {
+    let f = restingFlex();
     let peak = 0;
-    for (let i = 0; i < 200; i++) {
-      j = stepJiggle(j, JIGGLE_MAX, 0, 1 / 60);
-      peak = Math.max(peak, j.stretch);
-    }
-    expect(peak).toBeGreaterThan(JIGGLE_MAX);
+    for (let i = 0; i < 200; i++) { f = stepFlex(f, FLEX_MAX, 1 / 60); peak = Math.max(peak, f.stretch); }
+    expect(peak).toBeGreaterThan(FLEX_MAX);
   });
 
-  it("rings back down and settles once the cursor stops", () => {
-    let j = restingJiggle();
-    for (let i = 0; i < 60; i++) j = stepJiggle(j, JIGGLE_MAX, 0, 1 / 60);  // fling
-    for (let i = 0; i < 400; i++) j = stepJiggle(j, 0, 0, 1 / 60);          // let go
-    expect(Math.abs(j.stretch)).toBeLessThan(0.005);
-    expect(Math.abs(j.v)).toBeLessThan(0.05);
-  });
-
-  it("holds its angle when the cursor stops, so a settling square doesn't spin", () => {
-    // atan2(0,0) is 0, so a decaying velocity would otherwise snap the axis back to horizontal
-    // mid-wobble and the square would visibly rotate as it settled.
-    let j = stepJiggle(restingJiggle(), JIGGLE_MAX, 1.2, 1 / 60);
-    expect(j.angle).toBeCloseTo(1.2, 5);
-    j = stepJiggle(j, 0, 0, 1 / 60);   // stopped: target 0, angle argument meaningless
-    expect(j.angle).toBeCloseTo(1.2, 5);
+  it("rings back to the chip's true shape once the cursor stops", () => {
+    let f = restingFlex();
+    for (let i = 0; i < 60; i++) f = stepFlex(f, FLEX_MAX, 1 / 60);   // fling
+    for (let i = 0; i < 400; i++) f = stepFlex(f, 0, 1 / 60);         // let go
+    expect(Math.abs(f.stretch)).toBeLessThan(0.005);
+    expect(Math.abs(f.v)).toBeLessThan(0.05);
   });
 
   it("survives a stalled tab: a huge dt is clamped rather than exploding the spring", () => {
-    const j = stepJiggle(restingJiggle(), JIGGLE_MAX, 0, 30); // 30 SECONDS between frames
-    expect(Number.isFinite(j.stretch)).toBe(true);
-    expect(Math.abs(j.stretch)).toBeLessThan(1);
-    expect(jiggleScale(j.stretch).along).toBeGreaterThan(0);   // never inverts the square
-  });
-
-  it("the lean is gentle — this is a chip being carried, not slime", () => {
-    // It was 0.45 when the carried thing was a blob. A device chip that gelatinous reads as broken.
-    expect(JIGGLE_MAX).toBeLessThan(0.25);
+    const f = stepFlex(restingFlex(), FLEX_MAX, 30);   // 30 SECONDS between frames
+    expect(Number.isFinite(f.stretch)).toBe(true);
+    expect(Math.abs(f.stretch)).toBeLessThan(1);
+    expect(flexScale(f.stretch).sx).toBeGreaterThan(0);
   });
 });
