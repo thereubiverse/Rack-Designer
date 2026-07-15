@@ -16,7 +16,11 @@ export const RACK_INTERIOR_W = RAIL_WIDTH_IN * PX_PER_IN; // 912 — device moun
 const MOUNT_HW = RACK_INTERIOR_W / 2;                     // 456 — half mount (ref 270)
 const hx = (r: number) => (r / 270) * MOUNT_HW;           // reference x (from centre) → our px
 const Ky = RU_PX / 50;                                    // reference RU 50 → our RU_PX (vertical scale)
-const LINE_W = hx(1);                                     // ref stroke-width 1, scaled (~1.69)
+/** Rack line weight: the reference's stroke-width 1 scaled to our mount (~1.69), +1 for a heavier
+ *  cabinet. Every line the rack draws takes this — cabinet outline, ruler, ticks, RU separators —
+ *  so the art stays one uniform weight. PAD_Y derives from it, so the viewBox padding that keeps
+ *  the outermost lines from being clipped tracks any change here. */
+const LINE_W = hx(1) + 1;                                 // ~2.69
 
 // Palette (ref classes): foreground/80 outline, light-gray ears, white holes/interior, blue ⊕.
 const RK_LINE = "#3f3f46";  // frame outline, ruler, ventilation slats
