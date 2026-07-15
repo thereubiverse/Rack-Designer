@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullT, pullAt } from "./palettePull";
+import { SNAP_MS, pullT, pullAt, pullGeometry, nearRack } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -86,13 +86,14 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     const p = pullRef.current;
     if (!p || p.phase === "snapback") return;
     // Both read the LIVE phase, so both must run BEFORE it flips to "snapback".
-    // snapT: pull progress at the moment of abandon — the snap-back shrinks from the box's actual
-    // size, not from full RU size.
-    p.snapT = pullT(p);
+    // snapSize: how big the box actually IS — a blob mid-pull, or a full device if it had already
+    // reached the rack. The snap-back shrinks from there rather than from an assumed size.
     // snapFrom: where the box actually IS, which is not the pointer — mid-pull the box lags behind,
     // travelling from the chip toward the cursor. Capturing the pointer here would teleport the box
     // to the cursor before it started shrinking.
-    p.snapFrom = pullAt(p);
+    const g = pullGeometry(p, canvasRef.current?.getScale() ?? 1, performance.now());
+    p.snapSize = g.size;
+    p.snapFrom = g.at;
     p.snapStart = performance.now();
     p.phase = "snapback";
     setDropArmed(false);                  // a retreating box must not be droppable
@@ -109,7 +110,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
-      phase: "pulling", snapFrom: null, snapStart: 0, snapT: 0,
+      phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
     };
     setPullMounted(true);
     setDropArmed(false);
@@ -123,7 +124,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
       // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
       // fired, and the phase machine belongs with the state's owner. This setState runs once.
-      if (p.phase === "pulling" && pullT(p) >= 1) {
+      // Two conditions, in order: the neck must have snapped (pullT >= 1 — you can't solidify
+      // something still attached to the palette), and the BLOB — not the cursor; mid-pull they are
+      // different — must have reached the rack's centre line. The rack is what turns slime into a
+      // device, so it forms where it is about to live rather than over the palette.
+      if (p.phase === "pulling" && pullT(p) >= 1 && nearRack(pullAt(p).x, canvasRef.current?.getRackCentreX() ?? null)) {
         p.phase = "solid";
         p.snapStart = performance.now();  // the latch spring's clock
         // flushSync, not a plain setState: pointermove is continuous priority, so React would

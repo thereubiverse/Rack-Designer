@@ -9,6 +9,7 @@ import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
 import { SNAP_MS, PULL_DIST } from "./palettePull";
+import { RACK_GUTTER_L, RACK_INTERIOR_W } from "./RackFrame";
 
 // Pure UI-wiring tests: the rack builder must never touch the network/DB. Saves are debounced
 // 600ms and mocked out here so a stray timer firing mid-test can't hit a real server action.
@@ -86,6 +87,16 @@ function clickCable(container: HTMLElement, id: string) {
   // isn't auto-wrapped in act() by RTL, so wrap it explicitly to force the resulting state
   // update to flush before the next assertion.
   act(() => { cable.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+}
+
+// The blob only solidifies near the RACK's centre line, and jsdom has no layout — so derive the same
+// x the component will, from the live transform, rather than fabricating a coordinate and hoping it
+// lands inside the current RACK_LATCH_X. Hardcoding one made these tests break the first time that
+// constant was tuned, which is the tunable-in-an-assertion trap wearing a different hat.
+function rackCentreX(): number {
+  const el = screen.getByTestId("rack-canvas-scale");
+  const s = parseFloat(el.style.transform.match(/scale\(([-0-9.]+)\)/)?.[1] ?? "1");
+  return el.getBoundingClientRect().left + (RACK_GUTTER_L + RACK_INTERIOR_W / 2) * s;
 }
 
 describe("RackBuilder sidebar selection", () => {
@@ -169,11 +180,12 @@ describe("RackBuilder sidebar selection", () => {
   it("pressing a palette chip and dropping on a free RU opens the picker at that RU", () => {
     // The whole gesture: press the chip, pull past PULL_DIST so it latches solid, release on a strip.
     // jsdom reports a zero-size rect for the chip, so its centre is (0,0) and the pointer's distance
-    // is simply clientX — PULL_DIST * 4 is comfortably past PULL_DIST regardless of its tuned value.
+    // is simply clientX. Aim at the rack: past PULL_DIST (so the neck snaps) AND near the rack centre
+    // (so it solidifies) — both are now required.
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); }); // -> latches solid
     fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
   });
@@ -198,6 +210,17 @@ describe("RackBuilder sidebar selection", () => {
     render(<RackBuilder {...baseProps()} />);
     fireEvent.click(screen.getByTestId("palette-type-SW"));
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  });
+
+  it("a blob carried far from the rack never solidifies, so it cannot be dropped", () => {
+    // The RACK is what turns slime into a device. Pull the neck clean off (far past PULL_DIST) but
+    // stay away from the rack's centre line: it must stay a blob, the drop must not arm, and
+    // releasing on a strip must do nothing. Distance from the chip alone is no longer enough.
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: 10000, clientY: 0 }); }); // free, but nowhere near
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
   });
 
   it("an abandoned MID-pull snaps back from where the box IS, not from the cursor", () => {
@@ -245,11 +268,11 @@ describe("RackBuilder sidebar selection", () => {
       const chip = screen.getByTestId("palette-type-SW");
       // pull #1, then abandon it away from the rack -> snap-back timer is now pending
       fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
-      act(() => { fireEvent.pointerUp(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); });
+      act(() => { fireEvent.pointerUp(window, { clientX: rackCentreX(), clientY: 0 }); });
       // pull #2 starts INSIDE the snap window
       fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); });
       act(() => { vi.advanceTimersByTime(SNAP_MS * 2); }); // the OLD timer would fire in here
       // pull #2 must still be alive and droppable
       fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
@@ -267,7 +290,7 @@ describe("RackBuilder sidebar selection", () => {
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); }); // -> latches solid
     const solidWidth = screen.getByTestId("pull-box").style.width;
     expect(parseFloat(solidWidth)).toBeGreaterThan(0);
 
