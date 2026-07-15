@@ -15,6 +15,22 @@ export const SNAP_MS = 260;
 export interface Vec { x: number; y: number }
 export interface Size { w: number; h: number }
 
+export type PullPhase = "pulling" | "solid" | "snapback";
+
+export interface PullState {
+  typeId: string;
+  chip: Vec;          // chip centre, viewport coords
+  chipSize: Size;     // the chip's own box — where the blob starts
+  x: number;          // live pointer, viewport coords
+  y: number;
+  phase: PullPhase;
+  snapFrom: Vec | null; // where the box was when the pull was abandoned
+  snapStart: number;    // performance.now() at the start of the snap-back
+}
+
+/** Carried box opacity — translucent so the rack and its rails read through it. */
+export const BOX_OPACITY = 0.75;
+
 const clamp01 = (t: number) => (t > 1 ? 1 : t > 0 ? t : 0);
 
 /** Raw pull progress 0..1 from the pointer's distance to the chip. */
@@ -28,12 +44,15 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - c, 3);
 }
 
-/** Spring for the latch — overshoots 1 and rings down. Pinned to 0 and 1 at the ends. */
-export function easeOutElastic(t: number): number {
-  const c = clamp01(t);
-  if (c === 0 || c === 1) return c;
-  const p = 0.3;
-  return Math.pow(2, -10 * c) * Math.sin(((c - p / 4) * (2 * Math.PI)) / p) + 1;
+/** Latch spring: 1 at k=0 — the box is ALREADY full size when it goes solid — then overshoots and
+ *  rings down to 1. NOT easeOutElastic, which starts at 0 and would collapse the box to nothing at
+ *  the exact moment it solidifies and pop it back. Amplitude/period are STARTING GUESSES to tune. */
+export function latchScale(k: number): number {
+  const c = clamp01(k);
+  if (c >= 1) return 1;
+  const A = 0.12;   // overshoot amplitude — STARTING GUESS, tuned in the browser later
+  const period = 0.35; // ring period — STARTING GUESS
+  return 1 + A * Math.pow(2, -9 * c) * Math.sin((2 * Math.PI * c) / period);
 }
 
 /** The carried box's size at progress `t`, in CSS px, for a rack canvas at `scale`.
@@ -66,4 +85,30 @@ export function neckPath(chip: Vec, box: Vec, t: number, chipH: number): string 
     `Q ${mx - nx * waist} ${my - ny * waist} ${chip.x - nx * w} ${chip.y - ny * w}`,
     "Z",
   ].join(" ");
+}
+
+/** Everything needed to paint one frame of a pull. PURE: same state + same clock => same pixels.
+ *  Both the first paint and the rAF loop call THIS — computing the geometry twice, in two places,
+ *  is how they drifted apart (the box collapsed to nothing the frame after it latched solid). */
+export function pullGeometry(p: PullState, scale: number, now: number): {
+  at: Vec; size: Size; neck: string; opacity: number;
+} {
+  if (p.phase === "snapback") {
+    const k = clamp01((now - p.snapStart) / SNAP_MS);
+    const from = p.snapFrom ?? p.chip;
+    const at = { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k };
+    return { at, size: boxSize(1 - k, scale, p.chipSize), neck: "", opacity: (1 - k) * BOX_OPACITY };
+  }
+
+  const t = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
+  const at = { x: p.x, y: p.y };
+  let size = boxSize(t, scale, p.chipSize);
+  if (p.phase === "solid") {
+    // Spring on the moment it went solid: the box is ALREADY full size, so it overshoots and rings
+    // down to exactly one RU — never collapses.
+    const k = (now - p.snapStart) / SNAP_MS;
+    const latch = latchScale(k);
+    size = { w: RACK_INTERIOR_W * scale * latch, h: RU_PX * scale * latch };
+  }
+  return { at, size, neck: neckPath(p.chip, at, t, p.chipSize.h), opacity: BOX_OPACITY };
 }

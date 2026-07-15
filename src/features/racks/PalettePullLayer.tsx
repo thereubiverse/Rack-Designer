@@ -16,23 +16,9 @@ import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { SNAP_MS, boxSize, easeOutElastic, neckPath, pullProgress, type Size, type Vec } from "./palettePull";
+import { pullGeometry, type PullState, type Size, type Vec } from "./palettePull";
 
-export type PullPhase = "pulling" | "solid" | "snapback";
-
-export interface PullState {
-  typeId: string;
-  chip: Vec;          // chip centre, viewport coords
-  chipSize: Size;     // the chip's own box — where the blob starts
-  x: number;          // live pointer, viewport coords
-  y: number;
-  phase: PullPhase;
-  snapFrom: Vec | null; // where the box was when the pull was abandoned
-  snapStart: number;    // performance.now() at the start of the snap-back
-}
-
-/** Carried box opacity — translucent so the rack and its rails read through it. */
-const BOX_OPACITY = 0.75;
+export type { PullPhase, PullState } from "./palettePull";
 
 export function PalettePullLayer({ pullRef, scaleOf }: {
   pullRef: MutableRefObject<PullState | null>;
@@ -49,28 +35,8 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
       const box = boxRef.current, neck = neckRef.current;
       if (!p || !box) return;
       const scale = scaleOf();
-
-      if (p.phase === "snapback") {
-        // Shrink back into the chip. RackBuilder unmounts us on its own SNAP_MS timer.
-        const k = Math.min(1, (performance.now() - p.snapStart) / SNAP_MS);
-        const from = p.snapFrom ?? p.chip;
-        const cx = from.x + (p.chip.x - from.x) * k;
-        const cy = from.y + (p.chip.y - from.y) * k;
-        paint(box, neck, { x: cx, y: cy }, boxSize(1 - k, scale, p.chipSize), "", (1 - k) * BOX_OPACITY);
-        return;
-      }
-
-      // `solid` is latched by RackBuilder, so t is 1 forever after — dragging back toward the chip
-      // never re-attaches it.
-      const t = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
-      let s = boxSize(t, scale, p.chipSize);
-      if (p.phase === "solid") {
-        // Spring on the moment it went solid: overshoot, then ring down to exactly one RU.
-        const k = Math.min(1, (performance.now() - p.snapStart) / SNAP_MS);
-        const e = k >= 1 ? 1 : easeOutElastic(k);
-        s = { w: RACK_INTERIOR_W * scale * e, h: RU_PX * scale * e };
-      }
-      paint(box, neck, { x: p.x, y: p.y }, s, neckPath(p.chip, { x: p.x, y: p.y }, t, p.chipSize.h), BOX_OPACITY);
+      const g = pullGeometry(p, scale, performance.now());
+      paint(box, neck, g.at, g.size, g.neck, g.opacity);
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -78,21 +44,20 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
 
   if (!pullRef.current) return <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]" />;
 
-  // First paint comes from the ref directly, so the very first frame is already correct.
+  // First paint comes from the ref directly, via the SAME pullGeometry the rAF loop calls below —
+  // so the two paths cannot disagree.
   const p = pullRef.current;
   const scale = scaleOf();
-  const t = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
-  const s = boxSize(t, scale, p.chipSize);
-  const d = neckPath(p.chip, { x: p.x, y: p.y }, t, p.chipSize.h);
+  const g = pullGeometry(p, scale, performance.now());
 
   return (
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">
       <svg className="absolute inset-0 h-full w-full" aria-hidden>
-        <path ref={neckRef} data-testid="pull-neck" d={d} fill="#ffffff" fillOpacity={0.9} stroke="#d4d4d4" />
+        <path ref={neckRef} data-testid="pull-neck" d={g.neck} fill="#ffffff" fillOpacity={0.9} stroke="#d4d4d4" />
       </svg>
       <div ref={boxRef} data-testid="pull-box" className="absolute"
-        style={{ left: 0, top: 0, width: s.w, height: s.h, opacity: BOX_OPACITY,
-          transform: `translate(${p.x - s.w / 2}px, ${p.y - s.h / 2}px)` }}>
+        style={{ left: 0, top: 0, width: g.size.w, height: g.size.h, opacity: g.opacity,
+          transform: `translate(${g.at.x - g.size.w / 2}px, ${g.at.y - g.size.h / 2}px)` }}>
         <svg width="100%" height="100%" viewBox={`0 0 ${RACK_INTERIOR_W} ${RU_PX}`} preserveAspectRatio="none">
           {/* The SAME renderer the rack uses, with an empty face: frame + ears, no ports.
               17.5 (never 19) — a rack-mounted frame is RACK_INTERIOR_W wide regardless, and 19 is an

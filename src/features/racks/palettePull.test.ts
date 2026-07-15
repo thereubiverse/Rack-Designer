@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PULL_DIST, pullProgress, easeOutCubic, easeOutElastic, boxSize, neckHalfWidth, neckPath,
+  PULL_DIST, SNAP_MS, BOX_OPACITY, pullProgress, easeOutCubic, latchScale, boxSize, neckHalfWidth,
+  neckPath, pullGeometry, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -28,10 +29,11 @@ describe("easings", () => {
       prev = v;
     }
   });
-  it("easeOutElastic is pinned at both ends and overshoots 1 in between (that IS the spring)", () => {
-    expect(easeOutElastic(0)).toBe(0);
-    expect(easeOutElastic(1)).toBe(1);
-    const samples = Array.from({ length: 50 }, (_, i) => easeOutElastic(i / 49));
+  it("latchScale starts at 1 (the box is already full size when it latches) and overshoots in between", () => {
+    // NOT easeOutElastic, which starts at 0 — that is exactly the collapse bug this replaces.
+    expect(latchScale(0)).toBe(1);
+    expect(latchScale(1)).toBe(1);
+    const samples = Array.from({ length: 50 }, (_, i) => latchScale(i / 49));
     expect(Math.max(...samples)).toBeGreaterThan(1);
   });
 });
@@ -79,5 +81,61 @@ describe("the neck", () => {
   it("survives a zero-length pull without NaN (pointer still on the chip)", () => {
     const d = neckPath({ x: 10, y: 10 }, { x: 10, y: 10 }, 0, CHIP.h);
     expect(d).not.toContain("NaN");
+  });
+});
+
+describe("pullGeometry — the single source of truth both paint paths call", () => {
+  const chip = { x: 100, y: 100 };
+  const chipSize = CHIP;
+  const base: PullState = {
+    typeId: "t1", chip, chipSize, x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0,
+  };
+
+  it("REGRESSION: phase solid at the instant it latches (now === snapStart) is full RU size, not 0x0", () => {
+    // This is the collapse bug: easeOutElastic(0) === 0 would zero the box out on the very first
+    // frame after latching, then pop it back to full size. latchScale must start at 1.
+    const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
+    const g = pullGeometry(p, 1, 1000);
+    expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
+  });
+
+  it("phase solid long after snapStart settles to exactly full size", () => {
+    const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
+    const g = pullGeometry(p, 1, 1000 + SNAP_MS * 20);
+    expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
+  });
+
+  it("phase solid mid-spring overshoots full size (that IS the spring)", () => {
+    const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
+    let overshot = false;
+    for (let dt = 0; dt <= SNAP_MS; dt += SNAP_MS / 40) {
+      const g = pullGeometry(p, 1, 1000 + dt);
+      if (g.size.w > RACK_INTERIOR_W) overshot = true;
+    }
+    expect(overshot).toBe(true);
+  });
+
+  it("phase snapback at k=0: at equals snapFrom, neck is empty, opacity is BOX_OPACITY", () => {
+    const snapFrom = { x: 400, y: 100 };
+    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000 };
+    const g = pullGeometry(p, 1, 2000);
+    expect(g.at).toEqual(snapFrom);
+    expect(g.neck).toBe("");
+    expect(g.opacity).toBeCloseTo(BOX_OPACITY, 5);
+  });
+
+  it("phase snapback at k>=1: at equals chip, size equals the chip's size, opacity is 0", () => {
+    const snapFrom = { x: 400, y: 100 };
+    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000 };
+    const g = pullGeometry(p, 1, 2000 + SNAP_MS * 5);
+    expect(g.at).toEqual(chip);
+    expect(g.size).toEqual(chipSize);
+    expect(g.opacity).toBe(0);
+  });
+
+  it("phase pulling mid-pull: neck is non-empty", () => {
+    const p: PullState = { ...base, phase: "pulling", x: 100 + PULL_DIST / 2, y: 100 };
+    const g = pullGeometry(p, 1, 0);
+    expect(g.neck).not.toBe("");
   });
 });
