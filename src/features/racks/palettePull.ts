@@ -98,13 +98,22 @@ export function pullT(p: PullState): number {
   return p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
 }
 
+/** The blob's travel curve, chip -> cursor. Ease-IN on purpose, and NOT the ease-OUT the size uses:
+ *  the lump resists near the chip and only whips to the cursor as it breaks free, which is what
+ *  makes the pull read as sticky. With easeOutCubic here the box was 99% caught up at 77% of the
+ *  pull — a ~1px lag, i.e. no visible lag at all. The exponent is a tuning knob: higher = gooier. */
+export function easeInLag(t: number): number {
+  const c = clamp01(t);
+  return c * c;
+}
+
 /** Where the box's centre sits. At t=0 it is ON the chip — the blob is still part of the slime, not
- *  under your finger — and it travels to the pointer as you pull, arriving as it latches. So the box
- *  LAGS the cursor mid-pull, which is what makes it read as being dragged out of something sticky
- *  rather than teleporting to the cursor on press.
+ *  under your finger — and it travels to the pointer as you pull, arriving exactly as it latches. So
+ *  the box LAGS the cursor mid-pull, which is what makes it read as being dragged out of something
+ *  sticky rather than teleporting to the cursor on press.
  *  Not valid for `snapback` (that lerps snapFrom -> chip instead); callers must not use it there. */
 export function pullAt(p: PullState): Vec {
-  const e = easeOutCubic(pullT(p));
+  const e = easeInLag(pullT(p));
   return { x: p.chip.x + (p.x - p.chip.x) * e, y: p.chip.y + (p.y - p.chip.y) * e };
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PULL_DIST, SNAP_MS, BOX_OPACITY, pullProgress, easeOutCubic, latchScale, boxSize, neckHalfWidth,
-  neckPath, pullGeometry, pullAt, type PullState,
+  neckPath, pullGeometry, pullAt, easeInLag, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -174,5 +174,20 @@ describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to
   it("pullGeometry paints the box at that lagged position, not at the pointer", () => {
     const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
     expect(pullGeometry(p, 1, 0).at).toEqual(pullAt(p));
+  });
+});
+
+describe("easeInLag — the position curve that makes the pull feel sticky", () => {
+  it("is pinned at both ends, so the blob starts on the chip and arrives exactly at the cursor", () => {
+    expect(easeInLag(0)).toBe(0);
+    expect(easeInLag(1)).toBe(1);
+  });
+  it("lags BEHIND a linear travel for the whole pull — that lag IS the gooeyness", () => {
+    for (let t = 0.1; t < 1; t += 0.1) expect(easeInLag(t)).toBeLessThan(t);
+  });
+  it("lags far harder than the ease-OUT the size uses (which gave ~no visible lag)", () => {
+    // Regression guard on the tuning decision: if someone swaps this back to an ease-out curve the
+    // blob catches the cursor almost immediately and the whole gesture stops reading as sticky.
+    expect(easeInLag(0.5)).toBeLessThan(easeOutCubic(0.5) / 2);
   });
 });
