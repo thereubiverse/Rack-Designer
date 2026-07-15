@@ -88,7 +88,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const chip = { x: 100, y: 100 };
   const chipSize = CHIP;
   const base: PullState = {
-    typeId: "t1", chip, chipSize, x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0,
+    typeId: "t1", chip, chipSize, x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapT: 0,
   };
 
   it("REGRESSION: phase solid at the instant it latches (now === snapStart) is full RU size, not 0x0", () => {
@@ -122,6 +122,17 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     expect(g.at).toEqual(snapFrom);
     expect(g.neck).toBe("");
     expect(g.opacity).toBeCloseTo(BOX_OPACITY, 5);
+  });
+
+  it("REGRESSION: snapback sizes from the box's actual size at abandon, not full RU size", () => {
+    // A pull abandoned early (small box, still stretching) must shrink from THAT size, not jump to
+    // full RU size and then shrink. snapT pins the progress at the moment of abandon; k=0 (the
+    // start of the snap-back) must reproduce boxSize(snapT, ...) exactly, never boxSize(1, ...).
+    const snapFrom = { x: 130, y: 100 };
+    const p: PullState = { ...base, phase: "snapback", snapFrom, snapStart: 2000, snapT: 0.5 };
+    const g = pullGeometry(p, 1, 2000); // k=0
+    expect(g.size).toEqual(boxSize(0.5, 1, chipSize));
+    expect(g.size).not.toEqual({ w: RACK_INTERIOR_W, h: RU_PX }); // not full RU size
   });
 
   it("phase snapback at k>=1: at equals chip, size equals the chip's size, opacity is 0", () => {

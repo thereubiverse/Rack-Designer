@@ -26,6 +26,8 @@ export interface PullState {
   phase: PullPhase;
   snapFrom: Vec | null; // where the box was when the pull was abandoned
   snapStart: number;    // performance.now() at the start of the snap-back
+  snapT: number;        // pull progress at the moment the pull was abandoned; snap-back shrinks
+                         // from there, not from full size
 }
 
 /** Carried box opacity — translucent so the rack and its rails read through it. */
@@ -97,7 +99,7 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     const k = clamp01((now - p.snapStart) / SNAP_MS);
     const from = p.snapFrom ?? p.chip;
     const at = { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k };
-    return { at, size: boxSize(1 - k, scale, p.chipSize), neck: "", opacity: (1 - k) * BOX_OPACITY };
+    return { at, size: boxSize(p.snapT * (1 - k), scale, p.chipSize), neck: "", opacity: (1 - k) * BOX_OPACITY };
   }
 
   const t = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));

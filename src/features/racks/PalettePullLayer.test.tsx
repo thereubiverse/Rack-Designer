@@ -9,7 +9,7 @@ import { PULL_DIST } from "./palettePull";
 function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", chip: { x: 100, y: 100 }, chipSize: { w: 132, h: 34 },
-    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, ...over,
+    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapT: 0, ...over,
   };
 }
 const mount = (state: PullState | null) => {
