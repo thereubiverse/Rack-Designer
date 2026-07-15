@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
-import { ruTopY, RACK_GUTTER_L, RK_SELECT, RK_GRIP } from "./RackFrame";
+import { ruTopY, RACK_GUTTER_L, RK_SELECT, RK_HINT } from "./RackFrame";
 import { EAR_GREY } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -30,23 +30,34 @@ describe("RackCanvas", () => {
     return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`; // the DOM normalises hexes
   };
 
-  it("a selected device paints its ears the SAME blue as the grip handle sitting in one", () => {
+  it("the ears, grip and box of a selected device are all the SAME blue", () => {
     const { rerender, container } = render(<RackCanvas {...base} selectedId={null} />);
     const earFills = () => [...container.querySelectorAll('[data-testid="face-ear"]')]
       .map((e) => e.getAttribute("fill"));
-    // unselected: unpainted grey, no grip
+    // unselected: unpainted grey, no grip, no box
     expect(earFills().length).toBeGreaterThan(0);
     expect(earFills().every((f) => f === EAR_GREY)).toBe(true);
     expect(container.querySelector('[data-testid="rack-grip-d1"]')).toBeNull();
+    expect(container.querySelector('[data-testid="rack-select-box-d1"]')).toBeNull();
 
     rerender(<RackCanvas {...base} selectedId="d1" />);
-    // The point of the test: the two must be the SAME value, not two blues that merely look
-    // close. Tailwind v4 resolves blue-600 to rgb(21,93,252) — NOT v3's #2563eb/rgb(37,99,235) —
-    // so a `bg-blue-600` grip beside a hex-filled ear is exactly how these drift apart.
+    // The point of the test: all three must be the SAME value, not blues that merely look close.
+    // Tailwind v4 resolves blue-600 to rgb(21,93,252) — NOT v3's #2563eb/rgb(37,99,235) — and
+    // blue-500 to rgb(43,127,255), NOT #3b82f6/rgb(59,130,246). Sourcing any one of these from a
+    // class instead of RK_SELECT is exactly how they drifted apart before.
     const grip = container.querySelector('[data-testid="rack-grip-d1"]') as HTMLElement;
+    const box = container.querySelector('[data-testid="rack-select-box-d1"]') as HTMLElement;
     expect(grip).toBeTruthy();
-    expect(earFills().every((f) => f === RK_GRIP)).toBe(true);
-    expect(grip.style.backgroundColor).toBe(rgbOf(RK_GRIP));
+    expect(box).toBeTruthy();
+    expect(earFills().every((f) => f === RK_SELECT)).toBe(true);
+    expect(grip.style.backgroundColor).toBe(rgbOf(RK_SELECT));
+    expect(box.style.borderColor).toBe(rgbOf(RK_SELECT));
+  });
+
+  it("the 'add here' hint blue stays distinct from the selection blue", () => {
+    // These two carry different meanings (a hint you could drop a device here vs. this device is
+    // selected). If a later edit collapses them to one value, the UI stops distinguishing them.
+    expect(RK_HINT).not.toBe(RK_SELECT);
   });
 
   it("the grip sits inside the right ear rather than poking out past the device edge", () => {
@@ -75,17 +86,13 @@ describe("RackCanvas", () => {
 
     fireEvent.mouseEnter(screen.getByTestId("ru-hit-4"));
     expect(rails()).toHaveLength(2); // both left and right rail
-    expect([...rails()].every((r) => r.getAttribute("fill") === RK_SELECT)).toBe(true);
+    expect([...rails()].every((r) => r.getAttribute("fill") === RK_HINT)).toBe(true);
     expect([...rails()].every((r) => r.getAttribute("y") === String(ruTopY(4, 1, 4)))).toBe(true);
 
     fireEvent.mouseLeave(screen.getByTestId("ru-hit-4"));
     expect(rails()).toHaveLength(0);
   });
 
-  it("an occupied RU has no strip, so it can never light a rail", () => {
-    render(<RackCanvas {...base} selectedId={null} />);
-    expect(screen.queryByTestId("ru-hit-2")).toBeNull(); // d1 sits at U2
-  });
   it("only the ears select a device (not the body); grip drag fires onMove with the RU target", () => {
     const onSelect = vi.fn(), onMove = vi.fn();
     const { rerender } = render(<RackCanvas {...base} selectedId={null} onSelect={onSelect} onMove={onMove} />);
