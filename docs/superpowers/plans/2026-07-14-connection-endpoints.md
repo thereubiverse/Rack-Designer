@@ -1234,24 +1234,20 @@ Replace `queueSave` (~line 85) and the commit helpers (~lines 101–114):
 
 - [ ] **Step 5: Drop a deleted device's endpoints too**
 
-There are two `onDelete`-style call sites that filter connections (the `RackCanvas` `onDelete` prop ~line 228 and the sidebar's `onDelete` ~line 265). In **both**, add the endpoint filter to the `commitState` call:
+There are two `onDelete`-style call sites that filter connections (the `RackCanvas` `onDelete` prop ~line 228 and the sidebar's `onDelete` ~line 265). In **both**, add the endpoint filter to the `commitState` call. Drop endpoints hanging off the deleted device's ports, AND any `device` endpoint elsewhere in this rack that pointed AT it:
 
 ```ts
               commitState({
                 placements: placements.filter((p) => p.id !== id),
                 connections: connections.filter((c) => c.a.rackDeviceId !== id && c.b.rackDeviceId !== id),
-                endpoints: endpoints.filter((e) => e.port.rackDeviceId !== id && e.targetRackDeviceId !== id),
+                endpoints: endpoints.filter((e) =>
+                  e.port.rackDeviceId !== id && !(e.kind === "device" && e.targetRackDeviceId === id)),
               });
 ```
 
-`targetRackDeviceId` only exists on `device` endpoints, so guard it:
+The `e.kind === "device"` guard is required, not optional: `targetRackDeviceId` exists only on the `device` member of the union, so `e.targetRackDeviceId !== id` alone does not typecheck.
 
-```ts
-                endpoints: endpoints.filter((e) =>
-                  e.port.rackDeviceId !== id && !(e.kind === "device" && e.targetRackDeviceId === id)),
-```
-
-(For the sidebar site, the id is `selected.id` — use that instead of `id`.)
+At the **sidebar** call site the variable is `selected.id`, not `id` — substitute it in all three filters there.
 
 - [ ] **Step 6: Render the panel when a connection is selected**
 
