@@ -92,22 +92,43 @@ export function PatchLayer(props: {
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
-  const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number } | null>(null);
+  const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number; snap: PortRef | null } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
   const gRef = useRef<SVGGElement>(null);
+  // Live drag values the animation frame reads, so the band keeps springing between pointermoves
+  // without re-rendering React every frame.
+  const snapRef = useRef<PortRef | null>(null);
+  const cursorRef = useRef({ x: 0, y: 0 });
+  const rubberRef = useRef<SVGPathElement>(null);
+  const springRef = useRef({ x: 0, y: 0, vx: 0, vy: 0 });
 
-  // Safety net: releasing a drag over empty space still clears the rubber-band (a successful drop
-  // already cleared state via the dot's own onPointerUp, which fires first).
+  /** How near a port has to be for the band to grab it (SVG units; the dot itself is r=9). */
+  const SNAP_R = 16;
+
+  // Effects below key on drag?.from, NOT drag: setDrag spreads the same `from` object every
+  // pointermove, so they subscribe once per drag instead of re-subscribing on every move.
+  const dragFrom = drag?.from ?? null;
+
+  // Safety net: releasing over empty space clears the band. It also completes a patch when the
+  // band had SNAPPED to a nearby port but the pointer came up just outside its dot — a drop
+  // straight onto a dot is handled by the dot's own onPointerUp, which stops propagation before
+  // this ever runs.
   useEffect(() => {
-    if (!drag) return;
-    const onUp = () => { dragRef.current = null; setDrag(null); };
+    if (!dragFrom) return;
+    const onUp = () => {
+      const from = dragRef.current, snap = snapRef.current;
+      dragRef.current = null; snapRef.current = null;
+      setDrag(null);
+      if (from && snap && !samePort(from, snap)) props.onConnectAttempt(from, snap);
+    };
     window.addEventListener("pointerup", onUp);
     return () => window.removeEventListener("pointerup", onUp);
-  }, [drag]);
+  }, [dragFrom, props]);
 
-  // Rubber-band follows the cursor while dragging (client coords → SVG user-space via the CTM).
+  // Rubber-band follows the cursor while dragging (client coords → SVG user-space via the CTM),
+  // grabbing the nearest port within SNAP_R.
   useEffect(() => {
-    if (!drag) return;
+    if (!dragFrom) return;
     const move = (e: PointerEvent) => {
       const svg = gRef.current?.ownerSVGElement;
       if (!svg) return;
@@ -116,11 +137,45 @@ export function PatchLayer(props: {
       const pt = svg.createSVGPoint();
       pt.x = e.clientX; pt.y = e.clientY;
       const p = pt.matrixTransform(ctm.inverse());
-      setDrag((d) => (d ? { ...d, x: p.x, y: p.y } : d));
+      cursorRef.current = { x: p.x, y: p.y };
+      let snap: PortRef | null = null;
+      let best = SNAP_R;
+      for (const d of dots) {
+        if (samePort(d.port, dragFrom)) continue;
+        const dist = Math.hypot(d.x - p.x, d.y - p.y);
+        if (dist <= best) { best = dist; snap = d.port; }
+      }
+      snapRef.current = snap;
+      setDrag((d) => (d ? { ...d, x: p.x, y: p.y, snap } : d));
     };
     window.addEventListener("pointermove", move);
     return () => window.removeEventListener("pointermove", move);
-  }, [drag]);
+  }, [dragFrom, dots]);
+
+  // The band behaves like real elastic: its control point is a damped spring chasing the midpoint,
+  // so it bows behind a fast drag, straightens as you settle, and twangs when the end snaps to a
+  // port. Driven imperatively per frame — React never re-renders for it.
+  useEffect(() => {
+    if (!dragFrom) return;
+    const from = dotByKey.get(keyOf(dragFrom));
+    if (!from) return;
+    springRef.current = { x: from.x, y: from.y, vx: 0, vy: 0 }; // unfurl from the port
+    const STIFF = 0.22, DAMP = 0.72; // underdamped → a little overshoot on snap
+    let raf = 0;
+    const tick = () => {
+      const snapDot = snapRef.current ? dotByKey.get(keyOf(snapRef.current)) : undefined;
+      const end = snapDot ?? cursorRef.current;
+      const s = springRef.current;
+      const midX = (from.x + end.x) / 2, midY = (from.y + end.y) / 2;
+      s.vx = (s.vx + (midX - s.x) * STIFF) * DAMP;
+      s.vy = (s.vy + (midY - s.y) * STIFF) * DAMP;
+      s.x += s.vx; s.y += s.vy;
+      rubberRef.current?.setAttribute("d", `M ${from.x} ${from.y} Q ${s.x} ${s.y} ${end.x} ${end.y}`);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [dragFrom, dotByKey]);
 
   // Only cables whose both ends are on the current face are drawable.
   const faceCables = connections.filter((c) => c.a.side === faceSide && c.b.side === faceSide);
@@ -157,11 +212,29 @@ export function PatchLayer(props: {
           );
         })}
 
-      {/* rubber-band while dragging */}
+      {/* rubber-band while dragging. The `d` here is only the first frame's — the spring effect
+          drives it imperatively after that. Loose it reads as a dashed elastic; once it grabs a
+          port it pulls solid and the target pulses. */}
       {drag && (() => {
         const from = dotByKey.get(keyOf(drag.from));
-        return from ? <line data-testid="patch-rubber" x1={from.x} y1={from.y} x2={drag.x} y2={drag.y}
-          stroke={BLUE} strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" /> : null;
+        if (!from) return null;
+        const snapDot = drag.snap ? dotByKey.get(keyOf(drag.snap)) : undefined;
+        const end = snapDot ?? { x: drag.x, y: drag.y };
+        return (
+          <g pointerEvents="none">
+            <path ref={rubberRef} data-testid="patch-rubber" data-snapped={snapDot ? "true" : "false"}
+              d={`M ${from.x} ${from.y} Q ${from.x} ${from.y} ${end.x} ${end.y}`}
+              fill="none" stroke={BLUE} strokeWidth={snapDot ? 2.5 : 2}
+              strokeDasharray={snapDot ? undefined : "5 4"} strokeLinecap="round" />
+            {snapDot && (
+              <>
+                <circle data-testid="patch-snap-ring" className="patch-snap-ring"
+                  cx={snapDot.x} cy={snapDot.y} r={7} fill="none" stroke={BLUE} strokeWidth={1.6} />
+                <circle cx={snapDot.x} cy={snapDot.y} r={3} fill={BLUE} />
+              </>
+            )}
+          </g>
+        );
       })()}
 
       {/* port hit-dots — invisible, carry their PortRef; hovering reports the port (patched or not),
@@ -176,7 +249,9 @@ export function PatchLayer(props: {
             if (e.button !== 0) return;
             e.stopPropagation();
             dragRef.current = d.port;
-            setDrag({ from: d.port, x: d.x, y: d.y });
+            snapRef.current = null;
+            cursorRef.current = { x: d.x, y: d.y };
+            setDrag({ from: d.port, x: d.x, y: d.y, snap: null });
           }}
           onPointerUp={(e) => {
             if (!dragRef.current) return;

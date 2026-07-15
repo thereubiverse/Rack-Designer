@@ -296,7 +296,9 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   return (
     // Fixed viewport (fills its parent's h/w), overflow hidden — panning is done via the transform,
     // so scroll/zoom gestures are never gated on content overflowing an axis.
-    <div ref={hostRef} className="relative h-full w-full overflow-hidden">
+    // no-select-ui: the rack is a diagram, so dragging a patch across it must never start a text
+    // selection over the device labels and port numbers.
+    <div ref={hostRef} className="no-select-ui relative h-full w-full overflow-hidden">
       <div ref={contentRef} data-testid="rack-canvas-scale" className="absolute left-0 top-0 origin-top-left"
         style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, width, height, transition: ZOOM_TRANSITION }}>
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}
