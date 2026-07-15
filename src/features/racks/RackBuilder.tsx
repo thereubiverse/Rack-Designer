@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullProgress } from "./palettePull";
+import { SNAP_MS, pullT, pullAt } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -85,10 +85,14 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   const beginSnapBack = useCallback(() => {
     const p = pullRef.current;
     if (!p || p.phase === "snapback") return;
-    // Pull progress at the moment of abandon — the snap-back shrinks from the box's actual size,
-    // not from full RU size. Read BEFORE flipping phase to "snapback".
-    p.snapT = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
-    p.snapFrom = { x: p.x, y: p.y };
+    // Both read the LIVE phase, so both must run BEFORE it flips to "snapback".
+    // snapT: pull progress at the moment of abandon — the snap-back shrinks from the box's actual
+    // size, not from full RU size.
+    p.snapT = pullT(p);
+    // snapFrom: where the box actually IS, which is not the pointer — mid-pull the box lags behind,
+    // travelling from the chip toward the cursor. Capturing the pointer here would teleport the box
+    // to the cursor before it started shrinking.
+    p.snapFrom = pullAt(p);
     p.snapStart = performance.now();
     p.phase = "snapback";
     setDropArmed(false);                  // a retreating box must not be droppable
@@ -119,7 +123,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
       // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
       // fired, and the phase machine belongs with the state's owner. This setState runs once.
-      if (p.phase === "pulling" && pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y)) >= 1) {
+      if (p.phase === "pulling" && pullT(p) >= 1) {
         p.phase = "solid";
         p.snapStart = performance.now();  // the latch spring's clock
         // flushSync, not a plain setState: pointermove is continuous priority, so React would

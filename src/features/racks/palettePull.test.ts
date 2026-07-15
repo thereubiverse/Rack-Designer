@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PULL_DIST, SNAP_MS, BOX_OPACITY, pullProgress, easeOutCubic, latchScale, boxSize, neckHalfWidth,
-  neckPath, pullGeometry, type PullState,
+  neckPath, pullGeometry, pullAt, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -148,5 +148,31 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     const p: PullState = { ...base, phase: "pulling", x: 100 + PULL_DIST / 2, y: 100 };
     const g = pullGeometry(p, 1, 0);
     expect(g.neck).not.toBe("");
+  });
+});
+
+describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to the cursor", () => {
+  const chip = { x: 100, y: 100 };
+  const base = { typeId: "t", chip, chipSize: CHIP, phase: "pulling" as const, snapFrom: null, snapStart: 0, snapT: 0 };
+
+  it("sits ON the chip at t=0 — the blob is still part of the slime, not under your finger", () => {
+    expect(pullAt({ ...base, x: chip.x, y: chip.y })).toEqual(chip);
+  });
+
+  it("has arrived at the pointer by the time it latches solid", () => {
+    const p = { ...base, phase: "solid" as const, x: 900, y: 400 };
+    expect(pullAt(p)).toEqual({ x: 900, y: 400 });
+  });
+
+  it("LAGS the cursor mid-pull — strictly between the chip and the pointer", () => {
+    const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
+    const at = pullAt(p);
+    expect(at.x).toBeGreaterThan(chip.x);
+    expect(at.x).toBeLessThan(p.x);
+  });
+
+  it("pullGeometry paints the box at that lagged position, not at the pointer", () => {
+    const p = { ...base, x: chip.x + PULL_DIST / 2, y: chip.y };
+    expect(pullGeometry(p, 1, 0).at).toEqual(pullAt(p));
   });
 });

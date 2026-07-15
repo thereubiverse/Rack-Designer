@@ -92,6 +92,22 @@ export function neckPath(chip: Vec, box: Vec, t: number, chipH: number): string 
 /** Everything needed to paint one frame of a pull. PURE: same state + same clock => same pixels.
  *  Both the first paint and the rAF loop call THIS — computing the geometry twice, in two places,
  *  is how they drifted apart (the box collapsed to nothing the frame after it latched solid). */
+/** Pull progress for a live pull. `solid` LATCHES at 1 — dragging back toward the chip after it has
+ *  broken off never re-attaches it. */
+export function pullT(p: PullState): number {
+  return p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
+}
+
+/** Where the box's centre sits. At t=0 it is ON the chip — the blob is still part of the slime, not
+ *  under your finger — and it travels to the pointer as you pull, arriving as it latches. So the box
+ *  LAGS the cursor mid-pull, which is what makes it read as being dragged out of something sticky
+ *  rather than teleporting to the cursor on press.
+ *  Not valid for `snapback` (that lerps snapFrom -> chip instead); callers must not use it there. */
+export function pullAt(p: PullState): Vec {
+  const e = easeOutCubic(pullT(p));
+  return { x: p.chip.x + (p.x - p.chip.x) * e, y: p.chip.y + (p.y - p.chip.y) * e };
+}
+
 export function pullGeometry(p: PullState, scale: number, now: number): {
   at: Vec; size: Size; neck: string; opacity: number;
 } {
@@ -102,8 +118,8 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     return { at, size: boxSize(p.snapT * (1 - k), scale, p.chipSize), neck: "", opacity: (1 - k) * BOX_OPACITY };
   }
 
-  const t = p.phase === "solid" ? 1 : pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y));
-  const at = { x: p.x, y: p.y };
+  const t = pullT(p);
+  const at = pullAt(p);
   let size = boxSize(t, scale, p.chipSize);
   if (p.phase === "solid") {
     // Spring on the moment it went solid: the box is ALREADY full size, so it overshoots and rings
