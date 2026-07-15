@@ -23,11 +23,6 @@ const RK_LINE = "#3f3f46";  // frame outline, ruler, ventilation slats
 const RK_EAR = "#a3a3a3";   // mounting ears — matches the device screw-hole gray
 const RK_SEP = "#e4e4e7";   // dashed RU separators (lighter)
 const RK_HOLE = "#ffffff";  // ear holes + device interior
-/** The one selection blue: free-slot ⊕, drag ghost, the selection box, and a selected device's
- *  mounting ears. Everything that marks "selected" MUST take it from here.
- *  NOT Tailwind's `blue-500` class: under Tailwind v4 that resolves through oklch to rgb(43,127,255),
- *  which is visibly a different blue from this hex's rgb(59,130,246) — mixing the two makes a
- *  selected device read as two mismatched pieces. */
 /** "You could put a device here" blue — the free-slot ⊕ and the drag ghost. Deliberately the
  *  LIGHTER of the two: these are painted over the white interior, where a pale blue still reads.
  *  The hovered-RU rail is NOT one of these — it lands on the grey rail and takes RK_SELECT. */
@@ -63,7 +58,14 @@ const VENT_MARGIN = 39.5, BAR_PITCH = 11.5, BAR_W = 5; // ventilation slats (ref
 
 // Rack centre x: leave room left of the RU numbers.
 const CX = hx(RULER_N) + 46;
-const TOP = 58 * Ky;                        // interior top edge (cap sits 58 ref-units above it)
+/** Half a stroke of vertical breathing room. The cap's top edge and the feet's bottom edge sit on
+ *  the outermost content lines, and a stroke is painted CENTRED on its edge — so with the content
+ *  flush against the viewBox those two strokes lose their outer half to the boundary and render at
+ *  half the weight of every other line. Pad by half a stroke at each end and they paint in full.
+ *  (The faceplate solves the same problem by insetting its outline; here the content is a fixed
+ *  reference geometry, so we grow the box instead of moving the art.) */
+const PAD_Y = LINE_W / 2;
+const TOP = 58 * Ky + PAD_Y;                // interior top edge (cap sits 58 ref-units above it)
 export const RACK_GUTTER_L = CX - MOUNT_HW; // device-mount left edge (= RackCanvas ix)
 export const RACK_PAD = 0;
 // x of the shared patch-cable trunk (the "meeting point" cables converge on) — seated in the gutter
@@ -80,7 +82,9 @@ export interface RackPlacementRender {
 export function rackSvgSize(heightU: number): { width: number; height: number } {
   return {
     width: CX + hx(OW) + 12,
-    height: heightU * RU_PX + 145 * Ky, // cap(58) above TOP + units + pedestal/feet(87) below
+    // cap(58) above TOP + units + pedestal/feet(87) below, plus PAD_Y at each end so the cap's
+    // top stroke and the feet's bottom stroke aren't clipped in half by the viewBox.
+    height: heightU * RU_PX + 145 * Ky + 2 * PAD_Y,
   };
 }
 

@@ -13,6 +13,27 @@ describe("rack geometry", () => {
     const { height } = rackSvgSize(12);
     expect(height).toBeGreaterThan(12 * RU_PX); // interior + padding
   });
+  it("no stroked edge is clipped by the viewBox, so every line paints at full weight", () => {
+    // Regression: a stroke paints CENTRED on its edge. The cap's top edge sat at y=0 and the
+    // feet's bottom edge exactly on the svg height, so both lost their outer half to the
+    // boundary and rendered at half the weight of every other line in the cabinet.
+    const heightU = 12;
+    const { height } = rackSvgSize(heightU);
+    const { container } = render(<RackFrame heightU={heightU} placements={[]} side="FRONT" />);
+    const stroked = [...container.querySelectorAll("rect")].filter((r) => {
+      const w = r.getAttribute("stroke-width");
+      return !!w && parseFloat(w) > 0;
+    });
+    expect(stroked.length).toBeGreaterThan(0);
+    for (const r of stroked) {
+      const sw = parseFloat(r.getAttribute("stroke-width")!);
+      const top = parseFloat(r.getAttribute("y")!) - sw / 2;
+      const bottom = parseFloat(r.getAttribute("y")!) + parseFloat(r.getAttribute("height")!) + sw / 2;
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(bottom).toBeLessThanOrEqual(height);
+    }
+  });
+
   it("ruTopY puts U1 at the bottom", () => {
     // a 1U device at U1 sits one RU above the interior bottom
     expect(ruTopY(1, 1, 12)).toBeGreaterThan(ruTopY(12, 1, 12));
