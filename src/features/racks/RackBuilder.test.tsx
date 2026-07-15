@@ -209,11 +209,11 @@ describe("RackBuilder sidebar selection", () => {
       const chip = screen.getByTestId("palette-type-SW");
       // pull #1, then abandon it away from the rack -> snap-back timer is now pending
       fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-      act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); });
-      act(() => { fireEvent.pointerUp(window, { clientX: 500, clientY: 0 }); });
+      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
+      act(() => { fireEvent.pointerUp(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
       // pull #2 starts INSIDE the snap window
       fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-      act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); });
+      act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); });
       act(() => { vi.advanceTimersByTime(SNAP_MS * 2); }); // the OLD timer would fire in here
       // pull #2 must still be alive and droppable
       fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
@@ -231,7 +231,7 @@ describe("RackBuilder sidebar selection", () => {
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); }); // -> latches solid
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
     const solidWidth = screen.getByTestId("pull-box").style.width;
     expect(parseFloat(solidWidth)).toBeGreaterThan(0);
 
