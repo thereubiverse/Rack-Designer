@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PULL_DIST, SNAP_MS, RACK_LATCH_X, BOX_OPACITY, pullProgress, easeOutCubic, easeInLag, latchGrow,
-  blobTarget, blobSize, neckHalfWidth, neckPath, pullGeometry, pullAt, nearRack, type PullState,
+  blobTarget, blobSize, pullGeometry, pullAt, nearRack, type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -88,37 +88,10 @@ describe("nearRack", () => {
   });
 });
 
-describe("the neck", () => {
-  it("thins monotonically to nothing as the pull stretches", () => {
-    let prev = Infinity;
-    for (let t = 0; t <= 1.0001; t += 0.1) {
-      const w = neckHalfWidth(CHIP.h, t);
-      expect(w).toBeLessThan(prev);
-      prev = w;
-    }
-    expect(neckHalfWidth(CHIP.h, 0)).toBe(CHIP.h / 2);
-    expect(neckHalfWidth(CHIP.h, 1)).toBe(0);
-  });
-  it("has snapped — no path at all — once the blob is free", () => {
-    expect(neckPath({ x: 0, y: 0 }, { x: 200, y: 0 }, 1, CHIP.h)).toBe("");
-    expect(neckPath({ x: 0, y: 0 }, { x: 200, y: 0 }, 1.5, CHIP.h)).toBe("");
-  });
-  it("draws a closed ribbon between chip and blob while stretching", () => {
-    const d = neckPath({ x: 10, y: 10 }, { x: 150, y: 40 }, 0.5, CHIP.h);
-    expect(d.startsWith("M ")).toBe(true);
-    expect(d.endsWith("Z")).toBe(true);
-    expect(d).toContain("Q");            // curved, not a straight polygon
-    expect(d).not.toContain("NaN");
-  });
-  it("survives a zero-length pull without NaN (pointer still on the chip)", () => {
-    expect(neckPath({ x: 10, y: 10 }, { x: 10, y: 10 }, 0, CHIP.h)).not.toContain("NaN");
-  });
-});
-
 describe("pullGeometry — the single source of truth both paint paths call", () => {
   const chip = { x: 100, y: 100 };
   const base: PullState = {
-    typeId: "t1", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
+    typeId: "t1", label: "Switch", chip, chipSize: CHIP, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
   };
 
@@ -127,7 +100,6 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     const g = pullGeometry(p, 1, 0);
     expect(g.solid).toBe(false);              // the painter draws the lump, not the faceplate
     expect(g.size).toEqual(blobSize(pullProgress(PULL_DIST / 2), CHIP));
-    expect(g.neck).not.toBe("");
   });
 
   it("REGRESSION: solid at the instant it latches is the BLOB's size — not 0, not already full", () => {
@@ -165,7 +137,6 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     const g = pullGeometry(p, 1, 2000);
     expect(g.at).toEqual(snapFrom);
     expect(g.size).toEqual(snapSize);
-    expect(g.neck).toBe("");
     expect(g.solid).toBe(false);              // melts back into goo on the way home
     expect(g.opacity).toBeCloseTo(BOX_OPACITY, 5);
   });
@@ -182,7 +153,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
 
 describe("pullAt — the blob is dragged OUT of the chip, it doesn't teleport to the cursor", () => {
   const chip = { x: 100, y: 100 };
-  const base = { typeId: "t", chip, chipSize: CHIP, phase: "pulling" as const,
+  const base = { typeId: "t", label: "Switch", chip, chipSize: CHIP, phase: "pulling" as const,
     snapFrom: null, snapStart: 0, snapSize: null };
 
   it("sits ON the chip at t=0 — the blob is still part of the slime, not under your finger", () => {

@@ -101,12 +101,13 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     snapTimerRef.current = setTimeout(endPull, SNAP_MS); // the layer animates; this owns when it's over
   }, [endPull, clearSnapTimer]);
 
-  function startPull(e: React.PointerEvent, typeId: string) {
+  function startPull(e: React.PointerEvent, typeId: string, label: string) {
     if (e.button !== 0) return;
     clearSnapTimer(); // a previous pull may still be snapping back — its timer must not end THIS one
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     pullRef.current = {
       typeId,
+      label,
       chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
@@ -311,7 +312,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
         <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</p>
         {types.map((t) => (
           <button key={t.id} type="button" data-testid={`palette-type-${t.code}`}
-            onPointerDown={(e) => startPull(e, t.id)}
+            onPointerDown={(e) => startPull(e, t.id, t.name)}
             onClick={() => setPicker({ initialTypeId: t.id, atU: null })}
             style={{ touchAction: "none" }}
             className="block w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-sm font-medium hover:bg-neutral-50">
