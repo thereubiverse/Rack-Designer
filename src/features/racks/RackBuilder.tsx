@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { flushSync } from "react-dom";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
@@ -121,7 +122,15 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       if (p.phase === "pulling" && pullProgress(Math.hypot(p.x - p.chip.x, p.y - p.chip.y)) >= 1) {
         p.phase = "solid";
         p.snapStart = performance.now();  // the latch spring's clock
-        setDropArmed(true);
+        // flushSync, not a plain setState: pointermove is continuous priority, so React would
+        // otherwise schedule this render through the Scheduler instead of flushing it inline. The
+        // strip gates the drop on props.dropArmed (not on the ref write above, which IS
+        // synchronous), so a pointerup arriving before that scheduled render still sees
+        // dropArmed=false and silently loses the drop. Only runs once per gesture, so the
+        // flushSync cost is nil. Raising PULL_DIST (a tuning knob, see palettePull.ts) moves the
+        // latch point closer to the rack, WIDENING this window rather than narrowing it — so this
+        // guards against a regression the next tuning pass could otherwise introduce.
+        flushSync(() => setDropArmed(true));
       }
     };
     const onUp = () => {

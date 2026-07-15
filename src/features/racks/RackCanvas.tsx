@@ -158,10 +158,14 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // React state changes only on start/end; the move is committed once (snapped to a free RU) on release.
   const [dragId, setDragId] = useState<string | null>(null);
   const [hoverU, setHoverU] = useState<number | null>(null);
-  // A click fires immediately after pointerup. When that pointerup committed a drop, the click must
+  // A click fires immediately after pointerup. If that pointerup committed a drop, the click must
   // NOT also run onAddAt — that would reopen the picker with initialTypeId null and throw away the
   // type the user just dragged. Set on drop, cleared on the next macrotask (the click is dispatched
   // before timers, so the guard is still up when it arrives).
+  // In the real mouse path this is defence in depth, not the thing that makes the drop work: a
+  // cross-element press/release (chip -> strip) fires the trailing click at the nearest common
+  // ancestor of the two targets, not at the strip, so the strip's own onClick never actually runs.
+  // The guard matters only if a portal or same-element release ever changes that ancestry.
   const swallowStripClickRef = useRef(false);
   const dragRef = useRef<{ id: string; startY: number; origU: number; ru: number; ghostU: number } | null>(null);
   useEffect(() => {
@@ -339,8 +343,8 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
               if (swallowStripClickRef.current) return;
               props.onAddAt(u);
             }}
-            onPointerUp={() => {
-              if (!props.dropArmed) return;
+            onPointerUp={(e) => {
+              if (e.button !== 0 || !props.dropArmed) return;
               swallowStripClickRef.current = true;
               setTimeout(() => { swallowStripClickRef.current = false; }, 0);
               props.onDropAt(u);

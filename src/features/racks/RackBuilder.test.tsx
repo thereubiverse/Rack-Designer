@@ -8,7 +8,7 @@ import type { PortEndpoint } from "./endpointOps";
 import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
-import { SNAP_MS } from "./palettePull";
+import { SNAP_MS, PULL_DIST } from "./palettePull";
 
 // Pure UI-wiring tests: the rack builder must never touch the network/DB. Saves are debounced
 // 600ms and mocked out here so a stray timer firing mid-test can't hit a real server action.
@@ -169,11 +169,11 @@ describe("RackBuilder sidebar selection", () => {
   it("pressing a palette chip and dropping on a free RU opens the picker at that RU", () => {
     // The whole gesture: press the chip, pull past PULL_DIST so it latches solid, release on a strip.
     // jsdom reports a zero-size rect for the chip, so its centre is (0,0) and the pointer's distance
-    // is simply clientX — 500 is comfortably past PULL_DIST (140).
+    // is simply clientX — PULL_DIST * 4 is comfortably past PULL_DIST regardless of its tuned value.
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); }); // -> latches solid
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST * 4, clientY: 0 }); }); // -> latches solid
     fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
   });
@@ -182,7 +182,7 @@ describe("RackBuilder sidebar selection", () => {
     render(<RackBuilder {...baseProps()} />);
     const chip = screen.getByTestId("palette-type-SW");
     fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: 10, clientY: 0 }); }); // short of PULL_DIST
+    act(() => { fireEvent.pointerMove(window, { clientX: PULL_DIST / 10, clientY: 0 }); }); // short of PULL_DIST
     fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
     expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
   });

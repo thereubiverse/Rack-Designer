@@ -241,6 +241,15 @@ describe("RackCanvas", () => {
     expect(onDropAt).toHaveBeenCalledWith(4);
   });
 
+  it("a right-click on an armed strip does not report a drop", () => {
+    // Consistency with the ear/grip onPointerDown handlers and the chip's own e.button !== 0
+    // guard: latching solid over a free RU must not let a right-click open the picker.
+    const onDropAt = vi.fn();
+    render(<RackCanvas {...base} selectedId={null} dropArmed onDropAt={onDropAt} />);
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-4"), { button: 2 });
+    expect(onDropAt).not.toHaveBeenCalled();
+  });
+
   it("a strip reports NOTHING when no pull is armed", () => {
     // Covers both 'no pull at all' and 'pull not yet solid' — dropArmed is the single gate.
     const onDropAt = vi.fn();

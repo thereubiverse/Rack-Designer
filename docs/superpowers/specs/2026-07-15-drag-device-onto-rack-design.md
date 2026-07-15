@@ -94,7 +94,15 @@ A strip's `onClick` fires immediately after `pointerup` and would call `onAddAt(
 `setPicker({ initialTypeId: null, … })`, clobbering the dragged type with the "Select type" list.
 
 Resolution: the drop is committed on the strip's **`onPointerUp`** (which fires before `click`), and a
-short-lived ref suppresses the trailing click. This is load-bearing and has an explicit test.
+short-lived ref suppresses the trailing click.
+
+In practice, on a real cross-element drop (press on the chip, release on a different element — the
+strip) the browser fires the trailing `click` at the nearest common ancestor of the press and release
+targets, which is `RackBuilder`'s root `<div className="flex gap-4">` — an element with no `onClick`
+at all. So the strip's own `onClick` never actually fires in the mouse path, and the guard never
+actually has to swallow anything today. It stays in as **defence in depth**: cheap to keep, and it
+would matter if a portal or a same-element release ever changed the ancestry. It still has an explicit
+test, but that test is exercising a safety net, not the thing that makes the drop work.
 
 ## Architecture
 
@@ -147,7 +155,7 @@ Expect revision from live feedback ("more gooey", "slower").
 | Esc during pull | Snap back. No picker. |
 | Non-primary button (right-click) | No pull at all. |
 | Canvas zoomed mid-pull | Box size recomputes from the live scale each frame. |
-| Touch | Works via pointer events; chips need `touch-action: none` so the page does not scroll instead. |
+| Touch / pen | **Not supported — mouse and trackpad only.** Touch gets *implicit* pointer capture, so the chip captures the whole gesture and the rack strip's `pointerup` never fires; and compatibility mouse events only fire after `pointerup`, so `mouseenter` never runs during the drag and the rails would never light. Supporting touch needs `document.elementFromPoint` hit-testing plus `pointerId` filtering for multi-touch — deliberately out of scope. `touch-action: none` stays on the chips so a touch-drag doesn't scroll the page while doing nothing. |
 | Pull while the picker is open | Not reachable — the picker is a `fixed inset-0 z-[70]` modal over the palette. |
 
 ## Testing
@@ -170,3 +178,4 @@ and `locations/repository.integration.test.ts` delete all `sites` and wipe the l
 - Fit-including-anchor and carry mode → feature 2.
 - Inline "Create Custom Device" → feature 3.
 - Dragging *existing* devices between RUs — already works via the ear press-drag.
+- Touch and pen dragging — see the Touch / pen row above.
