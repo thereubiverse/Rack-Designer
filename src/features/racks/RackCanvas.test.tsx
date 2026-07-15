@@ -79,14 +79,15 @@ describe("RackCanvas", () => {
     expect(code().getAttribute("fill")).toBe("#ffffff");
   });
 
-  it("hovering a free RU lights that RU's rails blue, and only while hovered", () => {
+  it("hovering a free RU lights that RU's rails the dark selection blue, only while hovered", () => {
     const { container } = render(<RackCanvas {...base} selectedId={null} />);
     const rails = () => container.querySelectorAll('[data-testid="rail-hover"] rect');
     expect(rails()).toHaveLength(0);
 
     fireEvent.mouseEnter(screen.getByTestId("ru-hit-4"));
     expect(rails()).toHaveLength(2); // both left and right rail
-    expect([...rails()].every((r) => r.getAttribute("fill") === RK_HINT)).toBe(true);
+    // RK_SELECT, not the pale hint blue — the lit rail marks where a device's ears would land.
+    expect([...rails()].every((r) => r.getAttribute("fill") === RK_SELECT)).toBe(true);
     expect([...rails()].every((r) => r.getAttribute("y") === String(ruTopY(4, 1, 4)))).toBe(true);
 
     fireEvent.mouseLeave(screen.getByTestId("ru-hit-4"));

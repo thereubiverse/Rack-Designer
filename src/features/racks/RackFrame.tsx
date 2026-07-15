@@ -28,8 +28,9 @@ const RK_HOLE = "#ffffff";  // ear holes + device interior
  *  NOT Tailwind's `blue-500` class: under Tailwind v4 that resolves through oklch to rgb(43,127,255),
  *  which is visibly a different blue from this hex's rgb(59,130,246) — mixing the two makes a
  *  selected device read as two mismatched pieces. */
-/** "You could put a device here" blue — the free-slot ⊕, the drag ghost, and the rail under a
- *  hovered free RU. Deliberately the LIGHTER of the two so a hint never reads as a selection. */
+/** "You could put a device here" blue — the free-slot ⊕ and the drag ghost. Deliberately the
+ *  LIGHTER of the two: these are painted over the white interior, where a pale blue still reads.
+ *  The hovered-RU rail is NOT one of these — it lands on the grey rail and takes RK_SELECT. */
 export const RK_HINT = "#3b82f6";
 const RK_PLUS = RK_HINT;  // free-slot ⊕ marker
 /** Selected-device blue — the mounting ears, the grip sitting in one, and the box drawn around
@@ -117,12 +118,15 @@ const RackChrome = memo(function RackChrome({ heightU, placements, hoverU = null
       <rect x={CX - hx(EAR_OUT)} y={TOP} width={EAR_W} height={heightU * RU_PX} fill={RK_EAR} />
       <rect x={CX + hx(EAR_OUT) - EAR_W} y={TOP} width={EAR_W} height={heightU * RU_PX} fill={RK_EAR} />
 
-      {/* hovering a free RU lights that RU's rail on both sides. Drawn over the rails but BEFORE
-          the holes below, so the holes stay punched out of the blue instead of being covered. */}
+      {/* Hovering a free RU lights that RU's rail on both sides. Takes RK_SELECT, not the lighter
+          hint blue: the lit rail marks where a device's mounting ears would land, so it reads as
+          the same blue those ears take once the device is there and selected.
+          Drawn over the rails but BEFORE the holes below, so the holes stay punched out of the
+          blue instead of being covered. */}
       {hoverU != null && (
         <g data-testid="rail-hover">
-          <rect x={CX - hx(EAR_OUT)} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_HINT} />
-          <rect x={CX + hx(EAR_OUT) - EAR_W} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_HINT} />
+          <rect x={CX - hx(EAR_OUT)} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
+          <rect x={CX + hx(EAR_OUT) - EAR_W} y={ruTopY(hoverU, 1, heightU)} width={EAR_W} height={RU_PX} fill={RK_SELECT} />
         </g>
       )}
 
