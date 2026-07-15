@@ -804,7 +804,32 @@ it("still opens the picker on a plain chip click", () => {
   fireEvent.click(screen.getByTestId("palette-type-SW"));
   expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
 });
+
+it("a pull abandoned then immediately restarted is not killed by the old snap-back timer", () => {
+  // Race: beginSnapBack schedules endPull after SNAP_MS. Grab another chip inside that window and
+  // the stale timer would clear the NEW pull mid-gesture. startPull must cancel it.
+  vi.useFakeTimers();
+  try {
+    render(<RackBuilder {...baseProps()} />);
+    const chip = screen.getByTestId("palette-type-SW");
+    // pull #1, then abandon it away from the rack -> snap-back timer is now pending
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); });
+    act(() => { fireEvent.pointerUp(window, { clientX: 500, clientY: 0 }); });
+    // pull #2 starts INSIDE the snap window
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: 500, clientY: 0 }); });
+    act(() => { vi.advanceTimersByTime(SNAP_MS * 2); }); // the OLD timer would fire in here
+    // pull #2 must still be alive and droppable
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
 ```
+
+This test imports `SNAP_MS`; add `import { SNAP_MS } from "./palettePull";` to the test file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -832,12 +857,20 @@ Add inside the component body, next to the other state (`canvasRef` already exis
   const pullRef = useRef<PullState | null>(null);
   const [pullMounted, setPullMounted] = useState(false);
   const [dropArmed, setDropArmed] = useState(false);
+  // The pending snap-back timer, held so a NEW pull can cancel it. Without this, abandoning a pull
+  // and immediately grabbing another chip lets the old timer fire and kill the new pull mid-gesture.
+  const snapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSnapTimer = useCallback(() => {
+    if (snapTimerRef.current !== null) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
+  }, []);
 
   const endPull = useCallback(() => {
+    clearSnapTimer();
     pullRef.current = null;
     setPullMounted(false);
     setDropArmed(false);
-  }, []);
+  }, [clearSnapTimer]);
 
   const beginSnapBack = useCallback(() => {
     const p = pullRef.current;
@@ -846,11 +879,13 @@ Add inside the component body, next to the other state (`canvasRef` already exis
     p.snapStart = performance.now();
     p.phase = "snapback";
     setDropArmed(false);                  // a retreating box must not be droppable
-    setTimeout(endPull, SNAP_MS);         // the layer animates; this owns when it's over
-  }, [endPull]);
+    clearSnapTimer();
+    snapTimerRef.current = setTimeout(endPull, SNAP_MS); // the layer animates; this owns when it's over
+  }, [endPull, clearSnapTimer]);
 
   function startPull(e: React.PointerEvent, typeId: string) {
     if (e.button !== 0) return;
+    clearSnapTimer(); // a previous pull may still be snapping back — its timer must not end THIS one
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     pullRef.current = {
       typeId,
