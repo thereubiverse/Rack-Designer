@@ -79,9 +79,34 @@ describe("OutletFaceplate", () => {
   });
 
   it("draws no port as landing when no landing index is given", () => {
-    render(<OutletFaceplate portCount={2} />);
-    for (const p of screen.getAllByTestId(/^outlet-port-/)) {
+    render(<OutletFaceplate portCount={2} landingPortLabel="Desk A" />);
+    for (const p of screen.getAllByTestId(/^outlet-port-\d+$/)) {
       expect(p.getAttribute("data-landing")).toBe("false");
     }
+    // with no landing port there is nothing to label
+    expect(screen.queryByText("Desk A")).toBeNull();
+  });
+
+  it("prints the endpoint label above the landing port only", () => {
+    render(<OutletFaceplate portCount={4} landingPortIndex={2} landingPortLabel="Desk A" />);
+    expect(screen.getByTestId("outlet-port-label-2").textContent).toBe("Desk A");
+    expect(screen.queryByTestId("outlet-port-label-0")).toBeNull();
+  });
+
+  it("omits the label when the endpoint has none", () => {
+    render(<OutletFaceplate portCount={4} landingPortIndex={2} landingPortLabel="" />);
+    expect(screen.queryByTestId("outlet-port-label-2")).toBeNull();
+  });
+
+  it("clips a label too long to fit the plate", () => {
+    render(<OutletFaceplate portCount={1} landingPortIndex={0} landingPortLabel="Reception Desk 12" />);
+    const t = screen.getByTestId("outlet-port-label-0").textContent!;
+    expect(t).toBe("Reception…");
+    expect(t.length).toBeLessThanOrEqual(10);
+  });
+
+  it("leaves a label that already fits alone", () => {
+    render(<OutletFaceplate portCount={1} landingPortIndex={0} landingPortLabel="Desk A" />);
+    expect(screen.getByTestId("outlet-port-label-0").textContent).toBe("Desk A");
   });
 });

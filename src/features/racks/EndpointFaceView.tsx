@@ -44,7 +44,8 @@ export function EndpointFaceView(props: EndpointFaceViewProps) {
     // A data outlet is a wall plate, not a rack face — draw the real thing.
     if (props.typeCode === OUTLET_TYPE_CODE) {
       return <OutletFaceplate portCount={props.portCount as OutletPortCount}
-        landingPortIndex={props.portCount === 0 ? undefined : props.landingPortIndex} />;
+        landingPortIndex={props.portCount === 0 ? undefined : props.landingPortIndex}
+        landingPortLabel={props.landingPortLabel} />;
     }
     // Every other described type is a single-port device.
     const face = faceForDescribed(props);
