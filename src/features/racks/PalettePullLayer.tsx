@@ -22,7 +22,7 @@ import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, LABEL_INSET, type PullState } from "./palettePull";
+import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, LABEL_INSET, CHIP_BORDER, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
@@ -69,7 +69,7 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   return (
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">
       <div ref={boxRef} data-testid="pull-box" className="absolute left-0 top-0 overflow-hidden bg-white"
-        style={{ ...boxStyle(g), borderStyle: "solid", borderWidth: 2, borderColor: RK_SELECT }}>
+        style={{ ...boxStyle(g), borderStyle: "solid", borderWidth: 2 }}>
         {/* The device it becomes: the SAME renderer the rack uses, with an empty face, and the ears
             already in the selection blue — it arrives at the rack selected, exactly as it will look
             once dropped. Drawn BEFORE the label so the name stays legible on top of it.
@@ -113,11 +113,20 @@ function labelStyle(g: Geo) {
  *  as itself — rotating it into its direction of travel sent it spinning as you dragged.
  *  The trailing -50% centres the box on the cursor AFTER the scale, so the flex happens about its
  *  middle rather than its top-left corner. */
+/** Lerp two #rrggbb colours. The carried chip's blue fades back to the palette button's own border
+ *  as it lands, so the moment the layer unmounts and the real button reappears is invisible. */
+function mixHex(a: string, b: string, k: number): string {
+  const ch = (h: string, i: number) => parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+  const m = (i: number) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * k);
+  return `rgb(${m(0)}, ${m(1)}, ${m(2)})`;
+}
+
 function boxStyle(g: Geo) {
   return {
     width: `${g.size.w}px`,
     height: `${g.size.h}px`,
     borderRadius: `${g.radius}px`,
+    borderColor: mixHex(RK_SELECT, CHIP_BORDER, g.homing),
     opacity: String(g.opacity),
     transform: `translate(${g.at.x}px, ${g.at.y}px) scale(${g.flex.sx}, ${g.flex.sy})`
       + ` translate(-50%, -50%)`,

@@ -42,7 +42,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const chip = { x: 100, y: 100 };
   const CHIP_BOX = { w: 132, h: 34 };
   const base: PullState = {
-    typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
+    typeId: "t1", label: "Switch", chip, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
     openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
@@ -85,17 +85,46 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     expect(overshot).toBe(true);
   });
 
-  it("snapback shrinks from the size it actually was, back onto the chip, to nothing", () => {
+  it("snapback starts from exactly where and what the box actually was", () => {
     const snapFrom = { x: 400, y: 100 }, snapSize = { w: 300, h: 40 };
     const p: PullState = { ...base, phase: "snapback", snapFrom, snapSize, snapStart: 2000 };
     const start = pullGeometry(p, 1, 2000);
     expect(start.at).toEqual(snapFrom);
     expect(start.size).toEqual(snapSize);       // never jumps to an assumed size first
     expect(start.opacity).toBeCloseTo(BOX_OPACITY, 5);
+    expect(start.homing).toBe(0);               // still carried, still blue
+  });
+
+  it("REGRESSION: it FLIES HOME and lands as the chip — it does not evaporate", () => {
+    // The hand-off has to be invisible: when the layer unmounts, the real button reappears in that
+    // exact spot. So at k=1 every property must equal the chip's — land at 0x0 or half-transparent
+    // and you see it pop. This asserts the landed frame IS the chip, property by property.
+    const p: PullState = { ...base, phase: "snapback", snapFrom: { x: 400, y: 100 },
+      snapSize: { w: 300, h: 40 }, snapStart: 2000 };
     const end = pullGeometry(p, 1, 2000 + SNAP_MS * 5);
-    expect(end.at).toEqual(chip);
-    expect(end.size).toEqual({ w: 0, h: 0 });
-    expect(end.opacity).toBe(0);
+    expect(end.at).toEqual(chip);               // in its slot
+    expect(end.size).toEqual(CHIP_BOX);         // at the chip's size, NOT nothing
+    expect(end.radius).toBe(CHIP_R);
+    expect(end.opacity).toBe(1);                // fully opaque, like the real button
+    expect(end.homing).toBe(1);                 // and its blue has faded to the chip's own border
+    expect(end.openness).toBe(0);               // showing the label, left-aligned, like a chip
+    expect(end.flex).toEqual({ sx: 1, sy: 1 }); // and unflexed — see below
+  });
+
+  it("REGRESSION: the flex relaxes to nothing by the time it lands", () => {
+    // The outline is still ringing when you let go. A box that touches down mid-wobble is a couple
+    // of px wider than the chip it hands off to — measured 194 against 192 — and you see the pop.
+    const wobbling: PullState = { ...base, phase: "snapback", snapFrom: { x: 400, y: 100 },
+      snapSize: CHIP_BOX, snapStart: 2000, flex: { stretch: FLEX_MAX, v: 4 } };
+    expect(pullGeometry(wobbling, 1, 2000).flex.sx).toBeGreaterThan(1);        // still wobbling
+    expect(pullGeometry(wobbling, 1, 2000 + SNAP_MS * 5).flex).toEqual({ sx: 1, sy: 1 }); // landed flat
+  });
+
+  it("the flight home eases rather than running at a constant rate", () => {
+    const p: PullState = { ...base, phase: "snapback", snapFrom: { x: 0, y: 0 },
+      snapSize: CHIP_BOX, snapStart: 0 };
+    // Half way through the CLOCK it should be well past half way HOME — that is the ease-out.
+    expect(pullGeometry(p, 1, SNAP_MS / 2).homing).toBeGreaterThan(0.5);
   });
 });
 
@@ -179,7 +208,7 @@ describe("crossing the rack line, both ways, in one motion", () => {
   const chip = { x: 100, y: 100 };
   const CHIP_BOX = { w: 132, h: 34 };
   const base: PullState = {
-    typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
+    typeId: "t1", label: "Switch", chip, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null,
     openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
@@ -215,5 +244,42 @@ describe("crossing the rack line, both ways, in one motion", () => {
   it("without an openFrom it still opens from the chip — the ordinary first pull", () => {
     const p: PullState = { ...base, phase: "solid", openFrom: null, snapStart: 1000, x: 400, y: 100 };
     expect(pullGeometry(p, 1, 1000).size).toEqual(CHIP_BOX);
+  });
+});
+
+describe("anchored to the cursor", () => {
+  const chip = { x: 100, y: 100 };
+  const CHIP_BOX = { w: 132, h: 34 };
+  const grab = { x: 40, y: -8 };   // grabbed left of and below the chip's middle
+  const base: PullState = {
+    typeId: "t1", label: "Switch", chip, grab, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
+    snapFrom: null, snapStart: 0, snapSize: null,
+    openFrom: null, closeFrom: null, closeStart: 0,
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
+  };
+
+  it("REGRESSION: the chip keeps the grab offset — it does not teleport its middle to the cursor", () => {
+    // Grab a chip near its edge and the old code snapped its centre under the cursor: the chip
+    // visibly jumped the instant you touched it, which is the opposite of picking something up.
+    const p: PullState = { ...base, x: 500, y: 300 };
+    expect(pullGeometry(p, 1, 0).at).toEqual({ x: 500 + grab.x, y: 300 + grab.y });
+  });
+
+  it("but the OPEN device is centred on the cursor — the cursor picks the RU it lands on", () => {
+    // What you see has to be what you get: the strip under the cursor decides the RU, so an
+    // offset device would drop somewhere other than where it looks.
+    const p: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0, x: 500, y: 300 };
+    const g = pullGeometry(p, 1, SNAP_MS * 5);   // fully open
+    expect(g.openness).toBe(1);
+    expect(g.at).toEqual({ x: 500, y: 300 });
+  });
+
+  it("the offset fades out as it opens rather than snapping away", () => {
+    const mid: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0, x: 500, y: 300 };
+    const g = pullGeometry(mid, 1, SNAP_MS * 0.35);
+    expect(g.openness).toBeGreaterThan(0);
+    expect(g.openness).toBeLessThan(1);
+    expect(g.at.x).toBeGreaterThan(500);          // still partly anchored...
+    expect(g.at.x).toBeLessThan(500 + grab.x);    // ...but on its way to the cursor
   });
 });

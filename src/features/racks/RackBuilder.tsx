@@ -110,6 +110,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       typeId,
       label,
       chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+      // Where you grabbed it, so it stays put under your cursor instead of jumping its middle there.
+      grab: { x: r.left + r.width / 2 - e.clientX, y: r.top + r.height / 2 - e.clientY },
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
       phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
