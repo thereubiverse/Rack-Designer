@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullGeometry, nearRack, restingFlex } from "./palettePull";
+import { SNAP_MS, pullGeometry, nearRack, cancelledHome, overChip, restingFlex } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -110,7 +110,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
-      phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
+      phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, left: false,
       vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
     setPullMounted(true);
@@ -130,6 +130,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.vy = (e.clientY - p.y) / dt;
       p.lastMoveAt = t;
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
+
+      // Take it away, then bring it home to cancel. `left` latches on the way out, so the press
+      // itself — which starts ON the chip — can never trigger this.
+      if (!p.left && !overChip({ x: p.x, y: p.y }, p)) p.left = true;
+      if (cancelledHome(p)) { beginSnapBack(); return; }
       // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
       // fired, and the phase machine belongs with the state's owner. This setState runs once.
       // The rack is what turns a carried chip into a device, so it opens where it is about to live
