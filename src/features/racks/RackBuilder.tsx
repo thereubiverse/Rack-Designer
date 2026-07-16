@@ -63,9 +63,11 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   const canvasRef = useRef<RackCanvasHandle>(null); // zoom in/out drive the canvas imperatively
 
   // Palette -> rack pull. The live values are a REF (mutated per frame, no re-render); React state
-  // is only `pullMounted` (mount the overlay) and `dropArmed` (latched once, when it goes solid).
+  // is only `pullingTypeId` (which chip is in the air — it mounts the overlay AND hides that chip's
+  // button, so you are moving THE chip rather than a copy with the original still sitting behind it)
+  // and `dropArmed` (flipped as it crosses the rack's proximity).
   const pullRef = useRef<PullState | null>(null);
-  const [pullMounted, setPullMounted] = useState(false);
+  const [pullingTypeId, setPullingTypeId] = useState<string | null>(null);
   const [dropArmed, setDropArmed] = useState(false);
   // The pending snap-back timer, held so a NEW pull can cancel it. Without this, abandoning a pull
   // and immediately grabbing another chip lets the old timer fire and kill the new pull mid-gesture.
@@ -78,7 +80,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   const endPull = useCallback(() => {
     clearSnapTimer();
     pullRef.current = null;
-    setPullMounted(false);
+    setPullingTypeId(null);   // the chip reappears in the palette exactly as the carried one vanishes
     setDropArmed(false);
   }, [clearSnapTimer]);
 
@@ -114,12 +116,12 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       openFrom: null, closeFrom: null, closeStart: 0,
       vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
-    setPullMounted(true);
+    setPullingTypeId(typeId);
     setDropArmed(false);
   }
 
   useEffect(() => {
-    if (!pullMounted) return;
+    if (!pullingTypeId) return;
     const onMove = (e: PointerEvent) => {
       const p = pullRef.current;
       if (!p || p.phase === "snapback") return;
@@ -179,7 +181,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("keydown", onKey);
     };
-  }, [pullMounted, beginSnapBack]);
+  }, [pullingTypeId, beginSnapBack]);
   // PatchDocs' Fit toggle: default fits the whole rack (height); each click flips width ↔ height.
   const [fitMode, setFitMode] = useState<FitMode>("height");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
@@ -335,7 +337,10 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
           <button key={t.id} type="button" data-testid={`palette-type-${t.code}`}
             onPointerDown={(e) => startPull(e, t.id, t.name)}
             onClick={() => setPicker({ initialTypeId: t.id, atU: null })}
-            style={{ touchAction: "none" }}
+            // Hidden, not unmounted: you are moving THE chip, so its slot must be empty rather than
+            // showing a second one behind the one in your hand — but `visibility` keeps the space, so
+            // the palette below it doesn't jump up and reflow the moment you pick it up.
+            style={{ touchAction: "none", visibility: pullingTypeId === t.id ? "hidden" : undefined }}
             className="block w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left text-sm font-medium hover:bg-neutral-50">
             {t.name}
           </button>
@@ -487,7 +492,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
         />
       )}
 
-      {pullMounted && (
+      {pullingTypeId && (
         <PalettePullLayer pullRef={pullRef} scaleOf={() => canvasRef.current?.getScale() ?? 1} />
       )}
     </div>
