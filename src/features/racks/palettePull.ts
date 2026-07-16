@@ -45,6 +45,12 @@ export interface PullState {
   snapStart: number;      // performance.now() at the start of the snap-back (also the open clock)
   snapSize: Size | null;  // how big the box was when abandoned — the snap-back shrinks from THERE,
                           // whether it was still a chip or had already opened into a device
+  openFrom: Size | null;  // the size it was when it started opening, and
+  closeFrom: Size | null; // the size it was when it started closing again.
+  closeStart: number;     // performance.now() the close began.
+                          // Both exist so each spring runs from the size the box ACTUALLY was, not
+                          // an assumed one: bring a half-open device home and drag it straight back
+                          // to the rack and it must resume from where it is, not jump.
   left: boolean;          // has the cursor LEFT the chip's box yet? Latched once true. Bringing the
                           // carried thing home only cancels after you have actually taken it away —
                           // without this the gesture would cancel on the press itself, since the
@@ -175,9 +181,19 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
   if (p.phase === "solid") {
     const g = latchGrow((now - p.snapStart) / SNAP_MS);
     const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
-    return { at, size: lerpSize(p.chipSize, full, g),
+    return { at, size: lerpSize(p.openFrom ?? p.chipSize, full, g),
       radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(g),
       opacity: BOX_OPACITY, openness: g, flex };
+  }
+
+  // Carried back home from an opened device: close smoothly rather than jumping 300px wide back to
+  // a chip in one frame. Runs itself out and then sits at the chip's size forever, so there is no
+  // flag to clear — dragging away again simply keeps returning the settled value.
+  if (p.closeFrom) {
+    const k = clamp01((now - p.closeStart) / SNAP_MS);
+    return { at, size: lerpSize(p.closeFrom, p.chipSize, k),
+      radius: CHIP_R + (CORNER_R - CHIP_R) * (1 - k),
+      opacity: BOX_OPACITY, openness: 1 - k, flex };
   }
 
   // Still a chip: exactly the size you picked up, under the cursor.
