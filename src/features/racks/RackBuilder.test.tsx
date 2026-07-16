@@ -198,6 +198,40 @@ describe("RackBuilder sidebar selection", () => {
     expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
   });
 
+  it("picking a chip up empties ITS slot — you are moving the chip, not a copy", () => {
+    render(<RackBuilder {...baseProps()} />);
+    const chip = screen.getByTestId("palette-type-SW");
+    expect(chip.style.visibility).toBe("");
+    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+    // Hidden rather than unmounted: the slot must keep its space, or the palette below it jumps up
+    // and reflows the instant you pick a chip up.
+    expect(chip.style.visibility).toBe("hidden");
+    expect(screen.getByTestId("palette-type-SW")).toBeInTheDocument();
+  });
+
+  it("the chip comes back the moment the carried one is gone", () => {
+    vi.useFakeTimers();
+    try {
+      render(<RackBuilder {...baseProps()} />);
+      const chip = screen.getByTestId("palette-type-SW");
+      fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
+      act(() => { fireEvent.pointerUp(window, { clientX: 0, clientY: 0 }); });   // abandon -> snap back
+      expect(chip.style.visibility).toBe("hidden");            // still away, mid snap-back
+      act(() => { vi.advanceTimersByTime(SNAP_MS + 20); });
+      expect(screen.getByTestId("palette-type-SW").style.visibility).toBe("");   // home again
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("only the chip you picked up is hidden", () => {
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
+    for (const el of screen.getAllByTestId(/^palette-type-/)) {
+      expect(el.style.visibility).toBe(el.getAttribute("data-testid") === "palette-type-SW" ? "hidden" : "");
+    }
+  });
+
   it("right-clicking a chip starts no pull", () => {
     render(<RackBuilder {...baseProps()} />);
     fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 2 });
