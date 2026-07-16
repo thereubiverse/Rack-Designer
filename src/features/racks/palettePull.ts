@@ -51,10 +51,6 @@ export interface PullState {
                           // Both exist so each spring runs from the size the box ACTUALLY was, not
                           // an assumed one: bring a half-open device home and drag it straight back
                           // to the rack and it must resume from where it is, not jump.
-  left: boolean;          // has the cursor LEFT the chip's box yet? Latched once true. Bringing the
-                          // carried thing home only cancels after you have actually taken it away —
-                          // without this the gesture would cancel on the press itself, since the
-                          // cursor starts on the chip.
   vx: number;             // tracked cursor velocity, px/s — drives the flex
   vy: number;
   lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
@@ -132,22 +128,13 @@ export function flexScale(stretch: number): { sx: number; sy: number } {
   return { sx, sy: 1 / sx };
 }
 
-/** Is the cursor over the chip's own box? Used two ways: to latch `left` once you have taken the
- *  chip away, and after that to cancel the placement when you bring it home. The chip's own box is
- *  the bound rather than an invented radius — "back where it came from" is exactly that. */
-export function overChip(at: Vec, p: PullState): boolean {
-  return Math.abs(at.x - p.chip.x) <= p.chipSize.w / 2 && Math.abs(at.y - p.chip.y) <= p.chipSize.h / 2;
-}
-
-/** Should this pull be cancelled? True once the carried thing — chip or opened device — has been
- *  taken off the chip and then brought back onto it. Bringing it home puts it back and adds nothing. */
-export function cancelledHome(p: PullState): boolean {
-  return p.left && overChip({ x: p.x, y: p.y }, p);
-}
-
-/** Is the carried chip close enough to the rack to open into a device? Horizontal distance only —
- *  see RACK_LATCH_X. `rackCentreX` is the rack's centre line in viewport px; null when the canvas
- *  isn't measurable, in which case never open on a guess. */
+/** Is the carried thing close enough to the rack to be a device? Horizontal distance only — see
+ *  RACK_LATCH_X. `rackCentreX` is the rack's centre line in viewport px; null when the canvas isn't
+ *  measurable, in which case never open on a guess.
+ *  This is the ONLY rule: near the rack it is a device, away from it a chip, and crossing the line
+ *  either way flips it. Carrying it home to the palette needs no rule of its own — the palette is
+ *  far from the rack, so coming home IS leaving the rack, and releasing there adds nothing because
+ *  any release off a free RU already snaps back. */
 export function nearRack(boxX: number, rackCentreX: number | null): boolean {
   return rackCentreX !== null && Math.abs(boxX - rackCentreX) <= RACK_LATCH_X;
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SNAP_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
-  restingFlex, flexTarget, stepFlex, flexScale, latchGrow, pullGeometry, nearRack, overChip, cancelledHome,
+  restingFlex, flexTarget, stepFlex, flexScale, latchGrow, pullGeometry, nearRack,
   type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
@@ -43,7 +43,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const CHIP_BOX = { w: 132, h: 34 };
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
-    snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    snapFrom: null, snapStart: 0, snapSize: null,
     openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };
@@ -174,50 +174,13 @@ describe("the flex — an upright chip whose outline gives with movement and spe
   });
 });
 
-describe("bring it home to cancel", () => {
+
+describe("crossing the rack line, both ways, in one motion", () => {
   const chip = { x: 100, y: 100 };
   const CHIP_BOX = { w: 132, h: 34 };
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
-    snapFrom: null, snapStart: 0, snapSize: null, left: false,
-    openFrom: null, closeFrom: null, closeStart: 0,
-    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
-  };
-
-  it("overChip is the chip's own box — 'back where it came from' is exactly that", () => {
-    expect(overChip({ x: 100, y: 100 }, base)).toBe(true);
-    expect(overChip({ x: 100 + CHIP_BOX.w / 2, y: 100 }, base)).toBe(true);   // on the edge
-    expect(overChip({ x: 100 + CHIP_BOX.w / 2 + 1, y: 100 }, base)).toBe(false);
-    expect(overChip({ x: 100, y: 100 + CHIP_BOX.h / 2 + 1 }, base)).toBe(false);
-  });
-
-  it("REGRESSION: does NOT cancel on the press itself, which starts ON the chip", () => {
-    // Without the `left` latch this fires the instant you touch the chip and the gesture is dead on
-    // arrival — the cursor is over the chip by definition at pointerdown.
-    expect(cancelledHome({ ...base, left: false })).toBe(false);
-  });
-
-  it("cancels once it has been taken away and brought back", () => {
-    expect(cancelledHome({ ...base, left: true, x: 100, y: 100 })).toBe(true);
-  });
-
-  it("does not cancel while it is still away from the chip", () => {
-    expect(cancelledHome({ ...base, left: true, x: 900, y: 400 })).toBe(false);
-  });
-
-  it("cancels an OPENED device too, not just a carried chip", () => {
-    // The point of the rule: change your mind after it has become a device and bringing it home
-    // still puts it back.
-    expect(cancelledHome({ ...base, left: true, phase: "solid", x: 100, y: 100 })).toBe(true);
-  });
-});
-
-describe("coming home is reversible — the gesture survives it", () => {
-  const chip = { x: 100, y: 100 };
-  const CHIP_BOX = { w: 132, h: 34 };
-  const base: PullState = {
-    typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
-    snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    snapFrom: null, snapStart: 0, snapSize: null,
     openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };

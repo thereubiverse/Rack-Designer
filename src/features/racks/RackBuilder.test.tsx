@@ -211,6 +211,28 @@ describe("RackBuilder sidebar selection", () => {
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
   });
 
+  it("leaving the rack closes it back to a chip AND disarms the drop", () => {
+    // The rule is symmetric: cross in and it opens, cross back out and it closes. The disarm is the
+    // load-bearing half — a device that closed but stayed armed could still be dropped from across
+    // the page, which is exactly the bug the proximity rule exists to prevent.
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); });   // opens
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX() - RACK_LATCH_X - 40, clientY: 0 }); }); // leaves
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull();
+  });
+
+  it("crossing back IN re-opens it, so the whole trip works in one motion", () => {
+    render(<RackBuilder {...baseProps()} />);
+    fireEvent.pointerDown(screen.getByTestId("palette-type-SW"), { clientX: 0, clientY: 0, button: 0 });
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); });   // open
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX() - RACK_LATCH_X - 40, clientY: 0 }); }); // close
+    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); });   // open again
+    fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
+    expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  });
+
   it("a chip carried far PAST the rack never opens, so it cannot be dropped", () => {
     // The RACK is what turns a carried chip into a device. Carry it way beyond the rack's centre
     // line and it must stay a chip, the drop must not arm, and releasing on a strip must do nothing.
