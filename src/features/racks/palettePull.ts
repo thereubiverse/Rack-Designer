@@ -37,6 +37,8 @@ export interface PullState {
   typeId: string;
   label: string;      // the chip's text — carried, and cross-faded out as the device appears
   chip: Vec;          // chip centre, viewport coords — where a snap-back returns to
+  grab: Vec;          // chip centre MINUS the cursor at pickup. Held so the chip stays exactly where
+                      // you grabbed it instead of teleporting its middle under your cursor.
   chipSize: Size;     // the chip's own box: the carried thing IS this size until it opens
   x: number;          // live pointer, viewport coords
   y: number;
@@ -57,8 +59,12 @@ export interface PullState {
   flex: Flex;             // the outline's elastic spring, stepped once per frame by the layer
 }
 
-/** Carried opacity — translucent so the rack and its rails read through what you are holding. */
+/** Carried opacity — translucent so the rack and its rails read through what you are holding. It
+ *  returns to a solid 1 as it lands back home, so the hand-off to the real chip is invisible. */
 export const BOX_OPACITY = 0.85;
+/** The palette button's own border (`border-neutral-200`). What the carried chip's blue fades back to
+ *  as it lands, so the swap to the real button underneath cannot be seen. */
+export const CHIP_BORDER = "#e5e5e5";
 
 const clamp01 = (t: number) => (t > 1 ? 1 : t > 0 ? t : 0);
 const lerpSize = (a: Size, b: Size, k: number): Size => ({ w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
@@ -142,6 +148,12 @@ export function nearRack(boxX: number, rackCentreX: number | null): boolean {
 /** The chip's label inset (Tailwind `px-3`). Where the name starts before it travels to the centre. */
 export const LABEL_INSET = 12;
 
+/** Ease for the flight home: fast away, gently settling. */
+export function easeOutCubic(t: number): number {
+  const c = clamp01(t);
+  return 1 - Math.pow(1 - c, 3);
+}
+
 /** Everything needed to paint one frame. PURE: same state + same clock => same pixels. Both the
  *  first paint and the rAF loop call THIS — computing the geometry twice, in two places, is how they
  *  drifted apart once already (the box collapsed the frame after it latched).
@@ -149,40 +161,64 @@ export const LABEL_INSET = 12;
  *  between the chip's label and the device's face. It OVERSHOOTS 1 mid-spring — that is the elastic
  *  pop — so anything used as an opacity must clamp it. */
 export function pullGeometry(p: PullState, scale: number, now: number): {
-  at: Vec; size: Size; radius: number; opacity: number; openness: number;
+  at: Vec; size: Size; radius: number; opacity: number; openness: number; homing: number;
   flex: { sx: number; sy: number };
 } {
   const flex = flexScale(p.flex.stretch);
 
   if (p.phase === "snapback") {
-    const k = clamp01((now - p.snapStart) / SNAP_MS);
+    // It FLIES HOME and lands in its slot — it does not evaporate. By k=1 every property equals the
+    // real chip's exactly (its position, its size, its radius, its border, fully opaque), so when
+    // the layer unmounts and the real button reappears there is nothing to see.
+    const k = easeOutCubic((now - p.snapStart) / SNAP_MS);
     const from = p.snapFrom ?? p.chip;
-    const at = { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k };
     const s = p.snapSize ?? p.chipSize;
-    return { at, size: { w: s.w * (1 - k), h: s.h * (1 - k) }, radius: CHIP_R,
-      opacity: (1 - k) * BOX_OPACITY, openness: 0, flex };
+    return {
+      at: { x: from.x + (p.chip.x - from.x) * k, y: from.y + (p.chip.y - from.y) * k },
+      size: lerpSize(s, p.chipSize, k),
+      radius: CHIP_R,
+      opacity: BOX_OPACITY + (1 - BOX_OPACITY) * k,
+      openness: 0,
+      homing: k,           // 0 = still carried and blue, 1 = landed and indistinguishable
+      // The flex relaxes to nothing as it lands. It is still ringing when you let go, and a box that
+      // touches down mid-wobble is a couple of px wider than the chip it is handing off to — enough
+      // to see. Forcing it to rest by k=1 is what makes the last frame EXACTLY the chip.
+      flex: { sx: 1 + (flex.sx - 1) * (1 - k), sy: 1 + (flex.sy - 1) * (1 - k) },
+    };
   }
 
-  const at = { x: p.x, y: p.y };
+  // Anchored to where you grabbed it: the chip does not jump its middle under the cursor on pickup.
+  // The offset fades out as it opens, so the device ends up centred on the cursor — which is what
+  // decides the RU it drops on, so what you see must be what you get.
+  const anchor = 1 - clamp01(openness(p, now));
+  const at = { x: p.x + p.grab.x * anchor, y: p.y + p.grab.y * anchor };
+
+  const o = openness(p, now);
 
   if (p.phase === "solid") {
-    const g = latchGrow((now - p.snapStart) / SNAP_MS);
     const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
-    return { at, size: lerpSize(p.openFrom ?? p.chipSize, full, g),
-      radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(g),
-      opacity: BOX_OPACITY, openness: g, flex };
+    return { at, size: lerpSize(p.openFrom ?? p.chipSize, full, o),
+      radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(o),
+      opacity: BOX_OPACITY, openness: o, homing: 0, flex };
   }
 
-  // Carried back home from an opened device: close smoothly rather than jumping 300px wide back to
+  // Carried back out of the rack's proximity: close smoothly rather than jumping 300px wide back to
   // a chip in one frame. Runs itself out and then sits at the chip's size forever, so there is no
   // flag to clear — dragging away again simply keeps returning the settled value.
   if (p.closeFrom) {
-    const k = clamp01((now - p.closeStart) / SNAP_MS);
-    return { at, size: lerpSize(p.closeFrom, p.chipSize, k),
-      radius: CHIP_R + (CORNER_R - CHIP_R) * (1 - k),
-      opacity: BOX_OPACITY, openness: 1 - k, flex };
+    return { at, size: lerpSize(p.closeFrom, p.chipSize, 1 - o),
+      radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(o),
+      opacity: BOX_OPACITY, openness: o, homing: 0, flex };
   }
 
-  // Still a chip: exactly the size you picked up, under the cursor.
-  return { at, size: p.chipSize, radius: CHIP_R, opacity: BOX_OPACITY, openness: 0, flex };
+  // Still a chip: exactly the size you picked up, anchored where you grabbed it.
+  return { at, size: p.chipSize, radius: CHIP_R, opacity: BOX_OPACITY, openness: 0, homing: 0, flex };
+}
+
+/** How far open the box is, 0 (a chip) -> 1 (the device). Needed BEFORE `at`, because the grab
+ *  anchor fades out as it opens. Not valid for `snapback`, which is always a chip. */
+function openness(p: PullState, now: number): number {
+  if (p.phase === "solid") return latchGrow((now - p.snapStart) / SNAP_MS);
+  if (p.closeFrom) return 1 - clamp01((now - p.closeStart) / SNAP_MS);
+  return 0;
 }
