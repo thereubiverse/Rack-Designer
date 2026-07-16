@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  SNAP_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
-  restingFlex, flexTarget, stepFlex, flexScale, latchGrow, pullGeometry, nearRack,
+  SNAP_MS, OPEN_MS, CLOSE_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
+  restingFlex, flexTarget, stepFlex, flexScale, easeOutBack, easeInOutCubic, pullGeometry, nearRack,
   type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
@@ -11,14 +11,41 @@ import { RU_PX } from "@/domain/faceplate-geometry";
 const CHIP = { w: 132, h: 34 };
 
 
-describe("latchGrow — the spring that opens the chip into the device", () => {
-  it("runs 0 -> 1 and overshoots in between (that IS the elastic pop)", () => {
-    // Starting at 0 is correct: it lerps FROM the chip's size, so it has something to grow out of.
-    expect(latchGrow(0)).toBe(0);
-    expect(latchGrow(1)).toBe(1);
-    expect(latchGrow(1.5)).toBe(1);             // clamps — the solid branch feeds k unclamped
-    const samples = Array.from({ length: 50 }, (_, i) => latchGrow(i / 49));
-    expect(Math.max(...samples)).toBeGreaterThan(1);
+describe("the open eases — shape springs, content does not", () => {
+  it("easeOutBack overshoots ONCE and settles — a pop, not a ring", () => {
+    // Exactly 0 and exactly 1, not 1e-16 either side: these get lerped between two real sizes, and
+    // -2.2e-16 at the start opened the box from 131.99999999999983 rather than the chip's 132.
+    expect(easeOutBack(0)).toBe(0);
+    expect(easeOutBack(1)).toBe(1);
+    expect(easeOutBack(-0.5)).toBe(0);
+    expect(easeOutBack(1.5)).toBe(1);           // clamps — the solid branch feeds it unclamped
+    const samples = Array.from({ length: 200 }, (_, i) => easeOutBack(i / 199));
+    expect(Math.max(...samples)).toBeGreaterThan(1);          // it does pop
+    // ...but only once. A ringing elastic oscillates ACROSS its target — up, back below, up again.
+    // Count strict crossings only: settling onto the target at the end is not a crossing, which is
+    // the distinction between a pop and a bounce.
+    let crossings = 0;
+    for (let i = 1; i < samples.length; i++) {
+      if ((samples[i - 1] < 1 && samples[i] > 1) || (samples[i - 1] > 1 && samples[i] < 1)) crossings++;
+    }
+    expect(crossings).toBe(1);   // over the target once, and it never comes back down through it
+  });
+
+  it("easeInOutCubic is monotonic and NEVER passes 1 — the content must not wobble", () => {
+    expect(easeInOutCubic(0)).toBe(0);
+    expect(easeInOutCubic(1)).toBe(1);
+    let prev = -1;
+    for (let i = 0; i <= 200; i++) {
+      const v = easeInOutCubic(i / 200);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      expect(v).toBeLessThanOrEqual(1);
+      prev = v;
+    }
+  });
+
+  it("is smooth at BOTH ends — it does not lurch off the mark or slam into it", () => {
+    expect(easeInOutCubic(0.02)).toBeLessThan(0.02);   // eases in
+    expect(1 - easeInOutCubic(0.98)).toBeLessThan(0.02); // and out
   });
 });
 
@@ -54,7 +81,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     expect(g.at).toEqual({ x: 400, y: 250 });
     expect(g.size).toEqual(CHIP_BOX);
     expect(g.radius).toBe(CHIP_R);
-    expect(g.openness).toBe(0);                 // still a chip: label shown, no face
+    expect(g.reveal).toBe(0);                 // still a chip: label shown, no face
   });
 
   it("REGRESSION: at the instant it opens it is still exactly CHIP-sized — not 0, not already full", () => {
@@ -64,25 +91,34 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
     const g = pullGeometry(p, 1, 1000);
     expect(g.size).toEqual(CHIP_BOX);
-    expect(g.openness).toBe(0);
+    expect(g.reveal).toBe(0);
   });
 
   it("opens to EXACTLY one RU of rack, scaled by the canvas, and fully faced", () => {
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
-    const g = pullGeometry(p, 1, 1000 + SNAP_MS * 20);
+    const g = pullGeometry(p, 1, 1000 + OPEN_MS * 20);
     expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
-    expect(g.openness).toBe(1);
+    expect(g.reveal).toBe(1);
     expect(g.radius).toBe(CORNER_R);            // and has taken the device's own corner
-    expect(pullGeometry(p, 0.5, 1000 + SNAP_MS * 20).size).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
+    expect(pullGeometry(p, 0.5, 1000 + OPEN_MS * 20).size).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
   });
 
-  it("overshoots one RU mid-spring (that IS the elastic pop)", () => {
+  it("the SIZE overshoots one RU (the pop) while the reveal never does (no wobble)", () => {
+    // The refinement, in one test: the shape springs past its target and settles, but everything
+    // riding `reveal` — the name's travel, both cross-fades, the anchor's release — climbs straight
+    // to 1 and stops. They used to share one ringing curve, so the name jittered as it arrived.
     const p: PullState = { ...base, phase: "solid", x: 400, y: 100, snapStart: 1000 };
-    let overshot = false;
-    for (let dt = 0; dt <= SNAP_MS; dt += SNAP_MS / 40) {
-      if (pullGeometry(p, 1, 1000 + dt).size.w > RACK_INTERIOR_W) overshot = true;
+    let overshot = false, revealPast1 = false, prevReveal = -1, revealDipped = false;
+    for (let dt = 0; dt <= OPEN_MS * 1.2; dt += OPEN_MS / 60) {
+      const g = pullGeometry(p, 1, 1000 + dt);
+      if (g.size.w > RACK_INTERIOR_W) overshot = true;
+      if (g.reveal > 1) revealPast1 = true;
+      if (g.reveal < prevReveal - 1e-9) revealDipped = true;
+      prevReveal = g.reveal;
     }
-    expect(overshot).toBe(true);
+    expect(overshot).toBe(true);        // the shape pops
+    expect(revealPast1).toBe(false);    // the content does not
+    expect(revealDipped).toBe(false);   // ...and never goes backwards
   });
 
   it("snapback starts from exactly where and what the box actually was", () => {
@@ -107,7 +143,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     expect(end.radius).toBe(CHIP_R);
     expect(end.opacity).toBe(1);                // fully opaque, like the real button
     expect(end.homing).toBe(1);                 // and its blue has faded to the chip's own border
-    expect(end.openness).toBe(0);               // showing the label, left-aligned, like a chip
+    expect(end.reveal).toBe(0);                 // showing the label, left-aligned, like a chip
     expect(end.flex).toEqual({ sx: 1, sy: 1 }); // and unflexed — see below
   });
 
@@ -220,17 +256,26 @@ describe("crossing the rack line, both ways, in one motion", () => {
     const p: PullState = { ...base, closeFrom: wide, closeStart: 1000, x: 100, y: 100 };
     const start = pullGeometry(p, 1, 1000);
     expect(start.size).toEqual(wide);         // exactly where it was
-    expect(start.openness).toBe(1);           // still fully a device on frame one
+    expect(start.reveal).toBe(1);             // still fully a device on frame one
+  });
+
+  it("the close never overshoots — a retreat that springs past itself reads as indecisive", () => {
+    const p: PullState = { ...base, closeFrom: { w: 300, h: 40 }, closeStart: 1000 };
+    for (let dt = 0; dt <= CLOSE_MS * 1.2; dt += CLOSE_MS / 40) {
+      const g = pullGeometry(p, 1, 1000 + dt);
+      expect(g.size.w).toBeLessThanOrEqual(300 + 1e-9);
+      expect(g.size.w).toBeGreaterThanOrEqual(CHIP_BOX.w - 1e-9);
+    }
   });
 
   it("finishes the close as an ordinary chip, and stays one", () => {
     const p: PullState = { ...base, closeFrom: { w: 300, h: 40 }, closeStart: 1000 };
-    const end = pullGeometry(p, 1, 1000 + SNAP_MS);
+    const end = pullGeometry(p, 1, 1000 + CLOSE_MS);
     expect(end.size).toEqual(CHIP_BOX);
-    expect(end.openness).toBe(0);
+    expect(end.reveal).toBe(0);
     expect(end.radius).toBe(CHIP_R);
     // It settles and stays settled — which is why closeFrom never needs clearing.
-    expect(pullGeometry(p, 1, 1000 + SNAP_MS * 50).size).toEqual(CHIP_BOX);
+    expect(pullGeometry(p, 1, 1000 + CLOSE_MS * 50).size).toEqual(CHIP_BOX);
   });
 
   it("REGRESSION: re-opening resumes from the size it IS, not from the chip's", () => {
@@ -269,17 +314,51 @@ describe("anchored to the cursor", () => {
     // What you see has to be what you get: the strip under the cursor decides the RU, so an
     // offset device would drop somewhere other than where it looks.
     const p: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0, x: 500, y: 300 };
-    const g = pullGeometry(p, 1, SNAP_MS * 5);   // fully open
-    expect(g.openness).toBe(1);
+    const g = pullGeometry(p, 1, OPEN_MS * 5);   // fully open
+    expect(g.reveal).toBe(1);
     expect(g.at).toEqual({ x: 500, y: 300 });
   });
 
   it("the offset fades out as it opens rather than snapping away", () => {
     const mid: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0, x: 500, y: 300 };
-    const g = pullGeometry(mid, 1, SNAP_MS * 0.35);
-    expect(g.openness).toBeGreaterThan(0);
-    expect(g.openness).toBeLessThan(1);
+    const g = pullGeometry(mid, 1, OPEN_MS * 0.35);
+    expect(g.reveal).toBeGreaterThan(0);
+    expect(g.reveal).toBeLessThan(1);
     expect(g.at.x).toBeGreaterThan(500);          // still partly anchored...
     expect(g.at.x).toBeLessThan(500 + grab.x);    // ...but on its way to the cursor
+  });
+});
+
+describe("the flex belongs to the chip, not the device", () => {
+  const CHIP_BOX = { w: 132, h: 34 };
+  const base: PullState = {
+    typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX,
+    x: 400, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
+    openFrom: null, closeFrom: null, closeStart: 0,
+    vx: 0, vy: 0, lastMoveAt: 0, flex: { stretch: FLEX_MAX, v: 0 },
+  };
+
+  it("a CHIP flexes", () => {
+    expect(pullGeometry(base, 1, 0).flex.sx).toBeGreaterThan(1);
+  });
+
+  it("REGRESSION: an OPEN device does not — it arrives crisp and still", () => {
+    // A rack device is not slime. And left ringing, it jittered the device and the name riding
+    // inside it as they settled — 4.3px of wobble over 10 reversals with the cursor parked, which
+    // is exactly what made the open read as unrefined.
+    const open: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0 };
+    const g = pullGeometry(open, 1, OPEN_MS * 5);
+    expect(g.reveal).toBe(1);
+    expect(g.flex).toEqual({ sx: 1, sy: 1 });
+  });
+
+  it("the flex fades out as it opens rather than being switched off", () => {
+    const mid: PullState = { ...base, phase: "solid", openFrom: CHIP_BOX, snapStart: 0 };
+    const g = pullGeometry(mid, 1, OPEN_MS * 0.4);
+    expect(g.reveal).toBeGreaterThan(0);
+    expect(g.reveal).toBeLessThan(1);
+    const full = flexScale(FLEX_MAX).sx;
+    expect(g.flex.sx).toBeGreaterThan(1);        // still some...
+    expect(g.flex.sx).toBeLessThan(full);        // ...but less than a chip's
   });
 });

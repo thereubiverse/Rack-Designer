@@ -91,17 +91,17 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   );
 }
 
-/** openness overshoots 1 mid-spring (that IS the elastic pop), so anything derived from it has to
+/** `reveal` is monotonic 0..1 by construction, so the label and the fades cannot wobble. It is still
  *  clamp — a raw value would drive opacity past 1 and, worse, negative on any undershoot, and would
  *  fling the label past the device's centre and back. */
 const clamp01 = (n: number) => (n > 1 ? 1 : n > 0 ? n : 0);
-const faceOpacity = (g: Geo) => clamp01(g.openness);
+const faceOpacity = (g: Geo) => clamp01(g.reveal);
 
 /** The name travels from the chip's left inset to the device's centre as it opens. Anchor and offset
  *  move together — `left` LABEL_INSET -> w/2 while translateX 0% -> -50% — so the text lands truly
  *  centred without anyone having to measure how wide it is. */
 function labelStyle(g: Geo) {
-  const k = clamp01(g.openness);
+  const k = clamp01(g.reveal);
   return {
     top: "50%",
     left: `${LABEL_INSET + (g.size.w / 2 - LABEL_INSET) * k}px`,
