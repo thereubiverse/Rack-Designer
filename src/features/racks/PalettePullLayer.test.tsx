@@ -11,7 +11,7 @@ const CHIP = { w: 132, h: 34 };
 function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, chipSize: CHIP,
-    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
     openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), ...over,
   };

@@ -8,7 +8,7 @@ import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
-import { SNAP_MS, pullGeometry, nearRack, cancelledHome, overChip, restingFlex } from "./palettePull";
+import { SNAP_MS, pullGeometry, nearRack, restingFlex } from "./palettePull";
 import { RackDeviceSettings, type PlacementDraft } from "./RackDeviceSettings";
 import { saveRackLayoutAction, saveConnectionsAction, saveEndpointsAction, updateRackAction } from "./actions";
 import { nextCode, resolveMove, findFreeSlot, validateDeviceCode, minRackHeight, type PlacementLike, type FitMode } from "./rackOps";
@@ -110,7 +110,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chip: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
-      phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, left: false,
+      phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
       openFrom: null, closeFrom: null, closeStart: 0,
       vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
@@ -132,46 +132,36 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.lastMoveAt = t;
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
 
-      // Take it away, then bring it home. `left` latches on the way out, so the press itself —
-      // which starts ON the chip — can never trigger this.
-      if (!p.left && !overChip({ x: p.x, y: p.y }, p)) p.left = true;
-      // Home REVERTS it to a chip; it does NOT end the gesture. The button is still down, so you
-      // must be able to drag straight back out in the same motion — cancelling here would leave you
-      // holding nothing mid-drag. Releasing over the chip is what actually cancels, and that needs
-      // no code: any release off a free RU already snaps back and adds nothing.
-      if (cancelledHome(p) && p.phase === "solid") {
-        const now = performance.now();
-        p.closeFrom = pullGeometry(p, canvasRef.current?.getScale() ?? 1, now).size;
-        p.closeStart = now;
-        p.phase = "pulling";
-        // Disarm synchronously, for the same reason the arm flushes: a pointerup must never see a
-        // stale armed drop. Runs once per homecoming, not per move, because the phase flips first.
-        flushSync(() => setDropArmed(false));
-      }
-      // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
-      // fired, and the phase machine belongs with the state's owner. This setState runs once.
-      // The rack is what turns a carried chip into a device, so it opens where it is about to live
-      // rather than over the palette. The chip sits exactly under the cursor, so p.x IS its x.
-      // (This used to also require pullT >= 1 — "the neck has snapped". There is no neck any more;
-      // that condition would now be an unreachable leftover gating the whole gesture on nothing.)
-      if (p.phase === "pulling" && nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null)) {
-        const now2 = performance.now();
-        // Open from the size it ACTUALLY is — which is not the chip's if you brought a device home
-        // and turned straight back before the close finished. Assuming the chip's size there makes
-        // it visibly jump.
-        p.openFrom = pullGeometry(p, canvasRef.current?.getScale() ?? 1, now2).size;
+      // The rack is what makes it a device, and that is the ONLY rule: cross into the rack's
+      // proximity and it opens, cross back out and it closes again, in the same motion, as many
+      // times as you like. Both directions are decided HERE, not in the layer's rAF loop: the drop
+      // must not depend on a frame having fired, and the phase machine belongs with the state's
+      // owner. Carrying it home to the palette needs no rule of its own — home is far from the
+      // rack, so coming home IS leaving it.
+      // Each spring starts from the size the box ACTUALLY is, never an assumed one: turn around
+      // mid-close and it resumes from where it is rather than jumping.
+      const scale = canvasRef.current?.getScale() ?? 1;
+      const atRack = nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null);
+      if (p.phase === "pulling" && atRack) {
+        const t2 = performance.now();
+        p.openFrom = pullGeometry(p, scale, t2).size;
         p.closeFrom = null;
         p.phase = "solid";
-        p.snapStart = now2;               // the latch spring's clock
+        p.snapStart = t2;                 // the open spring's clock
         // flushSync, not a plain setState: pointermove is continuous priority, so React would
         // otherwise schedule this render through the Scheduler instead of flushing it inline. The
         // strip gates the drop on props.dropArmed (not on the ref write above, which IS
         // synchronous), so a pointerup arriving before that scheduled render still sees
-        // dropArmed=false and silently loses the drop. Only runs once per gesture, so the
-        // flushSync cost is nil. Raising PULL_DIST (a tuning knob, see palettePull.ts) moves the
-        // latch point closer to the rack, WIDENING this window rather than narrowing it — so this
-        // guards against a regression the next tuning pass could otherwise introduce.
+        // dropArmed=false and silently loses the drop. Runs once per crossing, so the cost is nil.
         flushSync(() => setDropArmed(true));
+      } else if (p.phase === "solid" && !atRack) {
+        const t2 = performance.now();
+        p.closeFrom = pullGeometry(p, scale, t2).size;
+        p.closeStart = t2;                // the close spring's clock
+        p.openFrom = null;
+        p.phase = "pulling";
+        // Disarm synchronously too — a stale armed drop must never outlive the device it belonged to.
+        flushSync(() => setDropArmed(false));
       }
     };
     const onUp = () => {
