@@ -40,24 +40,7 @@ describe("PalettePullLayer", () => {
     expect(b.style.width).toBe(`${CHIP.w}px`);
     expect(b.style.height).toBe(`${CHIP.h}px`);
     // The same blue the selected device wears, so the gesture is one continuous object.
-    const outline = container.querySelector('[data-testid="pull-outline"]') as HTMLElement;
-    expect(outline.style.borderColor).toBe(rgbOf(RK_SELECT));
-  });
-
-  it("the blue box OVERLAPS the device outline — it is drawn last, on top", () => {
-    // As the box's own CSS border it pushed the face 2px inwards, so the device's grey outline
-    // showed as a second ring just inside the blue. Drawn on top it simply covers it — the same way
-    // the rack draws the box around a selected device.
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
-    const b = box(container);
-    expect(b.style.borderWidth).toBe("");                    // the box itself has NO border...
-    const kids = [...b.children].map((c) => c.getAttribute("data-testid"));
-    expect(kids.indexOf("pull-face")).toBeLessThan(kids.indexOf("pull-outline"));  // ...it is on top
-    const face = container.querySelector('[data-testid="pull-face"]') as HTMLElement;
-    const outline = container.querySelector('[data-testid="pull-outline"]') as HTMLElement;
-    expect(face.className).toContain("inset-0");              // and both span the SAME rect,
-    expect(outline.className).toContain("inset-0");           // so the blue lands on the outline
-    expect(outline.style.borderRadius).toBe(face.parentElement!.style.borderRadius);
+    expect(b.style.borderColor).toBe(rgbOf(RK_SELECT));
   });
 
   it("it is centred on the cursor, not hung off its corner", () => {

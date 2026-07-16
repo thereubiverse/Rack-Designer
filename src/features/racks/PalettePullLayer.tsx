@@ -35,7 +35,6 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
   const faceRef = useRef<HTMLDivElement | null>(null);
-  const outlineRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let raf = 0;
@@ -54,8 +53,7 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
       const decay = Math.pow(VEL_DECAY, Math.min(dt, 1 / 30));
       p.vx *= decay; p.vy *= decay;
       p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
-      paint(pullGeometry(p, scaleOf(), now),
-        { box: boxRef.current, label: labelRef.current, face: faceRef.current, outline: outlineRef.current });
+      paint(pullGeometry(p, scaleOf(), now), { box: boxRef.current, label: labelRef.current, face: faceRef.current });
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -71,7 +69,7 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
   return (
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">
       <div ref={boxRef} data-testid="pull-box" className="absolute left-0 top-0 overflow-hidden bg-white"
-        style={boxStyle(g)}>
+        style={{ ...boxStyle(g), borderStyle: "solid", borderWidth: 2 }}>
         {/* The device it becomes: the SAME renderer the rack uses, with an empty face, and the ears
             already in the selection blue — it arrives at the rack selected, exactly as it will look
             once dropped. Drawn BEFORE the label so the name stays legible on top of it.
@@ -88,12 +86,6 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
         <span ref={labelRef} data-testid="pull-label"
           className="absolute whitespace-nowrap text-sm font-medium text-neutral-900"
           style={labelStyle(g)}>{p.label}</span>
-        {/* The selection outline, drawn LAST and ON TOP — the same way the rack draws the box around
-            a selected device. It has to overlap the device's own outline, not sit outside it: as the
-            box's CSS `border` it pushed the face 2px inwards, so the device's grey outline showed as
-            a second ring just inside the blue. On top, the blue simply covers it. */}
-        <div ref={outlineRef} data-testid="pull-outline" className="pointer-events-none absolute inset-0"
-          style={outlineStyle(g)} />
       </div>
     </div>
   );
@@ -129,23 +121,12 @@ function mixHex(a: string, b: string, k: number): string {
   return `rgb(${m(0)}, ${m(1)}, ${m(2)})`;
 }
 
-/** The blue box itself: its own element on top, so it OVERLAPS the device's outline rather than
- *  pushing it inwards. Its blue fades to the palette button's own border as it lands home, which is
- *  what makes the hand-off to the real chip invisible. */
-function outlineStyle(g: Geo) {
-  return {
-    borderStyle: "solid",
-    borderWidth: "2px",
-    borderColor: mixHex(RK_SELECT, CHIP_BORDER, g.homing),
-    borderRadius: `${g.radius}px`,
-  };
-}
-
 function boxStyle(g: Geo) {
   return {
     width: `${g.size.w}px`,
     height: `${g.size.h}px`,
     borderRadius: `${g.radius}px`,
+    borderColor: mixHex(RK_SELECT, CHIP_BORDER, g.homing),
     opacity: String(g.opacity),
     transform: `translate(${g.at.x}px, ${g.at.y}px) scale(${g.flex.sx}, ${g.flex.sy})`
       + ` translate(-50%, -50%)`,
@@ -153,10 +134,8 @@ function boxStyle(g: Geo) {
   };
 }
 
-function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null;
-  face: HTMLDivElement | null; outline: HTMLDivElement | null }) {
+function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null; face: HTMLDivElement | null }) {
   if (el.box) Object.assign(el.box.style, boxStyle(g));
   if (el.label) Object.assign(el.label.style, labelStyle(g));
   if (el.face) el.face.style.opacity = String(faceOpacity(g));
-  if (el.outline) Object.assign(el.outline.style, outlineStyle(g));
 }
