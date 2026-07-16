@@ -111,6 +111,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
       phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null, left: false,
+      openFrom: null, closeFrom: null, closeStart: 0,
       vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
     setPullMounted(true);
@@ -131,10 +132,22 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       p.lastMoveAt = t;
       p.x = e.clientX; p.y = e.clientY;   // per-frame: mutate the ref, never setState
 
-      // Take it away, then bring it home to cancel. `left` latches on the way out, so the press
-      // itself — which starts ON the chip — can never trigger this.
+      // Take it away, then bring it home. `left` latches on the way out, so the press itself —
+      // which starts ON the chip — can never trigger this.
       if (!p.left && !overChip({ x: p.x, y: p.y }, p)) p.left = true;
-      if (cancelledHome(p)) { beginSnapBack(); return; }
+      // Home REVERTS it to a chip; it does NOT end the gesture. The button is still down, so you
+      // must be able to drag straight back out in the same motion — cancelling here would leave you
+      // holding nothing mid-drag. Releasing over the chip is what actually cancels, and that needs
+      // no code: any release off a free RU already snaps back and adds nothing.
+      if (cancelledHome(p) && p.phase === "solid") {
+        const now = performance.now();
+        p.closeFrom = pullGeometry(p, canvasRef.current?.getScale() ?? 1, now).size;
+        p.closeStart = now;
+        p.phase = "pulling";
+        // Disarm synchronously, for the same reason the arm flushes: a pointerup must never see a
+        // stale armed drop. Runs once per homecoming, not per move, because the phase flips first.
+        flushSync(() => setDropArmed(false));
+      }
       // Latch solid HERE, not in the layer's rAF loop: the drop must not depend on a frame having
       // fired, and the phase machine belongs with the state's owner. This setState runs once.
       // The rack is what turns a carried chip into a device, so it opens where it is about to live
@@ -142,8 +155,14 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       // (This used to also require pullT >= 1 — "the neck has snapped". There is no neck any more;
       // that condition would now be an unreachable leftover gating the whole gesture on nothing.)
       if (p.phase === "pulling" && nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null)) {
+        const now2 = performance.now();
+        // Open from the size it ACTUALLY is — which is not the chip's if you brought a device home
+        // and turned straight back before the close finished. Assuming the chip's size there makes
+        // it visibly jump.
+        p.openFrom = pullGeometry(p, canvasRef.current?.getScale() ?? 1, now2).size;
+        p.closeFrom = null;
         p.phase = "solid";
-        p.snapStart = performance.now();  // the latch spring's clock
+        p.snapStart = now2;               // the latch spring's clock
         // flushSync, not a plain setState: pointermove is continuous priority, so React would
         // otherwise schedule this render through the Scheduler instead of flushing it inline. The
         // strip gates the drop on props.dropArmed (not on the ref write above, which IS

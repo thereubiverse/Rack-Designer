@@ -44,6 +44,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };
 
@@ -179,6 +180,7 @@ describe("bring it home to cancel", () => {
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
     snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };
 
@@ -207,5 +209,48 @@ describe("bring it home to cancel", () => {
     // The point of the rule: change your mind after it has become a device and bringing it home
     // still puts it back.
     expect(cancelledHome({ ...base, left: true, phase: "solid", x: 100, y: 100 })).toBe(true);
+  });
+});
+
+describe("coming home is reversible — the gesture survives it", () => {
+  const chip = { x: 100, y: 100 };
+  const CHIP_BOX = { w: 132, h: 34 };
+  const base: PullState = {
+    typeId: "t1", label: "Switch", chip, chipSize: CHIP_BOX, x: 100, y: 100, phase: "pulling",
+    snapFrom: null, snapStart: 0, snapSize: null, left: false,
+    openFrom: null, closeFrom: null, closeStart: 0,
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
+  };
+
+  it("closes from the size it actually WAS, not by jumping straight back to a chip", () => {
+    // Reverting a 300px-wide device to a 132px chip in one frame reads as a glitch.
+    const wide = { w: 300, h: 40 };
+    const p: PullState = { ...base, closeFrom: wide, closeStart: 1000, x: 100, y: 100 };
+    const start = pullGeometry(p, 1, 1000);
+    expect(start.size).toEqual(wide);         // exactly where it was
+    expect(start.openness).toBe(1);           // still fully a device on frame one
+  });
+
+  it("finishes the close as an ordinary chip, and stays one", () => {
+    const p: PullState = { ...base, closeFrom: { w: 300, h: 40 }, closeStart: 1000 };
+    const end = pullGeometry(p, 1, 1000 + SNAP_MS);
+    expect(end.size).toEqual(CHIP_BOX);
+    expect(end.openness).toBe(0);
+    expect(end.radius).toBe(CHIP_R);
+    // It settles and stays settled — which is why closeFrom never needs clearing.
+    expect(pullGeometry(p, 1, 1000 + SNAP_MS * 50).size).toEqual(CHIP_BOX);
+  });
+
+  it("REGRESSION: re-opening resumes from the size it IS, not from the chip's", () => {
+    // Bring a device home and turn straight back to the rack before the close finishes. Assuming
+    // the chip's size here makes the box visibly jump backwards before growing again.
+    const mid = { w: 240, h: 38 };
+    const p: PullState = { ...base, phase: "solid", openFrom: mid, snapStart: 1000, x: 400, y: 100 };
+    expect(pullGeometry(p, 1, 1000).size).toEqual(mid);
+  });
+
+  it("without an openFrom it still opens from the chip — the ordinary first pull", () => {
+    const p: PullState = { ...base, phase: "solid", openFrom: null, snapStart: 1000, x: 400, y: 100 };
+    expect(pullGeometry(p, 1, 1000).size).toEqual(CHIP_BOX);
   });
 });
