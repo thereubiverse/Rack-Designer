@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { restingFlex, FLEX_MAX, flexScale, SNAP_MS, LABEL_INSET } from "./palettePull";
+import { restingFlex, FLEX_MAX, flexScale, OPEN_MS, LABEL_INSET } from "./palettePull";
 
 const CHIP = { w: 132, h: 34 };
 
@@ -76,10 +76,10 @@ describe("PalettePullLayer", () => {
   });
 
   it("the label never overshoots the centre, even while the spring does", () => {
-    // latchGrow sails past 1 mid-spring. Unclamped, that would fling the name past the middle and
-    // drag it back — the one thing identifying what you are placing must not wobble about.
+    // The name rides `reveal`, which is monotonic by construction — it must climb to the centre
+    // and stop. The one thing identifying what you are placing must never wobble about.
     const now = performance.now();
-    for (let dt = 0; dt <= SNAP_MS * 1.5; dt += SNAP_MS / 30) {
+    for (let dt = 0; dt <= OPEN_MS * 1.5; dt += OPEN_MS / 30) {
       const { container, unmount } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: now - dt }));
       const label = container.querySelector('[data-testid="pull-label"]') as HTMLElement;
       const w = parseFloat(box(container).style.width);
@@ -107,10 +107,10 @@ describe("PalettePullLayer", () => {
   });
 
   it("the face's opacity stays in 0..1 even while the spring overshoots", () => {
-    // latchGrow sails past 1 mid-spring — that IS the pop — so a raw openness would drive opacity
-    // above 1, and negative on any undershoot. Sample across the whole spring, not just its ends.
+    // `reveal` is monotonic, but sample the whole curve anyway — this is the property that keeps
+    // the fades from pulsing, and it is cheap to pin.
     const now = performance.now();
-    for (let dt = 0; dt <= SNAP_MS * 1.5; dt += SNAP_MS / 30) {
+    for (let dt = 0; dt <= OPEN_MS * 1.5; dt += OPEN_MS / 30) {
       const { container, unmount } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: now - dt }));
       const o = Number((container.querySelector('[data-testid="pull-face"]') as HTMLElement).style.opacity);
       expect(o).toBeGreaterThanOrEqual(0);
