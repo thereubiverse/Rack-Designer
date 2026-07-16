@@ -22,7 +22,7 @@ import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, type PullState } from "./palettePull";
+import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, LABEL_INSET, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
@@ -70,29 +70,44 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">
       <div ref={boxRef} data-testid="pull-box" className="absolute left-0 top-0 overflow-hidden bg-white"
         style={{ ...boxStyle(g), borderStyle: "solid", borderWidth: 2, borderColor: RK_SELECT }}>
-        {/* The chip's own label, cross-faded out as the device's face arrives. */}
-        <span ref={labelRef} data-testid="pull-label"
-          className="absolute inset-0 flex items-center px-3 text-sm font-medium text-neutral-900"
-          style={{ opacity: labelOpacity(g) }}>{p.label}</span>
         {/* The device it becomes: the SAME renderer the rack uses, with an empty face, and the ears
             already in the selection blue — it arrives at the rack selected, exactly as it will look
-            once dropped. 17.5 (never 19) — a rack-mounted frame is RACK_INTERIOR_W wide regardless,
-            and 19 is an invalid body width that only works via the MAX_BODY_WIDTH_IN clamp. */}
+            once dropped. Drawn BEFORE the label so the name stays legible on top of it.
+            17.5 (never 19) — a rack-mounted frame is RACK_INTERIOR_W wide regardless, and 19 is an
+            invalid body width that only works via the MAX_BODY_WIDTH_IN clamp. */}
         <div ref={faceRef} data-testid="pull-face" className="absolute inset-0" style={{ opacity: faceOpacity(g) }}>
           <svg width="100%" height="100%" viewBox={`0 0 ${RACK_INTERIOR_W} ${RU_PX}`} preserveAspectRatio="none">
             {renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor: RK_SELECT })}
           </svg>
         </div>
+        {/* The device's name. It rides the whole way: left-aligned on the chip you picked up, then
+            travelling to the centre of the device as it opens. It never fades — the name is the one
+            thing that identifies what you are placing. */}
+        <span ref={labelRef} data-testid="pull-label"
+          className="absolute whitespace-nowrap text-sm font-medium text-neutral-900"
+          style={labelStyle(g)}>{p.label}</span>
       </div>
     </div>
   );
 }
 
-/** openness overshoots 1 mid-spring (that IS the elastic pop), so anything used as an opacity has to
- *  clamp — a raw value would drive opacity past 1 and, worse, negative on any undershoot. */
+/** openness overshoots 1 mid-spring (that IS the elastic pop), so anything derived from it has to
+ *  clamp — a raw value would drive opacity past 1 and, worse, negative on any undershoot, and would
+ *  fling the label past the device's centre and back. */
 const clamp01 = (n: number) => (n > 1 ? 1 : n > 0 ? n : 0);
 const faceOpacity = (g: Geo) => clamp01(g.openness);
-const labelOpacity = (g: Geo) => 1 - clamp01(g.openness);
+
+/** The name travels from the chip's left inset to the device's centre as it opens. Anchor and offset
+ *  move together — `left` LABEL_INSET -> w/2 while translateX 0% -> -50% — so the text lands truly
+ *  centred without anyone having to measure how wide it is. */
+function labelStyle(g: Geo) {
+  const k = clamp01(g.openness);
+  return {
+    top: "50%",
+    left: `${LABEL_INSET + (g.size.w / 2 - LABEL_INSET) * k}px`,
+    transform: `translate(${-50 * k}%, -50%)`,
+  };
+}
 
 /** translate to the cursor, then flex on the X/Y axes. NO rotation: the chip stays upright and reads
  *  as itself — rotating it into its direction of travel sent it spinning as you dragged.
@@ -112,6 +127,6 @@ function boxStyle(g: Geo) {
 
 function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null; face: HTMLDivElement | null }) {
   if (el.box) Object.assign(el.box.style, boxStyle(g));
-  if (el.label) el.label.style.opacity = String(labelOpacity(g));
+  if (el.label) Object.assign(el.label.style, labelStyle(g));
   if (el.face) el.face.style.opacity = String(faceOpacity(g));
 }

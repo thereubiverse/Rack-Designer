@@ -45,6 +45,10 @@ export interface PullState {
   snapStart: number;      // performance.now() at the start of the snap-back (also the open clock)
   snapSize: Size | null;  // how big the box was when abandoned — the snap-back shrinks from THERE,
                           // whether it was still a chip or had already opened into a device
+  left: boolean;          // has the cursor LEFT the chip's box yet? Latched once true. Bringing the
+                          // carried thing home only cancels after you have actually taken it away —
+                          // without this the gesture would cancel on the press itself, since the
+                          // cursor starts on the chip.
   vx: number;             // tracked cursor velocity, px/s — drives the flex
   vy: number;
   lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
@@ -122,12 +126,28 @@ export function flexScale(stretch: number): { sx: number; sy: number } {
   return { sx, sy: 1 / sx };
 }
 
+/** Is the cursor over the chip's own box? Used two ways: to latch `left` once you have taken the
+ *  chip away, and after that to cancel the placement when you bring it home. The chip's own box is
+ *  the bound rather than an invented radius — "back where it came from" is exactly that. */
+export function overChip(at: Vec, p: PullState): boolean {
+  return Math.abs(at.x - p.chip.x) <= p.chipSize.w / 2 && Math.abs(at.y - p.chip.y) <= p.chipSize.h / 2;
+}
+
+/** Should this pull be cancelled? True once the carried thing — chip or opened device — has been
+ *  taken off the chip and then brought back onto it. Bringing it home puts it back and adds nothing. */
+export function cancelledHome(p: PullState): boolean {
+  return p.left && overChip({ x: p.x, y: p.y }, p);
+}
+
 /** Is the carried chip close enough to the rack to open into a device? Horizontal distance only —
  *  see RACK_LATCH_X. `rackCentreX` is the rack's centre line in viewport px; null when the canvas
  *  isn't measurable, in which case never open on a guess. */
 export function nearRack(boxX: number, rackCentreX: number | null): boolean {
   return rackCentreX !== null && Math.abs(boxX - rackCentreX) <= RACK_LATCH_X;
 }
+
+/** The chip's label inset (Tailwind `px-3`). Where the name starts before it travels to the centre. */
+export const LABEL_INSET = 12;
 
 /** Everything needed to paint one frame. PURE: same state + same clock => same pixels. Both the
  *  first paint and the rAF loop call THIS — computing the geometry twice, in two places, is how they
