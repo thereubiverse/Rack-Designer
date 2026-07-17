@@ -26,6 +26,11 @@ export type { PullPhase, PullState } from "./palettePull";
 
 type Geo = ReturnType<typeof pullGeometry>;
 
+// The palette chip's own text size (Tailwind text-sm = 14px). The label keeps this size relative to
+// the CHIP's height, so it scales up with the box: when zoomed in the device is much taller than the
+// chip, and a fixed 14px label looked tiny against it.
+const BASE_LABEL_PX = 14;
+
 // The ears' share of the device's width, as a % (0.75" ears on a 19" rack ~= 3.95% each end). Each
 // ear is a blue bar that EXTENDS INWARD from the blue outline as the device opens — its width is
 // EAR_PCT * reveal, anchored at the edge. No device face is drawn on the carried ghost at all: the
@@ -63,7 +68,7 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
       const decay = Math.pow(VEL_DECAY, Math.min(dt, 1 / 30));
       p.vx *= decay; p.vy *= decay;
       p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
-      paint(pullGeometry(p, scaleOf(), rackCentreXOf(), now),
+      paint(pullGeometry(p, scaleOf(), rackCentreXOf(), now), p.chipSize.h,
         { box: boxRef.current, label: labelRef.current, outline: outlineRef.current,
           earL: earLRef.current, earR: earRRef.current });
     };
@@ -90,8 +95,8 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
             travelling to the centre of the device as it opens. It never fades — the name is the one
             thing that identifies what you are placing. */}
         <span ref={labelRef} data-testid="pull-label"
-          className="absolute whitespace-nowrap text-sm font-medium text-neutral-900"
-          style={labelStyle(g)}>{p.label}</span>
+          className="absolute whitespace-nowrap font-medium text-neutral-900"
+          style={labelStyle(g, p.chipSize.h)}>{p.label}</span>
         {/* The selection outline, drawn LAST and ON TOP — the same way the rack draws the box around
             a selected device. It has to overlap the device's own outline, not sit outside it: as the
             box's CSS `border` it pushed the face 2px inwards, so the device's grey outline showed as
@@ -117,12 +122,16 @@ function earStyle(g: Geo, side: "left" | "right") {
 /** The name travels from the chip's left inset to the device's centre as it opens. Anchor and offset
  *  move together — `left` LABEL_INSET -> w/2 while translateX 0% -> -50% — so the text lands truly
  *  centred without anyone having to measure how wide it is. */
-function labelStyle(g: Geo) {
+function labelStyle(g: Geo, chipH: number) {
   const k = clamp01(g.reveal);
   return {
     top: "50%",
     left: `${LABEL_INSET + (g.size.w / 2 - LABEL_INSET) * k}px`,
     transform: `translate(${-50 * k}%, -50%)`,
+    // Locked to the box height: BASE at the chip, growing in proportion as the box opens and as the
+    // rack zooms in, so the text never reads tiny against a big device.
+    fontSize: `${BASE_LABEL_PX * (g.size.h / chipH)}px`,
+    lineHeight: "1",
   };
 }
 
@@ -162,10 +171,10 @@ function boxStyle(g: Geo) {
   };
 }
 
-function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null;
+function paint(g: Geo, chipH: number, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null;
   outline: HTMLDivElement | null; earL: HTMLDivElement | null; earR: HTMLDivElement | null }) {
   if (el.box) Object.assign(el.box.style, boxStyle(g));
-  if (el.label) Object.assign(el.label.style, labelStyle(g));
+  if (el.label) Object.assign(el.label.style, labelStyle(g, chipH));
   if (el.earL) Object.assign(el.earL.style, earStyle(g, "left"));
   if (el.earR) Object.assign(el.earR.style, earStyle(g, "right"));
   if (el.outline) Object.assign(el.outline.style, outlineStyle(g));
