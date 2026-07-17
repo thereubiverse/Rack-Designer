@@ -123,8 +123,12 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     const g = pullGeometry({ ...base, x: CENTRE }, 1, CENTRE, 0);
     expect(g.size).toEqual({ w: RACK_INTERIOR_W, h: RU_PX });
     expect(g.reveal).toBe(1);
-    expect(g.radius).toBe(CORNER_R);
-    expect(pullGeometry({ ...base, x: CENTRE }, 0.5, CENTRE, 0).size).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
+    expect(g.radius).toBe(CORNER_R);            // at scale 1, the device's own corner
+    const half = pullGeometry({ ...base, x: CENTRE }, 0.5, CENTRE, 0);
+    expect(half.size).toEqual({ w: RACK_INTERIOR_W * 0.5, h: RU_PX * 0.5 });
+    // REGRESSION: the corner scales with the canvas, like the rest of the device — a fixed CORNER_R
+    // looked too round zoomed out, where the real device's corner is CORNER_R * scale.
+    expect(half.radius).toBe(CORNER_R * 0.5);
   });
 
   it("the transition tracks POSITION 1:1 — no overshoot, no dip, arriving at 1 at the centre", () => {

@@ -203,10 +203,14 @@ export function pullGeometry(p: PullState, scale: number, rackCentreX: number | 
   // still — so the flex fades out as it opens.
   const easedFlex = { sx: 1 + (flex.sx - 1) * (1 - reveal), sy: 1 + (flex.sy - 1) * (1 - reveal) };
   const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
+  // The device's corner is CORNER_R in RACK coordinates, so on screen it is CORNER_R * scale — the
+  // same scaling the box's size already carries. A fixed CORNER_R was right only near scale 1 (zoomed
+  // in) and too round when zoomed out. The chip's corner (CHIP_R) is a real viewport radius on the
+  // un-zoomed palette, so it is NOT scaled.
   return {
     at,
     size: lerpSize(p.chipSize, full, reveal),
-    radius: CHIP_R + (CORNER_R - CHIP_R) * reveal,
+    radius: CHIP_R + (CORNER_R * scale - CHIP_R) * reveal,
     opacity: BOX_OPACITY,
     reveal,
     homing: 0,
