@@ -28,9 +28,10 @@ export type { PullPhase, PullState } from "./palettePull";
 
 type Geo = ReturnType<typeof pullGeometry>;
 
-export function PalettePullLayer({ pullRef, scaleOf }: {
+export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
   pullRef: MutableRefObject<PullState | null>;
   scaleOf: () => number;
+  rackCentreXOf: () => number | null;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
@@ -54,19 +55,19 @@ export function PalettePullLayer({ pullRef, scaleOf }: {
       const decay = Math.pow(VEL_DECAY, Math.min(dt, 1 / 30));
       p.vx *= decay; p.vy *= decay;
       p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
-      paint(pullGeometry(p, scaleOf(), now),
+      paint(pullGeometry(p, scaleOf(), rackCentreXOf(), now),
         { box: boxRef.current, label: labelRef.current, face: faceRef.current, outline: outlineRef.current });
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [pullRef, scaleOf]);
+  }, [pullRef, scaleOf, rackCentreXOf]);
 
   if (!pullRef.current) return <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]" />;
 
   // First paint comes from the ref directly, via the SAME pullGeometry the rAF loop calls above —
   // so the two paths cannot disagree.
   const p = pullRef.current;
-  const g = pullGeometry(p, scaleOf(), performance.now());
+  const g = pullGeometry(p, scaleOf(), rackCentreXOf(), performance.now());
 
   return (
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">

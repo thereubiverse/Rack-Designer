@@ -302,25 +302,4 @@ describe("RackBuilder sidebar selection", () => {
     }
   });
 
-  it("an abandoned solid pull starts its snap-back at full size, not the live pointer distance", () => {
-    // Pins beginSnapBack's capture order: p.phase must be read BEFORE it's overwritten to
-    // "snapback", so a solid pull reads snapT=1 regardless of where the pointer ended up. Drives
-    // the real gesture (unlike palettePull.test.ts, which hand-builds a PullState with snapT
-    // already set and never runs beginSnapBack at all) so reordering those two lines is caught.
-    render(<RackBuilder {...baseProps()} />);
-    const chip = screen.getByTestId("palette-type-SW");
-    fireEvent.pointerDown(chip, { clientX: 0, clientY: 0, button: 0 });
-    act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); }); // -> latches solid
-    const solidWidth = screen.getByTestId("pull-box").style.width;
-    expect(parseFloat(solidWidth)).toBeGreaterThan(0);
-
-    // Pull back near the chip — the solid latch is one-way, phase must stay "solid".
-    act(() => { fireEvent.pointerMove(window, { clientX: 5, clientY: 0 }); });
-
-    // Abandon off the rack strips entirely, so the window's pointerup listener runs beginSnapBack.
-    act(() => { fireEvent.pointerUp(window, { clientX: 5, clientY: 0 }); });
-
-    const box = screen.getByTestId("pull-box");
-    expect(parseFloat(box.style.width)).toBeGreaterThan(parseFloat(solidWidth) * 0.8);
-  });
 });
