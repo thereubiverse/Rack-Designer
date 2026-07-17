@@ -16,7 +16,7 @@ describe("the open is driven by POSITION, and eases", () => {
   const p = (x: number): PullState => ({
     typeId: "t1", label: "Switch", chip: { x: 0, y: 0 }, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX,
     x, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), invalid: false,
   });
 
   it("easeOutCubic is monotonic, pinned EXACTLY at 0 and 1, and FAST off the mark", () => {
@@ -97,7 +97,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
   const base: PullState = {
     typeId: "t1", label: "Switch", chip, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX, x: 100, y: 100,
     phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), invalid: false,
   };
   // openness is driven by cursor x along the journey from the pickup origin (chip.x=100) to CENTRE.
   const ORIGIN = 100;
@@ -284,7 +284,7 @@ describe("the flex belongs to the chip, not the device", () => {
   const base: PullState = {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, grab: { x: 0, y: 0 }, chipSize: CHIP_BOX,
     x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, flex: { stretch: FLEX_MAX, v: 0 },
+    vx: 0, vy: 0, lastMoveAt: 0, flex: { stretch: FLEX_MAX, v: 0 }, invalid: false,
   };
 
   it("a CHIP flexes", () => {

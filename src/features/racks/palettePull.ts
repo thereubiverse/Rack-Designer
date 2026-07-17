@@ -51,6 +51,8 @@ export interface PullState {
   vy: number;
   lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
   flex: Flex;             // the outline's elastic spring, stepped once per frame by the layer
+  invalid: boolean;       // over the rack but NOT on a free RU — the device tints red; a drop here
+                          // cancels (there is no free-RU strip to catch it, so it snaps home)
 }
 
 /** Carried opacity — translucent so the rack and its rails read through what you are holding. It

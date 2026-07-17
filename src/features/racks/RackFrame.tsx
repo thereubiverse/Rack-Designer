@@ -41,6 +41,9 @@ export const RK_PLUS = "#93c5fd";
  *  NOT v3's `#2563eb`/rgb(37,99,235). Sourcing one of these from a class and another from a hex
  *  is exactly how the ear/box and ear/grip blues silently drifted apart, twice. */
 export const RK_SELECT = "#155dfc";
+/** Invalid-target red — the tint on a carried device over an occupied/illegal slot, and (later) on
+ *  a placement that cannot fit. Dropping while it is showing cancels. Shared so feature-2/3 reuse it. */
+export const RK_INVALID = "#ef4444";
 /** Vertical code tag on the left ear: grey normally, white once the ear turns blue under it. */
 const RK_CODE = "#6b7280";
 const RK_CODE_SELECTED = "#ffffff";

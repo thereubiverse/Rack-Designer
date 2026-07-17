@@ -286,4 +286,16 @@ describe("RackCanvas", () => {
     act(() => ref.current!.zoomBy(2));
     expect(ref.current!.getScale()).toBe(2);
   });
+
+  it("freeRUAt maps a viewport y to its FREE RU, and returns null over an occupied one", () => {
+    const ref = createRef<RackCanvasHandle>();
+    render(<RackCanvas ref={ref} {...base} selectedId={null} />);
+    // jsdom gives the content rect top 0 and scale 1, so viewport y == svg y.
+    const yOf = (u: number) => ruTopY(u, 1, base.heightU) + RU_PX / 2;  // mid-RU
+    // d1 occupies U2 (see `placements`); U1/U3/U4 are free.
+    expect(ref.current!.freeRUAt(yOf(2))).toBeNull();       // occupied -> invalid
+    expect(ref.current!.freeRUAt(yOf(1))).toBe(1);          // free
+    expect(ref.current!.freeRUAt(yOf(4))).toBe(4);          // free
+    expect(ref.current!.freeRUAt(-9999)).toBeNull();        // off the rack -> invalid
+  });
 });
