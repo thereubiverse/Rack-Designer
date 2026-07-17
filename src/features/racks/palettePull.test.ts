@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  SNAP_MS, RACK_LATCH_X, OPEN_RUNWAY, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
-  restingFlex, flexTarget, stepFlex, flexScale, easeInOutCubic, openReveal, pullGeometry, nearRack,
+  SNAP_MS, RACK_LATCH_X, BOX_OPACITY, CHIP_R, FLEX_MAX, FLEX_SPEED_FULL,
+  restingFlex, flexTarget, stepFlex, flexScale, easeOutCubic, openReveal, pullGeometry, nearRack,
   type PullState,
 } from "./palettePull";
 import { RACK_INTERIOR_W } from "./RackFrame";
@@ -19,41 +19,54 @@ describe("the open is driven by POSITION, and eases", () => {
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   });
 
-  it("easeInOutCubic is monotonic, smooth at both ends, and pinned EXACTLY at 0 and 1", () => {
-    expect(easeInOutCubic(0)).toBe(0);          // exactly — 1e-16 here opens the box from 131.999...
-    expect(easeInOutCubic(1)).toBe(1);
-    expect(easeInOutCubic(-3)).toBe(0);
-    expect(easeInOutCubic(3)).toBe(1);
+  it("easeOutCubic is monotonic, pinned EXACTLY at 0 and 1, and FAST off the mark", () => {
+    expect(easeOutCubic(0)).toBe(0);            // exactly
+    expect(easeOutCubic(1)).toBe(1);
+    expect(easeOutCubic(-3)).toBe(0);
+    expect(easeOutCubic(3)).toBe(1);
     let prev = -1;
-    for (let i = 0; i <= 200; i++) { const v = easeInOutCubic(i / 200); expect(v).toBeGreaterThanOrEqual(prev); prev = v; }
-    expect(easeInOutCubic(0.02)).toBeLessThan(0.02);              // eases in
-    expect(1 - easeInOutCubic(0.98)).toBeLessThan(0.02);         // and out
+    for (let i = 0; i <= 200; i++) { const v = easeOutCubic(i / 200); expect(v).toBeGreaterThanOrEqual(prev); prev = v; }
+    // begins visibly the instant it moves — a 2% move already yields far more than 2% open...
+    expect(easeOutCubic(0.02)).toBeGreaterThan(0.02);
+    // ...and settles gently as it arrives at the centre.
+    expect(1 - easeOutCubic(0.98)).toBeLessThan(0.01);
   });
 
-  it("openReveal is 0 at the runway edge, 1 at the rack's centre, and eased between", () => {
+  it("is 0 at the pickup point, 1 at the rack's centre, and eased between", () => {
+    // p(x) has chip centre 0 and no grab, so the pickup ORIGIN is x=0 and the journey is 0..centre.
     const centre = 500;
-    expect(openReveal(p(centre), centre)).toBe(1);              // dead centre -> a full device
-    expect(openReveal(p(centre - OPEN_RUNWAY), centre)).toBe(0); // a runway away -> a chip
-    expect(openReveal(p(centre - OPEN_RUNWAY - 200), centre)).toBe(0); // and beyond -> still a chip
-    const half = openReveal(p(centre - OPEN_RUNWAY / 2), centre);
+    expect(openReveal(p(0), centre)).toBe(0);        // at pickup -> a chip (begins here)
+    expect(openReveal(p(centre), centre)).toBe(1);   // at the centre -> a full device
+    const half = openReveal(p(centre / 2), centre);  // half way along the journey
     expect(half).toBeGreaterThan(0);
     expect(half).toBeLessThan(1);
+    expect(openReveal(p(-100), centre)).toBe(0);     // dragged the wrong way -> still a chip
   });
 
-  it("is symmetric about the centre — approaching from either side opens it the same", () => {
+  it("depends only on distance to the centre, so passing it starts closing again", () => {
     const centre = 500;
+    // 60px short of the centre and 60px past it are the same distance -> the same reveal.
     expect(openReveal(p(centre - 60), centre)).toBeCloseTo(openReveal(p(centre + 60), centre), 10);
   });
 
-  it("increases MONOTONICALLY as the cursor nears the centre — the transition tracks the drag 1:1", () => {
+  it("increases MONOTONICALLY along the whole journey — the transition tracks the drag 1:1", () => {
     const centre = 500;
     let prev = -1;
-    for (let x = centre - OPEN_RUNWAY; x <= centre; x += 3) {
+    for (let x = 0; x <= centre; x += 5) {           // the WHOLE way from pickup to the centre
       const r = openReveal(p(x), centre);
       expect(r).toBeGreaterThanOrEqual(prev);
       prev = r;
     }
     expect(openReveal(p(centre), centre)).toBe(1);   // arrives at exactly 1 at the centre
+  });
+
+  it("begins the moment it is carried — the grab offset makes reveal exactly 0 at pickup", () => {
+    // origin = chip centre - grab, so on the very first frame (cursor at the grab point) reveal is 0.
+    const centre = 500;
+    const grabbed: PullState = { ...p(64), chip: { x: 100, y: 0 }, grab: { x: 36, y: 0 } };
+    // pickup cursor x = chip.x - grab.x = 64; drive x there -> exactly 0, and it only climbs after.
+    expect(openReveal(grabbed, centre)).toBe(0);
+    expect(openReveal({ ...grabbed, x: 200 }, centre)).toBeGreaterThan(0);
   });
 
   it("stays a chip when the rack cannot be measured — never opens on a guess", () => {
@@ -86,11 +99,11 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(),
   };
-  // openness is now driven by how close the cursor x is to the rack centre; drive it via x.
-  const atReveal = (r: number) => ({ ...base, x: r >= 1 ? CENTRE : CENTRE - OPEN_RUNWAY * (1 - Math.cbrt(r / 4)) });
+  // openness is driven by cursor x along the journey from the pickup origin (chip.x=100) to CENTRE.
+  const ORIGIN = 100;
 
-  it("far from the rack it IS the chip: its own size and radius, under the cursor", () => {
-    const p: PullState = { ...base, x: CENTRE - OPEN_RUNWAY - 100, y: 250 };
+  it("at the pickup point it IS the chip: its own size and radius, under the cursor", () => {
+    const p: PullState = { ...base, x: ORIGIN, y: 250 };
     const g = pullGeometry(p, 1, CENTRE, 0);
     expect(g.at).toEqual({ x: p.x, y: 250 });
     expect(g.size).toEqual(CHIP_BOX);
@@ -98,10 +111,10 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     expect(g.reveal).toBe(0);                   // still a chip: label shown, no face
   });
 
-  it("REGRESSION: at the runway edge it is EXACTLY chip-sized — not 0, not already opening", () => {
-    // The ease is pinned at its ends, so the moment before it starts opening the box is precisely
-    // the chip. An ease off by 1e-16 opened it from 131.99999999999983.
-    const g = pullGeometry({ ...base, x: CENTRE - OPEN_RUNWAY }, 1, CENTRE, 0);
+  it("REGRESSION: at the pickup point it is EXACTLY chip-sized — not 0, not already opening", () => {
+    // The ease is pinned at its ends, so on the very first frame the box is precisely the chip.
+    // An ease off by 1e-16 opened it from 131.99999999999983.
+    const g = pullGeometry({ ...base, x: ORIGIN }, 1, CENTRE, 0);
     expect(g.size).toEqual(CHIP_BOX);
     expect(g.reveal).toBe(0);
   });
@@ -119,7 +132,7 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
     // the content complete TOGETHER, exactly when the device reaches the centre, and nothing springs
     // past its target while you are still dragging toward it.
     let prev = -1, past1 = false, dipped = false;
-    for (let x = CENTRE - OPEN_RUNWAY; x <= CENTRE; x += 3) {
+    for (let x = ORIGIN; x <= CENTRE; x += 3) {
       const g = pullGeometry({ ...base, x }, 1, CENTRE, 0);
       if (g.reveal > 1 || g.size.w > RACK_INTERIOR_W + 1e-9) past1 = true;
       if (g.reveal < prev - 1e-9) dipped = true;
@@ -135,20 +148,23 @@ describe("pullGeometry — the single source of truth both paint paths call", ()
 
   it("dragging back out reverses it — the same motion, no clock of its own", () => {
     // Position-driven, so there is nothing to un-wind: half in, half out, both give the same frame.
-    const halfway = openReveal({ ...base, x: CENTRE - OPEN_RUNWAY / 3 }, CENTRE);
+    const midX = (ORIGIN + CENTRE) / 2;
+    const halfway = openReveal({ ...base, x: midX }, CENTRE);
     expect(halfway).toBeGreaterThan(0);
     expect(halfway).toBeLessThan(1);
     // same x, same everything -> identical geometry whether we got here opening or closing.
-    const a = pullGeometry({ ...base, x: CENTRE - OPEN_RUNWAY / 3 }, 1, CENTRE, 0);
-    const b = pullGeometry({ ...base, x: CENTRE - OPEN_RUNWAY / 3 }, 1, CENTRE, 999999);
+    const a = pullGeometry({ ...base, x: midX }, 1, CENTRE, 0);
+    const b = pullGeometry({ ...base, x: midX }, 1, CENTRE, 999999);
     expect(a.size).toEqual(b.size);
     expect(a.reveal).toEqual(b.reveal);
   });
 
   it("the grab anchor releases as it opens — offset at a chip, centred on the cursor at the device", () => {
+    // origin cursor x = chip.x(100) - grab.x(40) = 60. At the origin reveal is 0 -> full offset.
     const grabbed = { ...base, grab: { x: 40, y: -8 } };
-    const chipFrame = pullGeometry({ ...grabbed, x: CENTRE - OPEN_RUNWAY }, 1, CENTRE, 0);
-    expect(chipFrame.at).toEqual({ x: CENTRE - OPEN_RUNWAY + 40, y: 100 - 8 });   // full offset
+    const chipFrame = pullGeometry({ ...grabbed, x: 60 }, 1, CENTRE, 0);
+    expect(chipFrame.reveal).toBe(0);
+    expect(chipFrame.at).toEqual({ x: 60 + 40, y: 100 - 8 });                     // full offset -> chip centre
     const deviceFrame = pullGeometry({ ...grabbed, x: CENTRE }, 1, CENTRE, 0);
     expect(deviceFrame.at).toEqual({ x: CENTRE, y: 100 });                        // no offset
   });

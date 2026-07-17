@@ -21,12 +21,18 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 import { renderFace } from "@/features/device-library/faceplate/Faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
-import { RU_PX } from "@/domain/faceplate-geometry";
+import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
 import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, LABEL_INSET, CHIP_BORDER, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
 type Geo = ReturnType<typeof pullGeometry>;
+
+// The ears' share of the device's width, as a % (0.75" ears on a 19" rack ~= 3.95% each end). The
+// ear "extends inward from the blue outline" as the device opens; a white curtain over the not-yet-
+// formed inner part of each ear retracts to the outline as reveal climbs.
+const _dims = frameDims({ widthIn: 17.5, rackUnits: 1, rackMounted: true });
+const EAR_PCT = (_dims.earWidthPx / _dims.frameWidthPx) * 100;
 
 export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
   pullRef: MutableRefObject<PullState | null>;
@@ -35,7 +41,8 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
-  const faceRef = useRef<HTMLDivElement | null>(null);
+  const curtainLRef = useRef<HTMLDivElement | null>(null);
+  const curtainRRef = useRef<HTMLDivElement | null>(null);
   const outlineRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -56,7 +63,8 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
       p.vx *= decay; p.vy *= decay;
       p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
       paint(pullGeometry(p, scaleOf(), rackCentreXOf(), now),
-        { box: boxRef.current, label: labelRef.current, face: faceRef.current, outline: outlineRef.current });
+        { box: boxRef.current, label: labelRef.current, outline: outlineRef.current,
+          curtainL: curtainLRef.current, curtainR: curtainRRef.current });
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -75,14 +83,21 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
         style={boxStyle(g)}>
         {/* The device it becomes: the SAME renderer the rack uses, with an empty face, and the ears
             already in the selection blue — it arrives at the rack selected, exactly as it will look
-            once dropped. Drawn BEFORE the label so the name stays legible on top of it.
+            once dropped. Fully opaque throughout; the EARS are revealed by the curtains below, not by
+            fading the whole face in.
             17.5 (never 19) — a rack-mounted frame is RACK_INTERIOR_W wide regardless, and 19 is an
             invalid body width that only works via the MAX_BODY_WIDTH_IN clamp. */}
-        <div ref={faceRef} data-testid="pull-face" className="absolute inset-0" style={{ opacity: faceOpacity(g) }}>
+        <div data-testid="pull-face" className="absolute inset-0">
           <svg width="100%" height="100%" viewBox={`0 0 ${RACK_INTERIOR_W} ${RU_PX}`} preserveAspectRatio="none">
             {renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor: RK_SELECT })}
           </svg>
         </div>
+        {/* One white curtain over the not-yet-formed inner part of each ear. At reveal 0 it covers
+            the whole ear (a plain chip); as the device opens it retracts toward the outline, so the
+            ear appears to EXTEND INWARD from the blue edge rather than fade in. White = the box's own
+            background, so it simply hides the ear underneath. */}
+        <div ref={curtainLRef} data-testid="pull-ear-curtain-l" className="absolute top-0 bottom-0 bg-white" style={curtainStyle(g, "l")} />
+        <div ref={curtainRRef} data-testid="pull-ear-curtain-r" className="absolute top-0 bottom-0 bg-white" style={curtainStyle(g, "r")} />
         {/* The device's name. It rides the whole way: left-aligned on the chip you picked up, then
             travelling to the centre of the device as it opens. It never fades — the name is the one
             thing that identifies what you are placing. */}
@@ -100,11 +115,17 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
   );
 }
 
-/** `reveal` is monotonic 0..1 by construction, so the label and the fades cannot wobble. It is still
- *  clamp — a raw value would drive opacity past 1 and, worse, negative on any undershoot, and would
- *  fling the label past the device's centre and back. */
+/** `reveal` is monotonic 0..1 by construction, so the label and the ears cannot wobble. Clamp anyway
+ *  — a stray value would drive the curtain width negative or the label past the centre. */
 const clamp01 = (n: number) => (n > 1 ? 1 : n > 0 ? n : 0);
-const faceOpacity = (g: Geo) => clamp01(g.reveal);
+
+/** The white curtain over one ear. `inner` is how far the ear has extended in (%, 0 -> EAR_PCT); the
+ *  curtain covers the rest, anchored at the ear's outer edge so it retracts toward the outline. */
+function curtainStyle(g: Geo, side: "l" | "r") {
+  const inner = EAR_PCT * clamp01(g.reveal);
+  const covered = `${EAR_PCT - inner}%`;
+  return side === "l" ? { left: `${inner}%`, width: covered } : { right: `${inner}%`, width: covered };
+}
 
 /** The name travels from the chip's left inset to the device's centre as it opens. Anchor and offset
  *  move together — `left` LABEL_INSET -> w/2 while translateX 0% -> -50% — so the text lands truly
@@ -155,9 +176,10 @@ function boxStyle(g: Geo) {
 }
 
 function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null;
-  face: HTMLDivElement | null; outline: HTMLDivElement | null }) {
+  outline: HTMLDivElement | null; curtainL: HTMLDivElement | null; curtainR: HTMLDivElement | null }) {
   if (el.box) Object.assign(el.box.style, boxStyle(g));
   if (el.label) Object.assign(el.label.style, labelStyle(g));
-  if (el.face) el.face.style.opacity = String(faceOpacity(g));
+  if (el.curtainL) Object.assign(el.curtainL.style, curtainStyle(g, "l"));
+  if (el.curtainR) Object.assign(el.curtainR.style, curtainStyle(g, "r"));
   if (el.outline) Object.assign(el.outline.style, outlineStyle(g));
 }
