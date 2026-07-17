@@ -9,6 +9,8 @@ import { portConnection, samePort, type Connection, type PortRef } from "./conne
 // Exact PatchDocs cable colours (their --color-primary-blue / highlighted amber).
 const BLUE = "#1a55d8";
 const AMBER = "#fdc700";
+/** Patch-cable stroke weight. */
+const CABLE_W = 4;
 
 const keyOf = (p: PortRef) => `${p.rackDeviceId}-${p.side}-${p.groupId}-${p.portIndex}`;
 const parsePort = (s: string): PortRef => {
@@ -156,7 +158,9 @@ export function PatchLayer(props: {
     }
     return m;
   }, [placements, heightU]);
-  const EDGE_INSET = 4;
+  // 0 => the cable's edge-run sits ON the device's top/bottom edge, overlapping the outline, rather
+  // than parallel to it a few px inside.
+  const EDGE_INSET = 0;
   const exitY = (port: PortRef, dot: PortDot) => {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
@@ -435,7 +439,7 @@ export function PatchLayer(props: {
           const active = activeConnIds.has(c.id);
           return (
             <path key={c.id} data-testid={`cable-${c.id}`} d={d}
-              fill="none" stroke={active ? AMBER : BLUE} strokeWidth={2}
+              fill="none" stroke={active ? AMBER : BLUE} strokeWidth={CABLE_W}
               strokeLinejoin="round" strokeLinecap="round"
               style={{ cursor: "pointer", pointerEvents: "auto" }}
               onPointerEnter={() => props.onHoverCable?.(c.id)}
@@ -455,7 +459,7 @@ export function PatchLayer(props: {
           <g pointerEvents="none">
             <path ref={rubberRef} data-testid="patch-rubber" data-snapped={snapDot ? "true" : "false"}
               d={`M ${from.x} ${from.y} Q ${from.x} ${from.y} ${end.x} ${end.y}`}
-              fill="none" stroke={BLUE} strokeWidth={snapDot ? 2.5 : 2} strokeLinecap="round" />
+              fill="none" stroke={BLUE} strokeWidth={snapDot ? CABLE_W + 0.5 : CABLE_W} strokeLinecap="round" />
             {snapDot && (
               <circle data-testid="patch-snap-ring" className="patch-snap-ring"
                 cx={snapDot.x} cy={snapDot.y} r={7} fill="none" stroke={BLUE} strokeWidth={1.6} />
@@ -468,7 +472,7 @@ export function PatchLayer(props: {
 
       {/* a dropped cable snapping back into its routed position */}
       {recoil && (
-        <path ref={recoilRef} data-testid="patch-recoil" fill="none" stroke={BLUE} strokeWidth={2}
+        <path ref={recoilRef} data-testid="patch-recoil" fill="none" stroke={BLUE} strokeWidth={CABLE_W}
           strokeLinejoin="round" strokeLinecap="round" pointerEvents="none" />
       )}
 
@@ -476,7 +480,7 @@ export function PatchLayer(props: {
       {sucks.map((s) => (
         <path key={s.id} data-testid="patch-suck"
           ref={(el) => { if (el) suckEls.current.set(s.id, el); else suckEls.current.delete(s.id); }}
-          fill="none" stroke={BLUE} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round"
+          fill="none" stroke={BLUE} strokeWidth={CABLE_W} strokeLinejoin="round" strokeLinecap="round"
           pointerEvents="none" />
       ))}
 
