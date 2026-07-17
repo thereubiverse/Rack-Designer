@@ -5,6 +5,7 @@ import { PalettePullLayer, type PullState } from "./PalettePullLayer";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
 import { restingFlex, FLEX_MAX, flexScale, LABEL_INSET } from "./palettePull";
+import { RK_INVALID } from "./RackFrame";
 
 const CHIP = { w: 132, h: 34 };
 
@@ -15,7 +16,7 @@ function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, grab: { x: 0, y: 0 }, chipSize: CHIP,
     x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), ...over,
+    vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), invalid: false, ...over,
   };
 }
 /** A fully-OPEN pull: cursor parked at the rack's centre. */
@@ -194,5 +195,19 @@ describe("PalettePullLayer", () => {
   it("never intercepts the pointer — the rack strips underneath must still get it", () => {
     const { container } = mount(pull({ x: 300, y: 100 }));
     expect((container.querySelector('[data-testid="pull-layer"]') as HTMLElement).className).toContain("pointer-events-none");
+  });
+
+  it("an INVALID slot tints the device red — outline, ears and a red wash; a valid one is blue", () => {
+    const red = rgbOf(RK_INVALID), blue = rgbOf(RK_SELECT);
+    const bad = mount(open({ invalid: true }));
+    expect((bad.container.querySelector('[data-testid="pull-outline"]') as HTMLElement).style.borderColor).toBe(red);
+    expect((bad.container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement).style.background).toBe(red);
+    const wash = bad.container.querySelector('[data-testid="pull-invalid-wash"]') as HTMLElement;
+    expect(Number(wash.style.opacity)).toBeGreaterThan(0);          // the red wash is showing
+
+    const good = mount(open({ invalid: false }));
+    expect((good.container.querySelector('[data-testid="pull-outline"]') as HTMLElement).style.borderColor).toBe(blue);
+    expect((good.container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement).style.background).toBe(blue);
+    expect(Number((good.container.querySelector('[data-testid="pull-invalid-wash"]') as HTMLElement).style.opacity)).toBe(0);
   });
 });

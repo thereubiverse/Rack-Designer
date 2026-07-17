@@ -120,7 +120,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
       phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-      vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
+      vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(), invalid: false,
     };
     setPullingTypeId(typeId);
     setDropArmed(false);
@@ -155,6 +155,10 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       // the drop on props.dropArmed — a pointerup arriving before that scheduled render would see the
       // stale value and either lose a real drop or fire a stale one.
       const atRack = nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null);
+      // Over the rack but not on a FREE RU (occupied, or off the interior) => invalid: the ghost
+      // tints red, and a release there has no free-RU strip to catch it, so it snaps home (cancels).
+      // The layer reads p.invalid each frame.
+      p.invalid = atRack && (canvasRef.current?.freeRUAt(e.clientY) ?? null) === null;
       if (atRack !== armedRef.current) {
         armedRef.current = atRack;
         flushSync(() => setDropArmed(atRack));

@@ -34,6 +34,9 @@ export type RackCanvasHandle = {
    *  solidifies into a device. Measured from the live transformed content, so it already accounts
    *  for pan and zoom. null when the canvas isn't mounted/measurable yet. */
   getRackCentreX: () => number | null;
+  /** The FREE rack unit at a given viewport y, or null if that y is over an occupied RU or off the
+   *  rack — i.e. an invalid drop target for a carried device. Accounts for pan and zoom. */
+  freeRUAt: (clientY: number) => number | null;
 };
 
 /** Interactive layer over the pure RackFrame (EditorCanvas pattern). The viewport is a fixed box
@@ -107,7 +110,19 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
     // rack's centre in svg coords (RACK_GUTTER_L is defined as CX - MOUNT_HW).
     return el.getBoundingClientRect().left + (RACK_GUTTER_L + RACK_INTERIOR_W / 2) * scaleRef.current;
   }, []);
-  useImperativeHandle(ref, () => ({ zoomBy, getScale: () => scaleRef.current, getRackCentreX }), [zoomBy, getRackCentreX]);
+  const freeRUAt = useCallback((clientY: number): number | null => {
+    const el = contentRef.current;
+    if (!el) return null;
+    const y = (clientY - el.getBoundingClientRect().top) / scaleRef.current; // svg y
+    // ruTopY(heightU,1,heightU) is the top RU's top edge; each RU is RU_PX tall going down.
+    const u = heightU - Math.floor((y - ruTopY(heightU, 1, heightU)) / RU_PX);
+    if (u < 1 || u > heightU) return null;
+    const occ = new Set<number>();
+    for (const pl of placements) for (let k = pl.startU; k < pl.startU + pl.template.rackUnits; k++) occ.add(k);
+    return occ.has(u) ? null : u;   // null = occupied (invalid); the RU number = a free slot
+  }, [heightU, placements]);
+  useImperativeHandle(ref, () => ({ zoomBy, getScale: () => scaleRef.current, getRackCentreX, freeRUAt }),
+    [zoomBy, getRackCentreX, freeRUAt]);
 
   // Fit (PatchDocs "fit" toggle): "width" fills the viewport width; "height" fits the whole rack.
   // Recompute the scale + re-centre the pan whenever the mode flips or the viewport resizes. The
