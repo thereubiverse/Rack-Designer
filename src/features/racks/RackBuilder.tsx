@@ -72,6 +72,9 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   // The pending snap-back timer, held so a NEW pull can cancel it. Without this, abandoning a pull
   // and immediately grabbing another chip lets the old timer fire and kill the new pull mid-gesture.
   const snapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors dropArmed in a ref so the pointermove handler can tell a boundary CROSSING from every
+  // frame spent inside the zone, without a stale React-state read.
+  const armedRef = useRef(false);
 
   const clearSnapTimer = useCallback(() => {
     if (snapTimerRef.current !== null) { clearTimeout(snapTimerRef.current); snapTimerRef.current = null; }
@@ -81,6 +84,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     clearSnapTimer();
     pullRef.current = null;
     setPullingTypeId(null);   // the chip reappears in the palette exactly as the carried one vanishes
+    armedRef.current = false;
     setDropArmed(false);
   }, [clearSnapTimer]);
 
@@ -92,11 +96,12 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     // reached the rack. The snap-back shrinks from there rather than from an assumed size.
     // snapFrom: where the box actually IS. Taken from pullGeometry rather than assumed, so it stays
     // right regardless of how the blob's position is derived.
-    const g = pullGeometry(p, canvasRef.current?.getScale() ?? 1, performance.now());
+    const g = pullGeometry(p, canvasRef.current?.getScale() ?? 1, canvasRef.current?.getRackCentreX() ?? null, performance.now());
     p.snapSize = g.size;
     p.snapFrom = g.at;
     p.snapStart = performance.now();
     p.phase = "snapback";
+    armedRef.current = false;
     setDropArmed(false);                  // a retreating box must not be droppable
     clearSnapTimer();
     snapTimerRef.current = setTimeout(endPull, SNAP_MS); // the layer animates; this owns when it's over
@@ -115,7 +120,6 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       chipSize: { w: r.width, h: r.height },
       x: e.clientX, y: e.clientY,
       phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-      openFrom: null, closeFrom: null, closeStart: 0,
       vx: 0, vy: 0, lastMoveAt: performance.now(), flex: restingFlex(),
     };
     setPullingTypeId(typeId);
@@ -144,28 +148,16 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       // rack, so coming home IS leaving it.
       // Each spring starts from the size the box ACTUALLY is, never an assumed one: turn around
       // mid-close and it resumes from where it is rather than jumping.
-      const scale = canvasRef.current?.getScale() ?? 1;
+      // The open itself is now position-driven (see pullGeometry) — there is no phase to flip and no
+      // spring to seed. All that happens on the boundary is arming/disarming the DROP, and only when
+      // it actually changes. flushSync, not a plain setState: pointermove is continuous priority, so
+      // React would otherwise schedule the render instead of flushing it inline, and the strip gates
+      // the drop on props.dropArmed — a pointerup arriving before that scheduled render would see the
+      // stale value and either lose a real drop or fire a stale one.
       const atRack = nearRack(p.x, canvasRef.current?.getRackCentreX() ?? null);
-      if (p.phase === "pulling" && atRack) {
-        const t2 = performance.now();
-        p.openFrom = pullGeometry(p, scale, t2).size;
-        p.closeFrom = null;
-        p.phase = "solid";
-        p.snapStart = t2;                 // the open spring's clock
-        // flushSync, not a plain setState: pointermove is continuous priority, so React would
-        // otherwise schedule this render through the Scheduler instead of flushing it inline. The
-        // strip gates the drop on props.dropArmed (not on the ref write above, which IS
-        // synchronous), so a pointerup arriving before that scheduled render still sees
-        // dropArmed=false and silently loses the drop. Runs once per crossing, so the cost is nil.
-        flushSync(() => setDropArmed(true));
-      } else if (p.phase === "solid" && !atRack) {
-        const t2 = performance.now();
-        p.closeFrom = pullGeometry(p, scale, t2).size;
-        p.closeStart = t2;                // the close spring's clock
-        p.openFrom = null;
-        p.phase = "pulling";
-        // Disarm synchronously too — a stale armed drop must never outlive the device it belonged to.
-        flushSync(() => setDropArmed(false));
+      if (atRack !== armedRef.current) {
+        armedRef.current = atRack;
+        flushSync(() => setDropArmed(atRack));
       }
     };
     const onUp = () => {
@@ -495,7 +487,8 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
       )}
 
       {pullingTypeId && (
-        <PalettePullLayer pullRef={pullRef} scaleOf={() => canvasRef.current?.getScale() ?? 1} />
+        <PalettePullLayer pullRef={pullRef} scaleOf={() => canvasRef.current?.getScale() ?? 1}
+          rackCentreXOf={() => canvasRef.current?.getRackCentreX() ?? null} />
       )}
     </div>
   );

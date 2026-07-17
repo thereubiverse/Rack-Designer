@@ -4,22 +4,26 @@ import { render } from "@testing-library/react";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
 import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { restingFlex, FLEX_MAX, flexScale, OPEN_MS, LABEL_INSET } from "./palettePull";
+import { restingFlex, FLEX_MAX, flexScale, LABEL_INSET } from "./palettePull";
 
 const CHIP = { w: 132, h: 34 };
 
+// The rack's centre line the layer opens the device at. A pull whose cursor x === RACK_CENTRE is
+// fully open; far from it, a chip.
+const RACK_CENTRE = 500;
 function pull(over: Partial<PullState> = {}): PullState {
   return {
     typeId: "t1", label: "Switch", chip: { x: 100, y: 100 }, grab: { x: 0, y: 0 }, chipSize: CHIP,
     x: 100, y: 100, phase: "pulling", snapFrom: null, snapStart: 0, snapSize: null,
-    openFrom: null, closeFrom: null, closeStart: 0,
     vx: 0, vy: 0, lastMoveAt: 0, flex: restingFlex(), ...over,
   };
 }
+/** A fully-OPEN pull: cursor parked at the rack's centre. */
+const open = (over: Partial<PullState> = {}) => pull({ x: RACK_CENTRE, y: 100, ...over });
 const mount = (state: PullState | null) => {
   const ref = createRef<PullState | null>() as React.MutableRefObject<PullState | null>;
   ref.current = state;
-  const r = render(<PalettePullLayer pullRef={ref} scaleOf={() => 1} />);
+  const r = render(<PalettePullLayer pullRef={ref} scaleOf={() => 1} rackCentreXOf={() => RACK_CENTRE} />);
   return { ...r, ref };
 };
 const box = (c: HTMLElement) => c.querySelector('[data-testid="pull-box"]') as HTMLElement;
@@ -48,7 +52,7 @@ describe("PalettePullLayer", () => {
     // As the box's own CSS border it pushed the face 2px inwards, so the device's grey outline
     // showed as a second ring just inside the blue. Drawn on top it simply covers it — the same way
     // the rack draws the box around a selected device.
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
+    const { container } = mount(open());
     const b = box(container);
     expect(b.style.borderWidth).toBe("");                    // the box itself has NO border...
     const kids = [...b.children].map((c) => c.getAttribute("data-testid"));
@@ -77,7 +81,7 @@ describe("PalettePullLayer", () => {
   });
 
   it("the name travels to the CENTRE of the device as it opens, and never fades", () => {
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
+    const { container } = mount(open());
     const label = container.querySelector('[data-testid="pull-label"]') as HTMLElement;
     const w = parseFloat(box(container).style.width);
     // Anchor and offset move together, so the text lands truly centred without measuring its width.
@@ -87,17 +91,16 @@ describe("PalettePullLayer", () => {
   });
 
   it("the label is drawn OVER the device face, so the name stays legible on the ghost", () => {
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
+    const { container } = mount(open());
     const kids = [...box(container).children].map((c) => c.getAttribute("data-testid"));
     expect(kids.indexOf("pull-face")).toBeLessThan(kids.indexOf("pull-label"));
   });
 
-  it("the label never overshoots the centre, even while the spring does", () => {
-    // The name rides `reveal`, which is monotonic by construction — it must climb to the centre
-    // and stop. The one thing identifying what you are placing must never wobble about.
-    const now = performance.now();
-    for (let dt = 0; dt <= OPEN_MS * 1.5; dt += OPEN_MS / 30) {
-      const { container, unmount } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: now - dt }));
+  it("the label sits between the chip's inset and the device's centre at every point in the open", () => {
+    // The name rides `reveal`, which is position-driven and monotonic — it climbs from the chip's
+    // left inset to the device's centre and never past it, whatever fraction open the box is.
+    for (let x = RACK_CENTRE - 150; x <= RACK_CENTRE; x += 5) {
+      const { container, unmount } = mount(pull({ x, y: 100 }));
       const label = container.querySelector('[data-testid="pull-label"]') as HTMLElement;
       const w = parseFloat(box(container).style.width);
       const left = parseFloat(label.style.left);
@@ -109,7 +112,7 @@ describe("PalettePullLayer", () => {
 
   it("once open it IS the rack device, selected — blue ears, no ports", () => {
     // snapStart 0 against a live performance.now() puts the spring well past its ring-out.
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
+    const { container } = mount(open());
     const ears = [...container.querySelectorAll('[data-testid="face-ear"]')];
     expect(ears).toHaveLength(2);
     expect(ears.every((e) => e.getAttribute("fill") === RK_SELECT)).toBe(true);  // arrives SELECTED
@@ -118,17 +121,14 @@ describe("PalettePullLayer", () => {
   });
 
   it("settles at exactly one RU", () => {
-    const { container } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: 0 }));
+    const { container } = mount(open());
     expect(box(container).style.width).toBe(`${RACK_INTERIOR_W}px`);
     expect(box(container).style.height).toBe(`${RU_PX}px`);
   });
 
-  it("the face's opacity stays in 0..1 even while the spring overshoots", () => {
-    // `reveal` is monotonic, but sample the whole curve anyway — this is the property that keeps
-    // the fades from pulsing, and it is cheap to pin.
-    const now = performance.now();
-    for (let dt = 0; dt <= OPEN_MS * 1.5; dt += OPEN_MS / 30) {
-      const { container, unmount } = mount(pull({ phase: "solid", x: 400, y: 100, snapStart: now - dt }));
+  it("the face's opacity stays in 0..1 across the whole open", () => {
+    for (let x = RACK_CENTRE - 150; x <= RACK_CENTRE; x += 5) {
+      const { container, unmount } = mount(pull({ x, y: 100 }));
       const o = Number((container.querySelector('[data-testid="pull-face"]') as HTMLElement).style.opacity);
       expect(o).toBeGreaterThanOrEqual(0);
       expect(o).toBeLessThanOrEqual(1);

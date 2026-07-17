@@ -24,11 +24,13 @@ import { CORNER_R } from "@/features/device-library/faceplate/Faceplate";
 export const RACK_LATCH_X = 150;
 /** Duration (ms) of the snap-back home. STARTING GUESS. */
 export const SNAP_MS = 260;
-/** Duration (ms) of the chip -> device open. Its own knob, longer than the close: opening is the
- *  moment worth watching, closing should get out of the way. STARTING GUESS. */
-export const OPEN_MS = 320;
-/** Duration (ms) of the device -> chip close. STARTING GUESS. */
-export const CLOSE_MS = 220;
+/** How far, HORIZONTALLY, from the rack's centre line the cursor starts opening the chip into the
+ *  device. The open is driven by POSITION, not a timer: at OPEN_RUNWAY away it is a chip, at the
+ *  centre it is a full device, and every point between maps 1:1 to how far you have dragged. So the
+ *  transition ends exactly when the device reaches the centre — nothing plays on its own clock, and
+ *  dragging back out simply runs it in reverse. Reusing RACK_LATCH_X ties "it becomes droppable" and
+ *  "it starts forming" to the same boundary. Viewport px; STARTING GUESS — tune in the browser. */
+export const OPEN_RUNWAY = RACK_LATCH_X;
 /** The palette chip's own corner radius (Tailwind `rounded-lg`). The carried chip starts here and
  *  morphs to the device's CORNER_R as it opens, so the silhouette is continuous. */
 export const CHIP_R = 8;
@@ -36,7 +38,7 @@ export const CHIP_R = 8;
 export interface Vec { x: number; y: number }
 export interface Size { w: number; h: number }
 
-export type PullPhase = "pulling" | "solid" | "snapback";
+export type PullPhase = "pulling" | "snapback";
 
 export interface PullState {
   typeId: string;
@@ -52,12 +54,6 @@ export interface PullState {
   snapStart: number;      // performance.now() at the start of the snap-back (also the open clock)
   snapSize: Size | null;  // how big the box was when abandoned — the snap-back shrinks from THERE,
                           // whether it was still a chip or had already opened into a device
-  openFrom: Size | null;  // the size it was when it started opening, and
-  closeFrom: Size | null; // the size it was when it started closing again.
-  closeStart: number;     // performance.now() the close began.
-                          // Both exist so each spring runs from the size the box ACTUALLY was, not
-                          // an assumed one: bring a half-open device home and drag it straight back
-                          // to the rack and it must resume from where it is, not jump.
   vx: number;             // tracked cursor velocity, px/s — drives the flex
   vy: number;
   lastMoveAt: number;     // performance.now() of the last pointermove, to derive that velocity
@@ -74,30 +70,26 @@ export const CHIP_BORDER = "#e5e5e5";
 const clamp01 = (t: number) => (t > 1 ? 1 : t > 0 ? t : 0);
 const lerpSize = (a: Size, b: Size, k: number): Size => ({ w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
 
-/** SHAPE ease for the open: overshoots its target ONCE, by a few percent, and settles.
- *  This replaced a decaying-sine elastic that rang through the target two or three times. A ring
- *  reads as bouncy rather than refined, and — worse — everything else was riding the same curve, so
- *  the travelling name and the cross-fades wobbled back and forth as they arrived.
- *  Overshoot strength is a tuning knob: 0 gives a plain ease-out, higher is springier. */
-export const OPEN_OVERSHOOT = 1.2;
-export function easeOutBack(t: number): number {
-  const c = clamp01(t);
-  // Pin the ends EXACTLY. The polynomial is 0 at c=0 mathematically — 1-(s+1)+s — but in floating
-  // point it lands on -2.2e-16, which is enough to open the box from 131.99999999999983 instead of
-  // the chip's 132 and trip the "starts at exactly the chip's size" regression. An ease that is not
-  // exact at its endpoints is a bug generator wherever it is lerped between two real values.
-  if (c <= 0) return 0;
-  if (c >= 1) return 1;
-  const s = OPEN_OVERSHOOT;
-  return 1 + (s + 1) * Math.pow(c - 1, 3) + s * Math.pow(c - 1, 2);
-}
-
-/** CONTENT ease: smooth at both ends, monotonic, never past 1. Everything that would look wrong
- *  wobbling — the travelling name, the cross-fades, the grab anchor releasing — rides THIS rather
- *  than the shape's overshoot. Keeping the two apart is the whole refinement. */
+/** The open ease: smooth at both ends, monotonic, exact at 0 and 1. The shape, the radius, the
+ *  name's travel and both cross-fades ALL ride this one curve driven by position (see openReveal),
+ *  so they cannot drift apart — they begin and end together, by construction.
+ *  No overshoot: the open is now locked to the cursor, and a shape that springs PAST full-size while
+ *  you are still dragging toward the centre reads as the device fighting your hand. Smooth beats
+ *  springy once the two are the same gesture. */
 export function easeInOutCubic(t: number): number {
   const c = clamp01(t);
+  if (c <= 0) return 0;   // pinned exactly — an ease that is off by 1e-16 at its ends opens the box
+  if (c >= 1) return 1;   // from 131.99999999999983 instead of the chip's 132 (a real bug once)
   return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+}
+
+/** Position-driven open, 0 (a chip) -> 1 (the device), from how far the cursor is HORIZONTALLY from
+ *  the rack's centre line. 1 exactly at the centre, 0 at OPEN_RUNWAY away or beyond, eased between.
+ *  Cursor x, not the box's — the box centres on the cursor as it opens, and using the box would be
+ *  circular (its position already depends on this). Null rack (not measurable) => a chip. */
+export function openReveal(p: PullState, rackCentreX: number | null): number {
+  if (rackCentreX === null) return 0;
+  return easeInOutCubic(1 - Math.abs(p.x - rackCentreX) / OPEN_RUNWAY);
 }
 
 // ---- flex -------------------------------------------------------------------------------------
@@ -182,7 +174,7 @@ export function easeOutCubic(t: number): number {
  *  `openness` runs 0 (a chip) -> 1 (the device), and drives size, corner radius and the cross-fade
  *  between the chip's label and the device's face. It OVERSHOOTS 1 mid-spring — that is the elastic
  *  pop — so anything used as an opacity must clamp it. */
-export function pullGeometry(p: PullState, scale: number, now: number): {
+export function pullGeometry(p: PullState, scale: number, rackCentreX: number | null, now: number): {
   at: Vec; size: Size; radius: number; opacity: number; reveal: number; homing: number;
   flex: { sx: number; sy: number };
 } {
@@ -209,45 +201,28 @@ export function pullGeometry(p: PullState, scale: number, now: number): {
     };
   }
 
-  // Anchored to where you grabbed it: the chip does not jump its middle under the cursor on pickup.
-  // The offset fades out as it opens, so the device ends up centred on the cursor — which is what
-  // decides the RU it drops on, so what you see must be what you get.
-  const reveal = revealK(p, now);
+  // Position-driven open: how far the DEVICE has formed is exactly how far the cursor has been
+  // dragged toward the rack's centre. There is no clock — `reveal` reverses the instant you drag
+  // back out, so opening and closing are the same motion run forwards and backwards. Everything
+  // below rides this one value, so the shape, the radius and the name's travel all complete
+  // together, precisely when the device reaches the centre.
+  const reveal = openReveal(p, rackCentreX);
+  // Anchored to where you grabbed it — the chip does not jump its middle under the cursor on pickup.
+  // The offset fades out as it opens, so the device ends up centred on the cursor, which is what
+  // decides the RU it drops on: what you see is what you get.
   const at = { x: p.x + p.grab.x * (1 - reveal), y: p.y + p.grab.y * (1 - reveal) };
-  // The elastic outline belongs to the CHIP. A rack device is not slime — it should arrive crisp and
-  // still. So the flex fades out as it opens, which also stops the ring from jittering the device
-  // and the name riding inside it while they settle (measured: 4.3px of wobble across 10 reversals
-  // with the cursor parked). `reveal` is monotonic, so this fade cannot itself wobble.
+  // The elastic outline belongs to the CHIP. A rack device is not slime — it should read crisp and
+  // still — so the flex fades out as it opens.
   const easedFlex = { sx: 1 + (flex.sx - 1) * (1 - reveal), sy: 1 + (flex.sy - 1) * (1 - reveal) };
-
-  if (p.phase === "solid") {
-    // SHAPE rides the overshoot; everything else rides `reveal`.
-    const shape = easeOutBack((now - p.snapStart) / OPEN_MS);
-    const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
-    return { at, size: lerpSize(p.openFrom ?? p.chipSize, full, shape),
-      radius: CHIP_R + (CORNER_R - CHIP_R) * clamp01(shape),
-      opacity: BOX_OPACITY, reveal, homing: 0, flex: easedFlex };
-  }
-
-  // Carried back out of the rack's proximity: close smoothly rather than jumping 300px wide back to
-  // a chip in one frame. No overshoot on the way back — a retreat that springs past itself reads as
-  // indecisive. Runs itself out and then sits at the chip's size forever, so there is no flag to
-  // clear: dragging away again simply keeps returning the settled value.
-  if (p.closeFrom) {
-    return { at, size: lerpSize(p.closeFrom, p.chipSize, 1 - reveal),
-      radius: CHIP_R + (CORNER_R - CHIP_R) * reveal,
-      opacity: BOX_OPACITY, reveal, homing: 0, flex: easedFlex };
-  }
-
-  // Still a chip: exactly the size you picked up, anchored where you grabbed it.
-  return { at, size: p.chipSize, radius: CHIP_R, opacity: BOX_OPACITY, reveal: 0, homing: 0, flex };
+  const full = { w: RACK_INTERIOR_W * scale, h: RU_PX * scale };
+  return {
+    at,
+    size: lerpSize(p.chipSize, full, reveal),
+    radius: CHIP_R + (CORNER_R - CHIP_R) * reveal,
+    opacity: BOX_OPACITY,
+    reveal,
+    homing: 0,
+    flex: easedFlex,
+  };
 }
 
-/** How revealed the DEVICE is, 0 (a chip) -> 1. Monotonic by construction — it drives the name's
- *  travel, the cross-fades and the grab anchor's release, none of which may wobble. Computed before
- *  `at` because the anchor depends on it. Not valid for `snapback`, which is always a chip. */
-function revealK(p: PullState, now: number): number {
-  if (p.phase === "solid") return easeInOutCubic((now - p.snapStart) / OPEN_MS);
-  if (p.closeFrom) return 1 - easeInOutCubic((now - p.closeStart) / CLOSE_MS);
-  return 0;
-}
