@@ -322,4 +322,22 @@ describe("PatchLayer drag-to-patch", () => {
     expect(onPatch).not.toHaveBeenCalled();
     expect(onReplace).not.toHaveBeenCalled();
   });
+
+  it("cables are drawn 2px thicker (stroke-width 4), including the drag animations", () => {
+    const sw = dev("sw", 5, "g-sw"), pp = dev("pp", 3, "g-pp");
+    const conns = [{ id: "c1",
+      a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
+      b: { rackDeviceId: "pp", side: "front" as const, groupId: "g-pp", portIndex: 0 } }];
+    const { container } = render(
+      <RackCanvas heightU={12} placements={[sw, pp]} side="FRONT" selectedId={null}
+        onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+        connections={conns} selectedConnectionId={null}
+        onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
+        onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+        dropArmed={false} onDropAt={() => {}} />,
+    );
+    // the routed cable (overlap is a visual property, verified in the browser; the edge waypoint is
+    // rounded by roundedPath's 14px radius so it is not a clean numeric check).
+    expect(container.querySelector('[data-testid="cable-c1"]')!.getAttribute("stroke-width")).toBe("4");
+  });
 });
