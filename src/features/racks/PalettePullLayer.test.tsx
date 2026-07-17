@@ -48,20 +48,16 @@ describe("PalettePullLayer", () => {
     expect(outline.style.borderColor).toBe(rgbOf(RK_SELECT));
   });
 
-  it("the blue box OVERLAPS the device outline — it is drawn last, on top", () => {
-    // As the box's own CSS border it pushed the face 2px inwards, so the device's grey outline
-    // showed as a second ring just inside the blue. Drawn on top it simply covers it — the same way
-    // the rack draws the box around a selected device.
+  it("the blue outline is its own element, drawn LAST and on top, spanning the whole box", () => {
+    // It overlaps the ears rather than being the box's own CSS border (which would push content in).
     const { container } = mount(open());
     const b = box(container);
     expect(b.style.borderWidth).toBe("");                    // the box itself has NO border...
     const kids = [...b.children].map((c) => c.getAttribute("data-testid"));
-    expect(kids.indexOf("pull-face")).toBeLessThan(kids.indexOf("pull-outline"));  // ...it is on top
-    const face = container.querySelector('[data-testid="pull-face"]') as HTMLElement;
+    expect(kids.indexOf("pull-outline")).toBe(kids.length - 1);   // ...the outline is the last child
     const outline = container.querySelector('[data-testid="pull-outline"]') as HTMLElement;
-    expect(face.className).toContain("inset-0");              // and both span the SAME rect,
-    expect(outline.className).toContain("inset-0");           // so the blue lands on the outline
-    expect(outline.style.borderRadius).toBe(face.parentElement!.style.borderRadius);
+    expect(outline.className).toContain("inset-0");          // spans the whole box
+    expect(outline.style.borderRadius).toBe(b.style.borderRadius);  // and shares the box's radius
   });
 
   it("it is centred on the cursor, not hung off its corner", () => {
@@ -71,19 +67,18 @@ describe("PalettePullLayer", () => {
     expect(t).toContain("translate(-50%, -50%)");   // after the rotate/scale, so both act about the middle
   });
 
-  it("at pickup it is a plain chip — label left-aligned, ears fully curtained (not yet extended)", () => {
+  it("at pickup it is a plain chip — label left-aligned, no ears, no screw holes, no seams", () => {
     const { container } = mount(pull({ x: 100, y: 200 }));   // cursor at the pickup origin (chip.x)
     const label = container.querySelector('[data-testid="pull-label"]') as HTMLElement;
     expect(label.textContent).toBe("Switch");
     expect(label.style.left).toBe(`${LABEL_INSET}px`);          // exactly where the chip's px-3 puts it
     expect(label.style.transform).toBe("translate(0%, -50%)");   // anchored by its left edge
-    // both ears hidden: each curtain sits flush at the outline (left/right 0%) and covers the full ear.
-    const cl = container.querySelector('[data-testid="pull-ear-curtain-l"]') as HTMLElement;
-    const cr = container.querySelector('[data-testid="pull-ear-curtain-r"]') as HTMLElement;
-    expect(cl.style.left).toBe("0%");
-    expect(cr.style.right).toBe("0%");
-    expect(parseFloat(cl.style.width)).toBeGreaterThan(0);       // covering the ear
-    expect(parseFloat(cl.style.width)).toEqual(parseFloat(cr.style.width));
+    // both ears are zero-width -> a plain white box. And no device face at all, so none of the
+    // stray blue seam lines / grey screw holes that used to show on the chip.
+    expect(parseFloat((container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement).style.width)).toBe(0);
+    expect(parseFloat((container.querySelector('[data-testid="pull-ear-r"]') as HTMLElement).style.width)).toBe(0);
+    expect(container.querySelector('[data-testid="screw-hole"]')).toBeNull();
+    expect(container.querySelector("svg")).toBeNull();           // the ghost draws no SVG face
   });
 
   it("the name travels to the CENTRE of the device as it opens, and never fades", () => {
@@ -96,25 +91,27 @@ describe("PalettePullLayer", () => {
     expect(label.textContent).toBe("Switch");
   });
 
-  it("the ears EXTEND INWARD from the outline as it opens — curtains retract to width 0", () => {
-    // The refinement the user asked for: ears are not faded in, they grow from the blue edge inward.
-    // Part-open, the curtains still cover part of each ear; fully open, they are gone.
-    const partOpen = mount(pull({ x: (100 + RACK_CENTRE) / 2, y: 100 }));  // halfway along the journey
-    const pcl = partOpen.container.querySelector('[data-testid="pull-ear-curtain-l"]') as HTMLElement;
-    expect(parseFloat(pcl.style.left)).toBeGreaterThan(0);        // the ear has extended partway in...
-    expect(parseFloat(pcl.style.width)).toBeGreaterThan(0);       // ...but the curtain still covers the rest
+  it("the ears EXTEND INWARD from the outline as it opens — blue bars growing to full width", () => {
+    // Not faded in — they grow from the blue edge inward. Part-open they are partway; fully open,
+    // full width, and always the selection blue.
+    const partOpen = mount(pull({ x: (100 + RACK_CENTRE) / 2, y: 100 }));  // halfway
+    const pl = partOpen.container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement;
+    const partW = parseFloat(pl.style.width);
+    expect(partW).toBeGreaterThan(0);
+    expect(pl.style.left).toBe("0px");                             // anchored at the outline
+    expect(pl.style.background).toBe(rgbOf(RK_SELECT));            // blue
 
     const full = mount(open());
-    const fcl = full.container.querySelector('[data-testid="pull-ear-curtain-l"]') as HTMLElement;
-    const fcr = full.container.querySelector('[data-testid="pull-ear-curtain-r"]') as HTMLElement;
-    expect(parseFloat(fcl.style.width)).toBeCloseTo(0, 6);        // ear fully extended, nothing left to cover
-    expect(parseFloat(fcr.style.width)).toBeCloseTo(0, 6);
+    const fl = full.container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement;
+    const fr = full.container.querySelector('[data-testid="pull-ear-r"]') as HTMLElement;
+    expect(parseFloat(fl.style.width)).toBeGreaterThan(partW);     // wider when fully open
+    expect(parseFloat(fr.style.width)).toEqual(parseFloat(fl.style.width));
   });
 
-  it("the label is drawn OVER the device face, so the name stays legible on the ghost", () => {
+  it("the label is drawn OVER the ears, so the name stays legible on the ghost", () => {
     const { container } = mount(open());
     const kids = [...box(container).children].map((c) => c.getAttribute("data-testid"));
-    expect(kids.indexOf("pull-face")).toBeLessThan(kids.indexOf("pull-label"));
+    expect(kids.indexOf("pull-ear-l")).toBeLessThan(kids.indexOf("pull-label"));
   });
 
   it("the label sits between the chip's inset and the device's centre at every point in the open", () => {
@@ -131,13 +128,13 @@ describe("PalettePullLayer", () => {
     }
   });
 
-  it("once open it IS the rack device, selected — blue ears, no ports", () => {
-    // snapStart 0 against a live performance.now() puts the spring well past its ring-out.
+  it("once open it shows two full blue ears and no ports/holes — selected, and clean", () => {
     const { container } = mount(open());
-    const ears = [...container.querySelectorAll('[data-testid="face-ear"]')];
-    expect(ears).toHaveLength(2);
-    expect(ears.every((e) => e.getAttribute("fill") === RK_SELECT)).toBe(true);  // arrives SELECTED
-    expect(container.querySelectorAll('[data-testid="port-cell"]')).toHaveLength(0);
+    const ears = [container.querySelector('[data-testid="pull-ear-l"]'), container.querySelector('[data-testid="pull-ear-r"]')];
+    expect(ears.every((e) => e && (e as HTMLElement).style.background === rgbOf(RK_SELECT))).toBe(true);
+    expect(parseFloat((ears[0] as HTMLElement).style.width)).toBeGreaterThan(0);
+    expect(container.querySelector('[data-testid="port-cell"]')).toBeNull();
+    expect(container.querySelector('[data-testid="screw-hole"]')).toBeNull();     // no holes while carrying
   });
 
   it("settles at exactly one RU", () => {
@@ -146,17 +143,16 @@ describe("PalettePullLayer", () => {
     expect(box(container).style.height).toBe(`${RU_PX}px`);
   });
 
-  it("the ear curtains stay within [0, full] and shrink monotonically across the open", () => {
-    let prev = Infinity;
+  it("the ears grow monotonically from 0 across the open — no wobble", () => {
+    let prev = -Infinity;
     for (let x = 100; x <= RACK_CENTRE; x += 10) {
       const { container, unmount } = mount(pull({ x, y: 100 }));
-      const w = parseFloat((container.querySelector('[data-testid="pull-ear-curtain-l"]') as HTMLElement).style.width);
-      expect(w).toBeGreaterThanOrEqual(-1e-9);
-      expect(w).toBeLessThanOrEqual(prev + 1e-9);   // never grows back — no wobble
+      const w = parseFloat((container.querySelector('[data-testid="pull-ear-l"]') as HTMLElement).style.width);
+      expect(w).toBeGreaterThanOrEqual(prev - 1e-9);   // never shrinks back
       prev = w;
       unmount();
     }
-    expect(prev).toBeCloseTo(0, 6);                  // fully retracted at the centre
+    expect(prev).toBeGreaterThan(0);                   // ears present at the centre
   });
 
   it("flexes on the X/Y axes and NEVER rotates — the chip stays upright", () => {

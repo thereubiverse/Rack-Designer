@@ -126,18 +126,16 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           <line x1={svgWidth - dims.earWidthPx} y1={0} x2={svgWidth - dims.earWidthPx} y2={svgHeight} stroke={earFill} />
         </>
       )}
-      {/* screw holes */}
-      {holes.map((h, i) => (
-        <circle
-          key={i}
-          data-testid="screw-hole"
-          cx={h.cx}
-          cy={h.cy}
-          r={4}
-          fill="#a3a3a3"
-          stroke="#a3a3a3"
-        />
-      ))}
+      {/* screw holes. On a tinted (selected, blue) ear they read as CUTOUTS — filled with the
+          device's own white interior so they look punched through — rather than as grey dots on
+          blue. A grey ear keeps the subtle grey. */}
+      {holes.map((h, i) => {
+        const cut = opts.earColor !== undefined && opts.earColor !== EAR_GREY;
+        const c = cut ? "#ffffff" : "#a3a3a3";
+        return (
+          <circle key={i} data-testid="screw-hole" cx={h.cx} cy={h.cy} r={4} fill={c} stroke={c} />
+        );
+      })}
       {/* single outer outline, inset half a stroke so the whole 1px shows (the viewBox
           would otherwise clip the outer edges) and reads at the same weight as the seams */}
       <rect x={0.5} y={0.5} width={svgWidth - 1} height={svgHeight - 1} rx={CORNER_R - 0.5} fill="none" stroke="#d4d4d4" />
