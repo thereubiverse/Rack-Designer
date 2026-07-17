@@ -108,6 +108,18 @@ describe("PalettePullLayer", () => {
     expect(parseFloat(fr.style.width)).toEqual(parseFloat(fl.style.width));
   });
 
+  it("the label font scales with the box height — 14px at the chip, larger on the device", () => {
+    // Zoomed in, the device is much taller than the chip; a fixed 14px label looked tiny against it.
+    const chip = mount(pull({ x: 100, y: 100 }));   // a chip -> box height == CHIP.h
+    const chipFont = parseFloat((chip.container.querySelector('[data-testid="pull-label"]') as HTMLElement).style.fontSize);
+    expect(chipFont).toBeCloseTo(14, 5);            // the palette chip's own text-sm
+
+    const dev = mount(open());                      // full device -> box height == RU_PX (scaleOf 1)
+    const devFont = parseFloat((dev.container.querySelector('[data-testid="pull-label"]') as HTMLElement).style.fontSize);
+    expect(devFont).toBeCloseTo(14 * (RU_PX / CHIP.h), 5);   // grown in proportion to the height
+    expect(devFont).toBeGreaterThan(chipFont);
+  });
+
   it("the label is drawn OVER the ears, so the name stays legible on the ghost", () => {
     const { container } = mount(open());
     const kids = [...box(container).children].map((c) => c.getAttribute("data-testid"));
