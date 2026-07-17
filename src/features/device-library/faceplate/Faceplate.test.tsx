@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import { Faceplate } from "./Faceplate";
+import { Faceplate, renderFace } from "./Faceplate";
 import { emptyFace, type Face, type PortGroup } from "@/domain/faceplate";
 
 function copperGroup(over: Partial<PortGroup> = {}): PortGroup {
@@ -123,5 +123,24 @@ describe("Faceplate — icon elements", () => {
     const ph = getByTestId("face-icon-loading");
     expect(ph.getAttribute("x")).toBe("40");
     expect(ph.getAttribute("width")).toBe("36");
+  });
+
+  it("screw holes on a tinted (selected) ear are white cutouts, not grey dots", () => {
+    // The user's ask: on a blue selection ear the screw holes should read as punched cutouts.
+    const { container } = render(
+      <svg>{renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor: "#155dfc" })}</svg>,
+    );
+    const holes = [...container.querySelectorAll('[data-testid="screw-hole"]')];
+    expect(holes.length).toBeGreaterThan(0);
+    expect(holes.every((h) => h.getAttribute("fill") === "#ffffff")).toBe(true);
+  });
+
+  it("screw holes on a plain grey ear stay grey", () => {
+    const { container } = render(
+      <svg>{renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true })}</svg>,
+    );
+    const holes = [...container.querySelectorAll('[data-testid="screw-hole"]')];
+    expect(holes.length).toBeGreaterThan(0);
+    expect(holes.every((h) => h.getAttribute("fill") === "#a3a3a3")).toBe(true);
   });
 });

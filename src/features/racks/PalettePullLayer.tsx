@@ -18,19 +18,20 @@
 // the grip drag in RackCanvas. It owns NO state transitions except stepping the jiggle spring:
 // RackBuilder decides when the chip opens and when the snap-back ends.
 import { useEffect, useRef, type MutableRefObject } from "react";
-import { renderFace } from "@/features/device-library/faceplate/Faceplate";
-import { emptyFace } from "@/domain/faceplate";
-import { RACK_INTERIOR_W, RK_SELECT } from "./RackFrame";
-import { RU_PX, frameDims } from "@/domain/faceplate-geometry";
+import { RK_SELECT } from "./RackFrame";
+import { frameDims } from "@/domain/faceplate-geometry";
 import { pullGeometry, stepFlex, flexTarget, VEL_DECAY, LABEL_INSET, CHIP_BORDER, type PullState } from "./palettePull";
 
 export type { PullPhase, PullState } from "./palettePull";
 
 type Geo = ReturnType<typeof pullGeometry>;
 
-// The ears' share of the device's width, as a % (0.75" ears on a 19" rack ~= 3.95% each end). The
-// ear "extends inward from the blue outline" as the device opens; a white curtain over the not-yet-
-// formed inner part of each ear retracts to the outline as reveal climbs.
+// The ears' share of the device's width, as a % (0.75" ears on a 19" rack ~= 3.95% each end). Each
+// ear is a blue bar that EXTENDS INWARD from the blue outline as the device opens — its width is
+// EAR_PCT * reveal, anchored at the edge. No device face is drawn on the carried ghost at all: the
+// full renderFace, stretched into the box, dragged in stray blue seam lines, grey screw holes, and a
+// fixed-radius frame outline whose corners fought the box's own transitioning radius. The ghost is
+// just a white box + these two ears + the blue outline + the label.
 const _dims = frameDims({ widthIn: 17.5, rackUnits: 1, rackMounted: true });
 const EAR_PCT = (_dims.earWidthPx / _dims.frameWidthPx) * 100;
 
@@ -41,8 +42,8 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
-  const curtainLRef = useRef<HTMLDivElement | null>(null);
-  const curtainRRef = useRef<HTMLDivElement | null>(null);
+  const earLRef = useRef<HTMLDivElement | null>(null);
+  const earRRef = useRef<HTMLDivElement | null>(null);
   const outlineRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
       p.flex = stepFlex(p.flex, flexTarget(p.vx, p.vy), dt);
       paint(pullGeometry(p, scaleOf(), rackCentreXOf(), now),
         { box: boxRef.current, label: labelRef.current, outline: outlineRef.current,
-          curtainL: curtainLRef.current, curtainR: curtainRRef.current });
+          earL: earLRef.current, earR: earRRef.current });
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -81,23 +82,10 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
     <div data-testid="pull-layer" className="pointer-events-none fixed inset-0 z-[60]">
       <div ref={boxRef} data-testid="pull-box" className="absolute left-0 top-0 overflow-hidden bg-white"
         style={boxStyle(g)}>
-        {/* The device it becomes: the SAME renderer the rack uses, with an empty face, and the ears
-            already in the selection blue — it arrives at the rack selected, exactly as it will look
-            once dropped. Fully opaque throughout; the EARS are revealed by the curtains below, not by
-            fading the whole face in.
-            17.5 (never 19) — a rack-mounted frame is RACK_INTERIOR_W wide regardless, and 19 is an
-            invalid body width that only works via the MAX_BODY_WIDTH_IN clamp. */}
-        <div data-testid="pull-face" className="absolute inset-0">
-          <svg width="100%" height="100%" viewBox={`0 0 ${RACK_INTERIOR_W} ${RU_PX}`} preserveAspectRatio="none">
-            {renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor: RK_SELECT })}
-          </svg>
-        </div>
-        {/* One white curtain over the not-yet-formed inner part of each ear. At reveal 0 it covers
-            the whole ear (a plain chip); as the device opens it retracts toward the outline, so the
-            ear appears to EXTEND INWARD from the blue edge rather than fade in. White = the box's own
-            background, so it simply hides the ear underneath. */}
-        <div ref={curtainLRef} data-testid="pull-ear-curtain-l" className="absolute top-0 bottom-0 bg-white" style={curtainStyle(g, "l")} />
-        <div ref={curtainRRef} data-testid="pull-ear-curtain-r" className="absolute top-0 bottom-0 bg-white" style={curtainStyle(g, "r")} />
+        {/* Each ear: a blue bar extending inward from the outline as the device opens. No face, so
+            no screw holes or seams while carrying — those belong on the DROPPED device only. */}
+        <div ref={earLRef} data-testid="pull-ear-l" className="absolute" style={earStyle(g, "left")} />
+        <div ref={earRRef} data-testid="pull-ear-r" className="absolute" style={earStyle(g, "right")} />
         {/* The device's name. It rides the whole way: left-aligned on the chip you picked up, then
             travelling to the centre of the device as it opens. It never fades — the name is the one
             thing that identifies what you are placing. */}
@@ -119,12 +107,11 @@ export function PalettePullLayer({ pullRef, scaleOf, rackCentreXOf }: {
  *  — a stray value would drive the curtain width negative or the label past the centre. */
 const clamp01 = (n: number) => (n > 1 ? 1 : n > 0 ? n : 0);
 
-/** The white curtain over one ear. `inner` is how far the ear has extended in (%, 0 -> EAR_PCT); the
- *  curtain covers the rest, anchored at the ear's outer edge so it retracts toward the outline. */
-function curtainStyle(g: Geo, side: "l" | "r") {
-  const inner = EAR_PCT * clamp01(g.reveal);
-  const covered = `${EAR_PCT - inner}%`;
-  return side === "l" ? { left: `${inner}%`, width: covered } : { right: `${inner}%`, width: covered };
+/** One ear: a blue bar anchored at the outline, extending inward to EAR_PCT * reveal of the box
+ *  width. 0 at a chip (no ear), full at the device. Clipped to the box's rounded corners (the box is
+ *  overflow-hidden), so the ear's outer corner follows the box radius as it transitions. */
+function earStyle(g: Geo, side: "left" | "right") {
+  return { top: 0, bottom: 0, [side]: 0, width: `${EAR_PCT * clamp01(g.reveal)}%`, background: RK_SELECT };
 }
 
 /** The name travels from the chip's left inset to the device's centre as it opens. Anchor and offset
@@ -176,10 +163,10 @@ function boxStyle(g: Geo) {
 }
 
 function paint(g: Geo, el: { box: HTMLDivElement | null; label: HTMLSpanElement | null;
-  outline: HTMLDivElement | null; curtainL: HTMLDivElement | null; curtainR: HTMLDivElement | null }) {
+  outline: HTMLDivElement | null; earL: HTMLDivElement | null; earR: HTMLDivElement | null }) {
   if (el.box) Object.assign(el.box.style, boxStyle(g));
   if (el.label) Object.assign(el.label.style, labelStyle(g));
-  if (el.curtainL) Object.assign(el.curtainL.style, curtainStyle(g, "l"));
-  if (el.curtainR) Object.assign(el.curtainR.style, curtainStyle(g, "r"));
+  if (el.earL) Object.assign(el.earL.style, earStyle(g, "left"));
+  if (el.earR) Object.assign(el.earR.style, earStyle(g, "right"));
   if (el.outline) Object.assign(el.outline.style, outlineStyle(g));
 }
