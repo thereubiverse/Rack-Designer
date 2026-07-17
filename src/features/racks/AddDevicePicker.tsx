@@ -1,24 +1,36 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { useState, useEffect } from "react";
 import { Faceplate } from "@/features/device-library/faceplate/Faceplate";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
 
 /** PatchDocs-style two-level "Add device" modal. Level 1 = "Select type" (the rack device
  *  types); level 2 = that type's templates with faceplate previews + Insert. Opening with an
  *  `initialTypeId` (palette click) jumps straight to level 2; the back arrow returns to the
- *  type list. The caller decides which RU the insert lands on. */
-export function AddDevicePicker({ types, templatesByType, initialTypeId = null, onInsert, onClose }: {
+ *  type list. The caller decides which RU the insert lands on.
+ *
+ *  "Create Custom Device" calls `onCreateCustom(activeTypeId)` so the caller can open the device
+ *  editor over this modal with the type locked to the one being browsed. After the caller creates
+ *  a template and refreshes `templatesByType`, it passes the new id as `preselectId` to select it
+ *  here so the user can Insert it immediately. */
+export function AddDevicePicker({ types, templatesByType, initialTypeId = null, preselectId = null, onInsert, onCreateCustom, onClose }: {
   types: DeviceTypeRow[];
   templatesByType: Record<string, PickerTemplate[]>;
   initialTypeId?: string | null;
+  preselectId?: string | null;
   onInsert: (t: PickerTemplate) => void;
+  onCreateCustom?: (typeId: string) => void;
   onClose: () => void;
 }) {
   const [activeTypeId, setActiveTypeId] = useState<string | null>(initialTypeId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+
+  // A newly created template (from "Create Custom Device") arrives as preselectId once the caller
+  // has refreshed templatesByType — clear any search so it's visible, and select it for Insert.
+  useEffect(() => {
+    if (preselectId) { setSelectedId(preselectId); setSearch(""); }
+  }, [preselectId]);
 
   const activeType = types.find((t) => t.id === activeTypeId) ?? null;
   const templates = activeTypeId ? templatesByType[activeTypeId] ?? [] : [];
@@ -98,7 +110,9 @@ export function AddDevicePicker({ types, templatesByType, initialTypeId = null, 
               </div>
             </div>
             <div className="mt-4">
-              <Link href="/device-library" className="text-sm font-semibold text-blue-700 hover:underline">+ Create Custom Device</Link>
+              <button type="button" data-testid="picker-create-custom"
+                onClick={() => activeTypeId && onCreateCustom?.(activeTypeId)}
+                className="text-sm font-semibold text-blue-700 hover:underline">+ Create Custom Device</button>
             </div>
           </>
         )}
