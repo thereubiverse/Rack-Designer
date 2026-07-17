@@ -78,6 +78,24 @@ describe("RackDeviceEditor", () => {
     expect(onSave.mock.calls[0][0]).toMatchObject({ name: "48-port", deviceTypeId: "t1" });
   });
 
+  it("lockDeviceType shows the type as a static, non-interactive control instead of the Select", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey
+      lockDeviceType initial={{ deviceTypeId: "t1" }} onSave={onSave} onCancel={noop} />);
+    // The dropdown trigger is gone; a locked display naming the type is shown instead.
+    expect(screen.queryByTestId("device-type-trigger")).toBeNull();
+    const locked = screen.getByTestId("device-type-locked");
+    expect(locked).toHaveTextContent("Switch");
+    // Only Name is needed to make the draft valid — the locked type is already set, proving it
+    // carried into the draft without any user interaction with a type control.
+    await user.type(screen.getByLabelText(/name/i), "Custom-SW");
+    const save = screen.getByTestId("editor-save");
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ name: "Custom-SW", deviceTypeId: "t1" });
+  });
+
   it("Front/Back toggle switches the previewed side", async () => {
     const user = userEvent.setup();
     render(<RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} />);

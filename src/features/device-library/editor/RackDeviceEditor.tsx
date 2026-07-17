@@ -63,6 +63,10 @@ export interface RackDeviceEditorProps {
   saving?: boolean;
   error?: string | null;
   readOnly?: boolean;
+  /** Lock the Device type field to its initial value — used when the editor is opened from the
+   *  rack builder's "Create Custom Device" flow, where the type is fixed to the dragged palette
+   *  type. Everything else stays editable; the type renders as a static, non-interactive control. */
+  lockDeviceType?: boolean;
   /** Called from the read-only preview's "Editor" button to switch this same modal into edit
    *  mode (parent flips readOnly off). Undefined when there's nothing to switch into. */
   onEnterEdit?: () => void;
@@ -352,13 +356,30 @@ export function RackDeviceEditor(props: RackDeviceEditorProps) {
 
           <div className="flex flex-col text-xs font-semibold text-neutral-600">
             <span>Device type <span style={{ opacity: ro ? 0 : 1, transition: "opacity .4s ease" }}>*</span></span>
-            <Select
-              testId="device-type-trigger"
-              ariaLabel="Device type"
-              value={draft.deviceTypeId}
-              onChange={(v) => setField("deviceTypeId", v)}
-              options={[{ value: "", label: "—" }, ...orderedTypes.map((t) => ({ value: t.id, label: t.name }))]}
-            />
+            {props.lockDeviceType ? (
+              /* Locked to the dragged palette type — a static, non-interactive display (no dropdown,
+                 no "—" empty option) so the type can't be changed away from what was dropped. */
+              <div
+                data-testid="device-type-locked"
+                aria-label="Device type (locked)"
+                className="mt-1 flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 text-sm font-normal text-neutral-500"
+              >
+                <span className="truncate text-neutral-800">
+                  {orderedTypes.find((t) => t.id === draft.deviceTypeId)?.name ?? "—"}
+                </span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-neutral-400" aria-hidden>
+                  <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                </svg>
+              </div>
+            ) : (
+              <Select
+                testId="device-type-trigger"
+                ariaLabel="Device type"
+                value={draft.deviceTypeId}
+                onChange={(v) => setField("deviceTypeId", v)}
+                options={[{ value: "", label: "—" }, ...orderedTypes.map((t) => ({ value: t.id, label: t.name }))]}
+              />
+            )}
           </div>
 
           <div className="flex flex-col text-xs font-semibold text-neutral-600">

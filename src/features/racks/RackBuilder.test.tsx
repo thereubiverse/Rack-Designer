@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { RackBuilder } from "./RackBuilder";
 import type { RackRow, RackDeviceRow } from "./repository";
-import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
+import type { DeviceTypeRow, PickerTemplate, BrandRow } from "@/features/device-library/repository";
 import type { Connection } from "./connectionOps";
 import type { PortEndpoint } from "./endpointOps";
 import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
+import { listTemplatesForTypeAction } from "@/features/device-library/actions";
 import { SNAP_MS, RACK_LATCH_X } from "./palettePull";
 import { RACK_GUTTER_L, RACK_INTERIOR_W } from "./RackFrame";
 
@@ -18,6 +19,29 @@ vi.mock("./actions", () => ({
   saveConnectionsAction: vi.fn().mockResolvedValue({ ok: true }),
   saveEndpointsAction: vi.fn().mockResolvedValue({ ok: true }),
   updateRackAction: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+// Device-library server actions — the create-custom flow calls these. The refreshed-templates
+// return is configured per-test (below) so we can assert the new template lands in the picker.
+vi.mock("@/features/device-library/actions", () => ({
+  saveNewDeviceTemplateAction: vi.fn().mockResolvedValue({ ok: true, id: "new-tpl" }),
+  listTemplatesForTypeAction: vi.fn().mockResolvedValue({ ok: true, templates: [] }),
+  createBrandAction: vi.fn().mockResolvedValue({ ok: true }),
+  deleteBrandAction: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+// The editor's internals (and its server-only DeviceWizard/AI import chain) are covered by
+// RackDeviceEditor.test.tsx — here we stub it to a Save button that fires onSave with a draft,
+// so this test focuses on RackBuilder's wiring: open → save → refetch → preselect in the picker.
+vi.mock("@/features/device-library/editor/RackDeviceEditor", () => ({
+  RackDeviceEditor: ({ initial, onSave }: { initial?: { deviceTypeId?: string }; onSave: (d: unknown) => void }) => (
+    <div data-testid="stub-editor" data-locked-type={initial?.deviceTypeId}>
+      <button onClick={() => onSave({
+        name: "My Custom SW", brandId: null, deviceTypeId: initial?.deviceTypeId ?? "",
+        rackUnits: 1, widthIn: 17.5, rackMounted: true, frontFace: emptyFace(), backFace: emptyFace(),
+      })}>stub-save</button>
+    </div>
+  ),
 }));
 
 const g = (id: string): PortGroup => ({
@@ -70,6 +94,8 @@ function baseProps() {
     floorTypes: [] as DeviceTypeRow[],
     types: [deviceType],
     templatesByType: { [typeId]: [template] },
+    brands: [] as BrandRow[],
+    wizard: { enabled: false, hasKey: false },
   };
 }
 
@@ -186,6 +212,36 @@ describe("RackBuilder sidebar selection", () => {
     act(() => { fireEvent.pointerMove(window, { clientX: rackCentreX(), clientY: 0 }); }); // -> latches solid
     fireEvent.pointerUp(screen.getByTestId("ru-hit-1"));
     expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+  });
+
+  it("Create Custom Device opens the editor locked to the browsed type; save refreshes it into the picker, pre-selected and placeable", async () => {
+    // The refreshed list the picker gets after the save — includes the just-created template.
+    const created: PickerTemplate = {
+      id: "new-tpl", name: "My Custom SW", brandId: null, brandName: null, deviceTypeId: typeId,
+      rackUnits: 1, widthIn: 17.5, rackMounted: true, frontFace: emptyFace(), backFace: emptyFace(),
+    };
+    vi.mocked(listTemplatesForTypeAction).mockResolvedValueOnce({ ok: true, templates: [template, created] });
+
+    render(<RackBuilder {...baseProps()} />);
+    // Open the picker at the SW type (plain chip click → level 2 for that type).
+    fireEvent.click(screen.getByTestId("palette-type-SW"));
+    expect(screen.getByRole("dialog", { name: /add device/i })).toBeInTheDocument();
+
+    // Create Custom Device → the editor opens, locked to the type the picker was browsing.
+    fireEvent.click(screen.getByTestId("picker-create-custom"));
+    const editor = screen.getByTestId("stub-editor");
+    expect(editor.getAttribute("data-locked-type")).toBe(typeId);
+
+    // Save → the new template refreshes into the picker (still open underneath), pre-selected.
+    fireEvent.click(screen.getByText("stub-save"));
+    await waitFor(() => expect(screen.queryByTestId("stub-editor")).toBeNull()); // editor closed
+    expect(listTemplatesForTypeAction).toHaveBeenCalledWith(typeId);
+    // The new device is selected in the picker (its Insert button goes live once the preselect
+    // effect commits) and can be placed onto the rack.
+    await waitFor(() => expect(screen.getByTestId("picker-insert")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("picker-insert"));
+    // Inserting closes the picker — the device using the new template is now on the rack.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /add device/i })).toBeNull());
   });
 
   it("a chip released just short of the rack opens nothing", () => {

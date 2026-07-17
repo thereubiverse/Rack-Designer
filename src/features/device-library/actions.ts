@@ -5,9 +5,23 @@ import { createServiceClient } from "@/lib/supabase/server";
 import {
   createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
   toEditableTemplate, deleteDeviceTemplate, duplicateDeviceTemplate, createBrand, deleteBrand,
-  type EditableTemplate, type BrandRow,
+  listTemplatesForType,
+  type EditableTemplate, type BrandRow, type PickerTemplate,
 } from "./repository";
 import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
+
+/** The rack builder's "Add device" picker refreshes one type's templates after a custom device is
+ *  created inline (so the new template appears and can be inserted) without a full page reload. */
+export async function listTemplatesForTypeAction(
+  deviceTypeId: string,
+): Promise<{ ok: boolean; templates?: PickerTemplate[]; error?: string }> {
+  const db = createServiceClient();
+  try {
+    return { ok: true, templates: await listTemplatesForType(db, deviceTypeId) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
 
 export async function saveNewDeviceTemplateAction(
   input: DeviceTemplateInput,

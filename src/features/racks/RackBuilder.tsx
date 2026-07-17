@@ -3,8 +3,11 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { flushSync } from "react-dom";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
-import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
+import type { DeviceTypeRow, PickerTemplate, BrandRow } from "@/features/device-library/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
+import { RackDeviceEditor } from "@/features/device-library/editor/RackDeviceEditor";
+import type { DeviceDraft } from "@/features/device-library/editor/useDeviceDraft";
+import { saveNewDeviceTemplateAction, listTemplatesForTypeAction, createBrandAction, deleteBrandAction } from "@/features/device-library/actions";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
 import { AddDevicePicker } from "./AddDevicePicker";
 import { PalettePullLayer, type PullState } from "./PalettePullLayer";
@@ -41,7 +44,7 @@ function toInput(d: PlacementDraft): RackDeviceInput {
 
 type RackState = { placements: PlacementDraft[]; connections: Connection[]; endpoints: PortEndpoint[] };
 
-export function RackBuilder({ rack, initialDevices, initialConnections, initialEndpoints, siteScope, floorTypes, types, templatesByType }: {
+export function RackBuilder({ rack, initialDevices, initialConnections, initialEndpoints, siteScope, floorTypes, types, templatesByType: initialTemplatesByType, brands, wizard }: {
   rack: RackRow;
   initialDevices: RackDeviceRow[];
   initialConnections: Connection[];
@@ -50,7 +53,19 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   floorTypes: DeviceTypeRow[];
   types: DeviceTypeRow[];
   templatesByType: Record<string, PickerTemplate[]>;
+  brands: BrandRow[];
+  wizard: { enabled: boolean; hasKey: boolean };
 }) {
+  // Templates become state so "Create Custom Device" can splice a freshly created template into the
+  // picker's list (refetched for that one type) without a full page reload.
+  const [templatesByType, setTemplatesByType] = useState(initialTemplatesByType);
+  // The device editor opened over the picker for the "Create Custom Device" flow. Holds the type it
+  // is locked to (null = closed); on save the new template's id lands in `justCreatedId` so the
+  // picker underneath can pre-select it.
+  const [editorTypeId, setEditorTypeId] = useState<string | null>(null);
+  const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
+  const [savingDevice, setSavingDevice] = useState(false);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
   const [hist, setHist] = useState<History<RackState>>(() =>
     createHistory({ placements: initialDevices.map(fromRow), connections: initialConnections, endpoints: initialEndpoints }));
   const { placements, connections, endpoints } = hist.present;
@@ -282,6 +297,28 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     setPicker(null);
   }
 
+  // "Create Custom Device" flow: save the drafted template, then refresh just its type's templates
+  // so the picker (still open underneath) shows the new one and pre-selects it for Insert. The rack
+  // itself is untouched — the user still chooses where to place it. The type is fixed to the one the
+  // picker was browsing (the editor renders it locked).
+  async function createCustomDevice(draft: DeviceDraft) {
+    setSavingDevice(true);
+    setDeviceError(null);
+    const res = await saveNewDeviceTemplateAction({
+      name: draft.name, brandId: draft.brandId, deviceTypeId: draft.deviceTypeId,
+      rackUnits: draft.rackUnits, widthIn: draft.widthIn, rackMounted: draft.rackMounted,
+      frontFace: draft.frontFace, backFace: draft.backFace,
+    });
+    if (!res.ok || !res.id) { setSavingDevice(false); setDeviceError(res.error ?? "Save failed"); return; }
+    const refreshed = await listTemplatesForTypeAction(draft.deviceTypeId);
+    setSavingDevice(false);
+    if (refreshed.ok && refreshed.templates) {
+      setTemplatesByType((m) => ({ ...m, [draft.deviceTypeId]: refreshed.templates! }));
+    }
+    setJustCreatedId(res.id);   // the picker selects this once the refreshed list contains it
+    setEditorTypeId(null);      // close the editor, revealing the picker with the new device ready
+  }
+
   // Slice 1 port label: "<deviceCode>/<portIndex+1>" — index+1 is sufficient for now; a richer
   // per-group port number can reuse layoutPortGroup's labels later.
   function labelForPort(p: PortRef): string {
@@ -485,9 +522,35 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
           types={types}
           templatesByType={templatesByType}
           initialTypeId={picker.initialTypeId}
+          preselectId={justCreatedId}
           onInsert={insertTemplate}
-          onClose={() => setPicker(null)}
+          onCreateCustom={(typeId) => { setDeviceError(null); setJustCreatedId(null); setEditorTypeId(typeId); }}
+          onClose={() => { setPicker(null); setJustCreatedId(null); }}
         />
+      )}
+
+      {/* Editor over the picker: type locked to the one the picker is browsing; on save the new
+          template refreshes into the picker underneath, pre-selected for Insert. The editor's own
+          backdrop sits at a lower z than the picker, so this wrapper makes an isolated stacking
+          context above the picker and the editor's fixed layers land on top. */}
+      {editorTypeId && (
+        <div style={{ isolation: "isolate" }} className="relative z-[80]">
+        <RackDeviceEditor
+          mode="create"
+          lockDeviceType
+          initial={{ deviceTypeId: editorTypeId }}
+          types={types}
+          brands={brands}
+          wizardEnabled={wizard.enabled}
+          wizardHasKey={wizard.hasKey}
+          saving={savingDevice}
+          error={deviceError}
+          onSave={createCustomDevice}
+          onCancel={() => { setEditorTypeId(null); setDeviceError(null); }}
+          onCreateBrand={async (name) => { const r = await createBrandAction(name); return r.ok && r.brand ? r.brand : null; }}
+          onDeleteBrand={async (id) => { const r = await deleteBrandAction(id); return r.ok; }}
+        />
+        </div>
       )}
 
       {pullingTypeId && (

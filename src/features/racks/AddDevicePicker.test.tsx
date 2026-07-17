@@ -61,4 +61,26 @@ describe("AddDevicePicker", () => {
     expect(screen.getByText(/no ups templates yet/i)).toBeInTheDocument();
     expect(screen.queryByTestId("picker-insert")).not.toBeInTheDocument();
   });
+
+  it("Create Custom Device fires onCreateCustom with the active type id", async () => {
+    const user = userEvent.setup();
+    const onCreateCustom = vi.fn();
+    render(<AddDevicePicker types={types} templatesByType={templatesByType} initialTypeId="t1"
+      onInsert={() => {}} onCreateCustom={onCreateCustom} onClose={() => {}} />);
+    await user.click(screen.getByTestId("picker-create-custom"));
+    expect(onCreateCustom).toHaveBeenCalledWith("t1");
+  });
+
+  it("preselectId selects that template so it can be Inserted right away", async () => {
+    const user = userEvent.setup();
+    const onInsert = vi.fn();
+    // Simulates the post-create state: the new template "c" is now in the refreshed list AND
+    // handed back as preselectId — its preview + Insert must be live without any extra clicks.
+    const withNew = { ...templatesByType, t1: [...templatesByType.t1, tpl("c", "my custom sw", "t1")] };
+    render(<AddDevicePicker types={types} templatesByType={withNew} initialTypeId="t1"
+      preselectId="c" onInsert={onInsert} onClose={() => {}} />);
+    expect(screen.getByText(/1 RU/)).toBeInTheDocument(); // the preview panel is populated
+    await user.click(screen.getByTestId("picker-insert"));
+    expect(onInsert).toHaveBeenCalledWith(expect.objectContaining({ id: "c" }));
+  });
 });
