@@ -169,6 +169,9 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
   // NO React re-render per frame, so the device tracks the pointer 1:1 with zero render latency.
   // React state changes only on start/end; the move is committed once (snapped to a free RU) on release.
   const [dragId, setDragId] = useState<string | null>(null);
+  // live vertical offset (px) of the grip-dragged device from its committed RU — PatchLayer reads
+  // it each frame so the patch cables stay attached to the device as it moves.
+  const dragDYRef = useRef(0);
   const [hoverU, setHoverU] = useState<number | null>(null);
   // A click fires immediately after pointerup. If that pointerup committed a drop, the click must
   // NOT also run onAddAt — that would reopen the picker with initialTypeId null and throw away the
@@ -195,6 +198,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
       content.querySelector(`[data-testid="rack-device-${d.id}"]`)?.setAttribute("transform", `translate(${ix}, ${top})`);
       const box = content.querySelector<HTMLElement>(`[data-testid="rack-dev-${d.id}"]`);
       if (box) box.style.transform = `translateY(${top - origTop}px)`;
+      dragDYRef.current = top - origTop;   // cables follow via PatchLayer's per-frame update
       content.querySelector('[data-testid="rack-ghost"]')?.setAttribute("y", String(ruTopY(d.ghostU, d.ru, heightU)));
     };
     const onUp = () => {
@@ -212,6 +216,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
         props.onMove(d.id, d.ghostU);       // resolveMove clamps to a valid slot; one commit
       }
       dragRef.current = null;
+      dragDYRef.current = 0;
       setDragId(null);
     };
     window.addEventListener("pointermove", onMove);
@@ -438,7 +443,7 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
            interactive PatchLayer elements (port dots, cables) opt back in via their own pointerEvents. */}
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} overflow="visible"
           style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>
-          <PatchLayer placements={placements} heightU={heightU} side={side}
+          <PatchLayer placements={placements} heightU={heightU} side={side} dragId={dragId} dragDYRef={dragDYRef}
             connections={props.connections} activeConnIds={activeConnIds}
             onConnectAttempt={attemptConnect} onPortClick={handlePortClick}
             onSelectConnection={props.onSelectConnection}
