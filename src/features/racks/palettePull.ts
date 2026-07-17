@@ -24,13 +24,6 @@ import { CORNER_R } from "@/features/device-library/faceplate/Faceplate";
 export const RACK_LATCH_X = 150;
 /** Duration (ms) of the snap-back home. STARTING GUESS. */
 export const SNAP_MS = 260;
-/** How far, HORIZONTALLY, from the rack's centre line the cursor starts opening the chip into the
- *  device. The open is driven by POSITION, not a timer: at OPEN_RUNWAY away it is a chip, at the
- *  centre it is a full device, and every point between maps 1:1 to how far you have dragged. So the
- *  transition ends exactly when the device reaches the centre — nothing plays on its own clock, and
- *  dragging back out simply runs it in reverse. Reusing RACK_LATCH_X ties "it becomes droppable" and
- *  "it starts forming" to the same boundary. Viewport px; STARTING GUESS — tune in the browser. */
-export const OPEN_RUNWAY = RACK_LATCH_X;
 /** The palette chip's own corner radius (Tailwind `rounded-lg`). The carried chip starts here and
  *  morphs to the device's CORNER_R as it opens, so the silhouette is continuous. */
 export const CHIP_R = 8;
@@ -70,26 +63,21 @@ export const CHIP_BORDER = "#e5e5e5";
 const clamp01 = (t: number) => (t > 1 ? 1 : t > 0 ? t : 0);
 const lerpSize = (a: Size, b: Size, k: number): Size => ({ w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k });
 
-/** The open ease: smooth at both ends, monotonic, exact at 0 and 1. The shape, the radius, the
- *  name's travel and both cross-fades ALL ride this one curve driven by position (see openReveal),
- *  so they cannot drift apart — they begin and end together, by construction.
- *  No overshoot: the open is now locked to the cursor, and a shape that springs PAST full-size while
- *  you are still dragging toward the centre reads as the device fighting your hand. Smooth beats
- *  springy once the two are the same gesture. */
-export function easeInOutCubic(t: number): number {
-  const c = clamp01(t);
-  if (c <= 0) return 0;   // pinned exactly — an ease that is off by 1e-16 at its ends opens the box
-  if (c >= 1) return 1;   // from 131.99999999999983 instead of the chip's 132 (a real bug once)
-  return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
-}
-
-/** Position-driven open, 0 (a chip) -> 1 (the device), from how far the cursor is HORIZONTALLY from
- *  the rack's centre line. 1 exactly at the centre, 0 at OPEN_RUNWAY away or beyond, eased between.
- *  Cursor x, not the box's — the box centres on the cursor as it opens, and using the box would be
- *  circular (its position already depends on this). Null rack (not measurable) => a chip. */
+/** Position-driven open, 0 (a chip) -> 1 (the device). It spans the WHOLE journey: 0 where the chip
+ *  was picked up, 1 exactly at the rack's centre, every point between mapping 1:1 to how far you have
+ *  dragged. So the transition begins the moment you start carrying it and ends precisely when the
+ *  device reaches the centre — there is no clock, and dragging back out runs it in reverse.
+ *  The origin is the cursor's position AT PICKUP (chip centre minus the grab offset), so reveal is
+ *  exactly 0 on the first frame. Horizontal only, and cursor x not the box's — the box centres on
+ *  the cursor as it opens, so using the box would be circular. Null rack => a chip. */
 export function openReveal(p: PullState, rackCentreX: number | null): number {
   if (rackCentreX === null) return 0;
-  return easeInOutCubic(1 - Math.abs(p.x - rackCentreX) / OPEN_RUNWAY);
+  const originX = p.chip.x - p.grab.x;              // where the cursor was when you picked it up
+  const d0 = Math.abs(originX - rackCentreX);       // the full distance from there to the centre
+  if (d0 < 1) return 1;                             // picked up on the rack itself (unreachable) => open
+  // easeOUT, not ease-in-out: it must BEGIN visibly the instant you start carrying it, not crawl for
+  // the first third. Fast off the mark, gently settling as it arrives at the centre.
+  return easeOutCubic(1 - Math.abs(p.x - rackCentreX) / d0);
 }
 
 // ---- flex -------------------------------------------------------------------------------------
