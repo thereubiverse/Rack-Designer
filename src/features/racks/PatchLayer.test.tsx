@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent } from "@testing-library/react";
 import { RackCanvas } from "./RackCanvas";
 import type { RackPlacementRender } from "./RackFrame";
 import type { Face, PortGroup } from "@/domain/faceplate";
+import { RU_PX } from "@/domain/faceplate-geometry";
 
 const g = (id: string): PortGroup => ({
   id, media: "copper", connectorType: "RJ45", idPrefix: "P", countingDirection: "ltr",
@@ -339,5 +340,44 @@ describe("PatchLayer drag-to-patch", () => {
     // the routed cable (overlap is a visual property, verified in the browser; the edge waypoint is
     // rounded by roundedPath's 14px radius so it is not a clean numeric check).
     expect(container.querySelector('[data-testid="cable-c1"]')!.getAttribute("stroke-width")).toBe("4");
+  });
+
+  it("a cable stays attached to a device as it is grip-dragged", () => {
+    // The device moves imperatively during a grip drag (no re-render), so the cable must be updated
+    // imperatively too. Capture the rAF callback (jsdom never fires it) and step one frame after a
+    // pointermove, then assert the dragged device's end of the cable moved by the drag delta.
+    let frame: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frame = cb; return 1; });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const sw = dev("sw", 5, "g-sw"), pp = dev("pp", 3, "g-pp");
+      const conns = [{ id: "c1",
+        a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
+        b: { rackDeviceId: "pp", side: "front" as const, groupId: "g-pp", portIndex: 0 } }];
+      const { container } = render(
+        <RackCanvas heightU={12} placements={[sw, pp]} side="FRONT" selectedId="sw"
+          onSelect={() => {}} onAddAt={() => {}} onMove={() => {}} onDelete={() => {}}
+          connections={conns} selectedConnectionId={null}
+          onPatch={() => {}} onSelectConnection={() => {}} onDisconnect={() => {}}
+          onReplace={() => {}} portLabel={(p) => `${p.rackDeviceId}/${p.portIndex + 1}`}
+          dropArmed={false} onDropAt={() => {}} />,
+      );
+      const cable = () => container.querySelector('[data-testid="cable-c1"]')!.getAttribute("d")!;
+      // the sw end is the FIRST point of the path: "M x y ..."
+      const swEndY = () => Number(cable().match(/^M\s*-?[\d.]+\s+(-?[\d.]+)/)![1]);
+      const before = swEndY();
+
+      // grip-drag sw up by one RU (scale defaults to 1 in jsdom)
+      const grip = container.querySelector('[data-testid="rack-grip-sw"]') as HTMLElement;
+      fireEvent.pointerDown(grip, { clientX: 0, clientY: 100, button: 0 });
+      act(() => { fireEvent.pointerMove(window, { clientX: 0, clientY: 100 - RU_PX }); }); // up one RU
+      act(() => { frame?.(0); });   // PatchLayer's per-frame update runs once
+
+      const after = swEndY();
+      expect(after).toBeCloseTo(before - RU_PX, 0);   // the sw end followed the device up by one RU
+      fireEvent.pointerUp(window, { clientX: 0, clientY: 100 - RU_PX });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

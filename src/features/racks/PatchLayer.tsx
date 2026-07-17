@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
@@ -127,6 +127,8 @@ export function PatchLayer(props: {
   onHoverCable?: (id: string | null) => void;
   pinPort?: PortRef | null;                           // port whose red disconnect pin is showing (2nd click)
   onDisconnect?: (id: string) => void;
+  dragId?: string | null;                             // device being grip-dragged, or null
+  dragDYRef?: MutableRefObject<number>;               // its live vertical offset (px), read per frame
 }) {
   const { placements, heightU, side, connections, activeConnIds, pinPort } = props;
   const faceSide = side === "FRONT" ? "front" : "back";
@@ -161,17 +163,21 @@ export function PatchLayer(props: {
   // 0 => the cable's edge-run sits ON the device's top/bottom edge, overlapping the outline, rather
   // than parallel to it a few px inside.
   const EDGE_INSET = 0;
-  const exitY = (port: PortRef, dot: PortDot) => {
+  // `dy` shifts the device's edges while it is grip-dragged, so the cable's edge-run follows it. The
+  // dot passed in is already shifted by the same dy, so the nearest-edge choice is unchanged.
+  const exitY = (port: PortRef, dot: PortDot, dy = 0) => {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
-    const up = dot.y - e.top, down = e.bottom - dot.y;
-    return up < down ? e.top + EDGE_INSET : e.bottom - EDGE_INSET;
+    const top = e.top + dy, bottom = e.bottom + dy;
+    const up = dot.y - top, down = bottom - dot.y;
+    return up < down ? top + EDGE_INSET : bottom - EDGE_INSET;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
   const [drag, setDrag] = useState<{ from: PortRef; x: number; y: number; snap: PortRef | null } | null>(null);
   const dragRef = useRef<PortRef | null>(null);
   const gRef = useRef<SVGGElement>(null);
+  const cableEls = useRef(new Map<string, SVGPathElement>());
   // Live drag values the animation frame reads, so the band keeps springing between pointermoves
   // without re-rendering React every frame.
   const snapRef = useRef<PortRef | null>(null);
@@ -189,21 +195,48 @@ export function PatchLayer(props: {
   const suckEls = useRef(new Map<string, SVGPathElement>());
   const suckSim = useRef(new Map<string, { rope: Rope; anchor: Pt; L0: number; t0: number }>());
 
+  // While a device is grip-dragged, keep the cables attached to it: recompute the affected cables'
+  // paths each frame from the device's live vertical offset. The device itself moves imperatively
+  // (no re-render), so the cables must too, or they detach until the drag commits. Only cables
+  // touching the dragged device are recomputed; the rest are already correct.
+  useEffect(() => {
+    const dyRef = props.dragDYRef;
+    const dragId = props.dragId;
+    if (!dragId || !dyRef) return;
+    let raf = 0;
+    const frame = () => {
+      raf = requestAnimationFrame(frame);
+      const dy = dyRef.current;
+      for (const c of connections) {
+        const aOn = c.a.rackDeviceId === dragId, bOn = c.b.rackDeviceId === dragId;
+        if (!aOn && !bOn) continue;
+        const el = cableEls.current.get(c.id);
+        const a = dotByKey.get(keyOf(c.a)), b = dotByKey.get(keyOf(c.b));
+        if (!el || !a || !b) continue;
+        el.setAttribute("d", cableD(c.a, a, c.b, b, aOn ? dy : 0, bOn ? dy : 0));
+      }
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [props.dragId, props.dragDYRef, connections, dotByKey]);
+
   /** How near a port has to be for the cable to grab it (SVG units; the dot itself is r=9). */
   const SNAP_R = 16;
   /** Cable paid out per unit dragged: the farther from the port, the more slack hangs. */
   const SLACK = 0.35;
 
   /** The routed patch line for a connection — the shape a dropped cable recoils into. */
-  const cableD = (aRef: PortRef, a: PortDot, bRef: PortRef, b: PortDot) => {
-    const aRail = exitY(aRef, a), bRail = exitY(bRef, b);
+  const cableD = (aRef: PortRef, a: PortDot, bRef: PortRef, b: PortDot, dyA = 0, dyB = 0) => {
+    // A grip-dragged device carries its cable ends with it: dyA/dyB shift each side's port and rail.
+    const ay = a.y + dyA, by = b.y + dyB;
+    const aRail = exitY(aRef, { ...a, y: ay }, dyA), bRail = exitY(bRef, { ...b, y: by }, dyB);
     // The segment onto the port leaves at an ANGLE — leaning toward the trunk (left) as it
     // rises/drops to the rail — so the diagonal clears the port's centred number label instead of
     // covering it with a vertical stub.
     const LEAD = 18;
     return roundedPath([
-      { x: a.x, y: a.y }, { x: a.x - LEAD, y: aRail }, { x: laneBase, y: aRail },
-      { x: laneBase, y: bRail }, { x: b.x - LEAD, y: bRail }, { x: b.x, y: b.y },
+      { x: a.x, y: ay }, { x: a.x - LEAD, y: aRail }, { x: laneBase, y: aRail },
+      { x: laneBase, y: bRail }, { x: b.x - LEAD, y: bRail }, { x: b.x, y: by },
     ], 14);
   };
 
@@ -438,7 +471,8 @@ export function PatchLayer(props: {
           const d = cableD(c.a, a, c.b, b);
           const active = activeConnIds.has(c.id);
           return (
-            <path key={c.id} data-testid={`cable-${c.id}`} d={d}
+            <path key={c.id} ref={(el) => { const m = cableEls.current; if (el) m.set(c.id, el); else m.delete(c.id); }}
+              data-testid={`cable-${c.id}`} d={d}
               fill="none" stroke={active ? AMBER : BLUE} strokeWidth={CABLE_W}
               strokeLinejoin="round" strokeLinecap="round"
               style={{ cursor: "pointer", pointerEvents: "auto" }}
