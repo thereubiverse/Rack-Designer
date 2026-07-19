@@ -33,18 +33,20 @@ describe("Faceplate", () => {
     expect(w / h).toBeCloseTo(19 / 1.75, 1);
   });
 
-  it("draws screw holes when rack-mounted (4 for 1U)", () => {
-    const { getAllByTestId } = render(
+  it("draws the two mounting ears when rack-mounted, and never any screw holes", () => {
+    const { getAllByTestId, queryAllByTestId } = render(
       <Faceplate face={emptyFace()} widthIn={10.6} rackUnits={1} rackMounted />,
     );
-    expect(getAllByTestId("screw-hole")).toHaveLength(4);
+    expect(getAllByTestId("face-ear")).toHaveLength(2);
+    // Screw holes were removed outright so the ear's full width is free for its label.
+    expect(queryAllByTestId("screw-hole")).toHaveLength(0);
   });
 
-  it("drops the ears and screw holes when not rack-mounted, keeping the grid", () => {
+  it("drops the ears when not rack-mounted, keeping the grid", () => {
     const { queryAllByTestId, getByTestId } = render(
       <Faceplate face={emptyFace()} widthIn={10.6} rackUnits={1} rackMounted={false} />,
     );
-    expect(queryAllByTestId("screw-hole")).toHaveLength(0);
+    expect(queryAllByTestId("face-ear")).toHaveLength(0);
     expect(getByTestId("faceplate-body")).toBeInTheDocument();
   });
 
@@ -125,22 +127,16 @@ describe("Faceplate — icon elements", () => {
     expect(ph.getAttribute("width")).toBe("36");
   });
 
-  it("screw holes on a tinted (selected) ear are white cutouts, not grey dots", () => {
-    // The user's ask: on a blue selection ear the screw holes should read as punched cutouts.
-    const { container } = render(
-      <svg>{renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor: "#155dfc" })}</svg>,
-    );
-    const holes = [...container.querySelectorAll('[data-testid="screw-hole"]')];
-    expect(holes.length).toBeGreaterThan(0);
-    expect(holes.every((h) => h.getAttribute("fill") === "#ffffff")).toBe(true);
-  });
-
-  it("screw holes on a plain grey ear stay grey", () => {
-    const { container } = render(
-      <svg>{renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true })}</svg>,
-    );
-    const holes = [...container.querySelectorAll('[data-testid="screw-hole"]')];
-    expect(holes.length).toBeGreaterThan(0);
-    expect(holes.every((h) => h.getAttribute("fill") === "#a3a3a3")).toBe(true);
+  it("an ear is a clean unbroken fill — no screw holes punched in it, tinted or plain", () => {
+    // Screw holes are gone from the faceplate entirely; the ear's full width belongs to its label.
+    // Checked on BOTH ear states because the holes used to render differently on each (white
+    // cutouts on a selected blue ear, grey dots on a plain one).
+    for (const earColor of ["#155dfc", undefined]) {
+      const { container } = render(
+        <svg>{renderFace(emptyFace(), { widthIn: 17.5, rackUnits: 1, rackMounted: true, earColor })}</svg>,
+      );
+      expect(container.querySelectorAll('[data-testid="screw-hole"]')).toHaveLength(0);
+      expect(container.querySelectorAll('[data-testid="face-ear"]')).toHaveLength(2);
+    }
   });
 });

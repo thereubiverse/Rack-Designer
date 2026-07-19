@@ -5,8 +5,6 @@ import {
   PX_PER_IN,
   earWidthIn,
   frameDims,
-  screwHoles,
-  SCREW_EDGE_INSET_PX,
 } from "./faceplate-geometry";
 
 describe("faceplate geometry — frame & ears", () => {
@@ -52,57 +50,6 @@ describe("faceplate geometry — frame & ears", () => {
   });
 });
 
-describe("faceplate geometry — screw holes", () => {
-  it("no holes when there are no ears (stand-alone)", () => {
-    const d = frameDims({ widthIn: 10.6, rackUnits: 1, rackMounted: false });
-    expect(screwHoles(d, 1)).toEqual([]);
-  });
-
-  it("rack-mounted 1U yields 4 holes: 2 per ear (top & bottom)", () => {
-    const d = frameDims({ widthIn: 10.6, rackUnits: 1, rackMounted: true });
-    expect(screwHoles(d, 1)).toHaveLength(4);
-  });
-
-  it("multi-U still yields only 4 corner holes (not repeated per U)", () => {
-    const d = frameDims({ widthIn: 10.6, rackUnits: 2, rackMounted: true });
-    const holes = screwHoles(d, 2);
-    expect(holes).toHaveLength(4);
-    // one near the top edge, one near the bottom edge of the whole frame
-    expect(holes.some((h) => h.cy < d.heightPx * 0.2)).toBe(true);
-    expect(holes.some((h) => h.cy > d.heightPx * 0.8)).toBe(true);
-  });
-
-  it("left holes sit inside the left ear, right holes inside the right ear", () => {
-    const d = frameDims({ widthIn: 10.6, rackUnits: 1, rackMounted: true });
-    const holes = screwHoles(d, 1);
-    const leftX = SCREW_EDGE_INSET_PX;
-    const rightX = d.frameWidthPx - SCREW_EDGE_INSET_PX;
-    expect(holes.filter((h) => Math.abs(h.cx - leftX) < 0.001)).toHaveLength(2);
-    expect(holes.filter((h) => Math.abs(h.cx - rightX) < 0.001)).toHaveLength(2);
-    // both sit within their ear
-    for (const h of holes) expect(h.cx < d.earWidthPx || h.cx > d.frameWidthPx - d.earWidthPx).toBe(true);
-  });
-
-  it("holes stay the same distance from the outer edge regardless of body width", () => {
-    const wide = screwHoles(frameDims({ widthIn: 17.5, rackUnits: 1, rackMounted: true }), 1);
-    const narrow = screwHoles(frameDims({ widthIn: 8, rackUnits: 1, rackMounted: true }), 1);
-    const frame = frameDims({ widthIn: 8, rackUnits: 1, rackMounted: true }).frameWidthPx;
-    const leftInset = (hs: { cx: number }[]) => Math.min(...hs.map((h) => h.cx));
-    const rightInset = (hs: { cx: number }[]) => frame - Math.max(...hs.map((h) => h.cx));
-    expect(leftInset(wide)).toBeCloseTo(SCREW_EDGE_INSET_PX);
-    expect(leftInset(narrow)).toBeCloseTo(SCREW_EDGE_INSET_PX);
-    expect(rightInset(wide)).toBeCloseTo(SCREW_EDGE_INSET_PX);
-    expect(rightInset(narrow)).toBeCloseTo(SCREW_EDGE_INSET_PX);
-  });
-
-  it("holes stay within the frame height", () => {
-    const d = frameDims({ widthIn: 10.6, rackUnits: 1, rackMounted: true });
-    for (const h of screwHoles(d, 1)) {
-      expect(h.cy).toBeGreaterThan(0);
-      expect(h.cy).toBeLessThan(d.heightPx);
-    }
-  });
-});
 
 import { portSequence, layoutPortGroup, ROW_H, LABEL_H } from "./faceplate-geometry";
 import type { PortGroup } from "./faceplate";

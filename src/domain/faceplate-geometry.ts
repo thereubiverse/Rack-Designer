@@ -10,7 +10,6 @@ export const CELL_W = 24;          // uniform port cell width (px)
 export const ROW_H = 24;           // uniform port cell height (px)
 export const GLYPH_W = 20;         // normalized glyph width (px)
 export const LABEL_H = 12;         // vertical strip for a port's number label
-export const SCREW_EDGE_INSET_PX = 18; // screw-hole centre distance from the outer rail edge
 export const GRID_IN = 0.25;       // snap-to-grid step (inches)
 export const GRID_PX = PX_PER_IN * GRID_IN; // 12px — and CELL_W/ROW_H (24) & 1U (84) are multiples
 
@@ -51,35 +50,6 @@ export function frameDims(opts: {
     earWidthPx: ear * PX_PER_IN,
     heightPx: heightIn * PX_PER_IN,
   };
-}
-
-export interface ScrewHole {
-  cx: number;
-  cy: number;
-}
-
-/**
- * Screw holes pinned near the outer rail edges so they line up on the rack
- * regardless of body width. 2 holes per ear — near the top & bottom corners of
- * the whole faceplate (not repeated per U). Returns [] when there are no ears.
- */
-export function screwHoles(dims: FrameDims, _rackUnits: number): ScrewHole[] {
-  if (dims.earWidthPx <= 0) return [];
-  // Fixed distance from the outer rail edge regardless of body width, clamped so a
-  // thin ear (wide body) still keeps the hole centred inside it.
-  const inset = Math.min(SCREW_EDGE_INSET_PX, dims.earWidthPx / 2);
-  const leftX = inset;
-  const rightX = dims.frameWidthPx - inset;
-  // Inset from each edge so the screw circle lands dead-centre on the rack's square
-  // mounting point: those sit 7 ref-units (4px offset + 3px half-height on a 50px RU)
-  // below the RU top, i.e. RU_PX*7/50 = 11.76px.
-  const edge = (RU_PX * 7) / 50;
-  const holes: ScrewHole[] = [];
-  for (const cx of [leftX, rightX]) {
-    holes.push({ cx, cy: edge });
-    holes.push({ cx, cy: dims.heightPx - edge });
-  }
-  return holes;
 }
 
 import type { PortGroup, Media, CountingDirection } from "./faceplate";
