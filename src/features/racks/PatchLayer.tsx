@@ -10,7 +10,7 @@ import { portConnection, samePort, type Connection, type PortRef } from "./conne
 const BLUE = "#1a55d8";
 const AMBER = "#fdc700";
 /** Patch-cable stroke weight. */
-const CABLE_W = 4;
+const CABLE_W = 3;
 
 const keyOf = (p: PortRef) => `${p.rackDeviceId}-${p.side}-${p.groupId}-${p.portIndex}`;
 const parsePort = (s: string): PortRef => {

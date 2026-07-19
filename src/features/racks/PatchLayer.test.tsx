@@ -324,7 +324,7 @@ describe("PatchLayer drag-to-patch", () => {
     expect(onReplace).not.toHaveBeenCalled();
   });
 
-  it("cables are drawn 2px thicker (stroke-width 4), including the drag animations", () => {
+  it("cables are drawn at stroke-width 3, including the drag animations", () => {
     const sw = dev("sw", 5, "g-sw"), pp = dev("pp", 3, "g-pp");
     const conns = [{ id: "c1",
       a: { rackDeviceId: "sw", side: "front" as const, groupId: "g-sw", portIndex: 0 },
@@ -339,7 +339,7 @@ describe("PatchLayer drag-to-patch", () => {
     );
     // the routed cable (overlap is a visual property, verified in the browser; the edge waypoint is
     // rounded by roundedPath's 14px radius so it is not a clean numeric check).
-    expect(container.querySelector('[data-testid="cable-c1"]')!.getAttribute("stroke-width")).toBe("4");
+    expect(container.querySelector('[data-testid="cable-c1"]')!.getAttribute("stroke-width")).toBe("3");
   });
 
   it("a cable stays attached to a device as it is grip-dragged", () => {
