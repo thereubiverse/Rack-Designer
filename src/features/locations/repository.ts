@@ -1,44 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoomType } from "@/domain/hierarchy";
-import { buildLabel } from "@/domain/naming";
 import type {
-  OrganizationRow,
   SiteRow,
   FloorRow,
   RoomRow,
   RackRow,
 } from "@/lib/supabase/types";
 
-export interface RackWithPath {
-  id: string;
-  label: string;
-  siteCode: string;
-  floorCode: string;
-  roomCode: string;
-  roomType: RoomType;
-  rackCode: string;
-  heightU: number;
-}
-
-export async function getDefaultOrganization(db: SupabaseClient): Promise<OrganizationRow> {
-  const { data, error } = await db
-    .from("organizations")
-    .select("*")
-    .eq("code", "DEFAULT")
-    .single();
-  if (error) throw new Error(`getDefaultOrganization: ${error.message}`);
-  return data as OrganizationRow;
-}
-
 export async function createSite(
   db: SupabaseClient,
-  input: { code: string; name: string; address?: string }
+  input: { clientId: string; code: string; name: string; address?: string }
 ): Promise<SiteRow> {
-  const org = await getDefaultOrganization(db);
   const { data, error } = await db
     .from("sites")
     .insert({
-      organization_id: org.id,
+      client_id: input.clientId,
       code: input.code,
       name: input.name,
       address: input.address ?? null,
@@ -101,43 +77,4 @@ export async function createRack(
     .single();
   if (error) throw new Error(`createRack: ${error.message}`);
   return data as RackRow;
-}
-
-interface RackJoinRow {
-  id: string;
-  code: string;
-  height_u: number;
-  rooms: {
-    code: string;
-    type: RoomType;
-    floors: {
-      code: string;
-      sites: { code: string };
-    };
-  };
-}
-
-export async function listRacksWithPath(db: SupabaseClient): Promise<RackWithPath[]> {
-  const { data, error } = await db
-    .from("racks")
-    .select("id, code, height_u, rooms!inner(code, type, floors!inner(code, sites!inner(code)))")
-    .order("code", { ascending: true });
-  if (error) throw new Error(`listRacksWithPath: ${error.message}`);
-
-  const rows = (data ?? []) as unknown as RackJoinRow[];
-  return rows.map((r) => {
-    const siteCode = r.rooms.floors.sites.code;
-    const floorCode = r.rooms.floors.code;
-    const roomCode = r.rooms.code;
-    return {
-      id: r.id,
-      label: buildLabel({ site: siteCode, floor: floorCode, room: roomCode, rack: r.code }),
-      siteCode,
-      floorCode,
-      roomCode,
-      roomType: r.rooms.type,
-      rackCode: r.code,
-      heightU: r.height_u,
-    };
-  });
 }
