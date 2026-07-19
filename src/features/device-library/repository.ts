@@ -2,9 +2,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getDefaultOrganization } from "@/features/locations/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 
-export interface BrandRow { id: string; organization_id: string; name: string; created_at: string; }
+export interface BrandRow { id: string; name: string; created_at: string; }
 export interface DeviceTypeRow {
-  id: string; organization_id: string; name: string; created_at: string;
+  id: string; name: string; created_at: string;
   category: "floor" | "rack";
   code: string;          // ID prefix for generated device IDs (SW01, ...)
   is_standard: boolean;  // seeded by us: code editable, never deletable

@@ -1,6 +1,6 @@
 import type { RoomType } from "@/domain/hierarchy";
 
-export interface OrganizationRow {
+export interface ClientRow {
   id: string;
   code: string;
   name: string;
@@ -9,7 +9,7 @@ export interface OrganizationRow {
 
 export interface SiteRow {
   id: string;
-  organization_id: string;
+  client_id: string;
   code: string;
   name: string;
   address: string | null;
