@@ -39,20 +39,10 @@ async function findOrCreateRoom(
 }
 
 /**
- * Legacy call site (CreateRackModal on the pre-clients-directory /racks page still collects a
- * free-text site code, not a resolved site id). Resolves a site by code so that page can keep
- * working until it's rebuilt under the per-client directory.
+ * Adds a rack to an ALREADY-RESOLVED site — the site page hands over its id, so unlike the old
+ * flat flow this never creates a site from a typed code. Floors and rooms stay find-or-create:
+ * the directory treats them as implicit, born when a rack needs them.
  */
-export async function findSiteIdByCodeAction(code: string): Promise<{ id: string } | null> {
-  const db = createServiceClient();
-  const { data } = await db
-    .from("sites")
-    .select("id")
-    .eq("code", normaliseCode(code))
-    .maybeSingle();
-  return data;
-}
-
 export async function createRackInSiteAction(
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> {

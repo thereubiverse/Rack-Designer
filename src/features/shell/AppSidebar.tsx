@@ -42,14 +42,13 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
 
         {/* Primary nav */}
         <nav className="space-y-0.5">
-          <NavItem icon="tabler:building-community" label="Clients" />
+          <NavItem icon="tabler:building-community" label="Clients" href="/clients" active={pathname.startsWith("/clients")} />
           <NavItem icon="tabler:network" label="Networks" />
           <NavItem icon="tabler:folders" label="Resources" />
           <NavItem icon="tabler:history" label="Activity Log" />
         </nav>
 
         <nav className="space-y-0.5">
-          <NavItem icon="tabler:server-2" label="Racks" href="/racks" active={pathname.startsWith("/racks")} />
           <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
           <NavItem icon="tabler:users" label="Users & Permissions" />
           <NavItem icon="tabler:settings" label="Settings & Billing" href="/settings" active={pathname.startsWith("/settings")} />
