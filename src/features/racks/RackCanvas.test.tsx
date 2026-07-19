@@ -74,11 +74,29 @@ describe("RackCanvas", () => {
   it("the grip sits inside the right ear rather than poking out past the device edge", () => {
     render(<RackCanvas {...base} selectedId="d1" />);
     const grip = screen.getByTestId("rack-grip-d1");
-    // Ear is 36px wide, grip 16px → centred at 10px in, so its outer edge stops 10px short of
-    // the device's right edge. A negative offset (the old `-right-1`) would hang it outside.
+    // Ear is 36px wide, grip 24px (widened once the screw holes freed the ear) → centred at 6px
+    // in, so its outer edge stops 6px short of the device's right edge. A negative offset (the
+    // old `-right-1`) would hang it outside.
     const right = parseFloat(grip.style.right as string);
-    expect(right).toBe((36 - 16) / 2);
+    expect(right).toBe((36 - 24) / 2);
     expect(right).toBeGreaterThan(0);
+  });
+
+  it("the ear's code text and the grip both take the width the screw holes freed up", () => {
+    const withCode = [{ ...placements[0], code: "SW01" }];
+    const { container } = render(<RackCanvas {...base} placements={withCode} selectedId="d1" />);
+    // Nothing punches holes in the ear any more...
+    expect(container.querySelectorAll('[data-testid="screw-hole"]')).toHaveLength(0);
+    // ...so the code set into it is sized off the shared ear-text scale rather than the old 16px,
+    // and still clears the 36px ear it is rotated across.
+    const code = container.querySelector('[data-testid="rack-code-d1"]')!;
+    const size = Number(code.getAttribute("font-size"));
+    expect(size).toBeGreaterThan(16);
+    expect(size).toBeLessThan(36);
+    // The grip widened in step with it, and still sits fully inside the ear.
+    const grip = container.querySelector('[data-testid="rack-grip-d1"]') as HTMLElement;
+    expect(grip.className).toContain("w-6");
+    expect(parseFloat(grip.style.right)).toBeGreaterThan(0);
   });
 
   it("the code tag flips to white when its ear turns blue underneath it", () => {

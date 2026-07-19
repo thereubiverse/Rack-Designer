@@ -1,7 +1,6 @@
 import type { Face } from "@/domain/faceplate";
 import {
   frameDims,
-  screwHoles,
   layoutPortGroup,
   CELL_W,
   ROW_H,
@@ -31,6 +30,12 @@ export const EAR_GREY = "#d4d4d4";
 // right edge when there are no ears) — no external gutter. LABEL_INSET_PX is how far the
 // label's center sits from the right edge when there are no ears.
 const LABEL_INSET_PX = 18;
+/** Type size for text set INSIDE a mounting ear (the FRONT/BACK label here, the device code in the
+ *  rack). The ears used to be shared with screw holes; with those gone the full ear width is free,
+ *  so ear text is sized to use it. A standard ear is 36px wide ((19" - 17.5") / 2 x 48), and the
+ *  text is rotated a quarter turn, so this is the type's height ACROSS the ear — it must stay
+ *  comfortably under that width. */
+export const EAR_LABEL_PX = 15;
 /** Frame corner radius. Exported so anything drawn AROUND a device (the rack's selection box, the
  *  drag ghost) can match the curve instead of guessing at it. */
 export const CORNER_R = 6;
@@ -103,7 +108,6 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
   const highlights = highlight ? (Array.isArray(highlight) ? highlight : [highlight]) : [];
   const previews = movePreview ? (Array.isArray(movePreview) ? movePreview : [movePreview]) : [];
   const dims = frameDims(opts);
-  const holes = screwHoles(dims, opts.rackUnits);
   const groups = face.portGroups.map((g) => layoutPortGroup(g, dims.heightPx));
   const svgWidth = dims.frameWidthPx;
   const svgHeight = dims.heightPx;
@@ -126,16 +130,6 @@ export function renderFace(face: Face, opts: FaceplateOptions, highlight?: Highl
           <line x1={svgWidth - dims.earWidthPx} y1={0} x2={svgWidth - dims.earWidthPx} y2={svgHeight} stroke={earFill} />
         </>
       )}
-      {/* screw holes. On a tinted (selected, blue) ear they read as CUTOUTS — filled with the
-          device's own white interior so they look punched through — rather than as grey dots on
-          blue. A grey ear keeps the subtle grey. */}
-      {holes.map((h, i) => {
-        const cut = opts.earColor !== undefined && opts.earColor !== EAR_GREY;
-        const c = cut ? "#ffffff" : "#a3a3a3";
-        return (
-          <circle key={i} data-testid="screw-hole" cx={h.cx} cy={h.cy} r={4} fill={c} stroke={c} />
-        );
-      })}
       {/* single outer outline, inset half a stroke so the whole 1px shows (the viewBox
           would otherwise clip the outer edges) and reads at the same weight as the seams */}
       <rect x={0.5} y={0.5} width={svgWidth - 1} height={svgHeight - 1} rx={CORNER_R - 0.5} fill="none" stroke="#d4d4d4" />
@@ -184,7 +178,8 @@ export function Faceplate({
   const width = dims.frameWidthPx; // label lives inside the frame now — no extra gutter
   const height = dims.heightPx;
   // Label x: centered on the right ear when rack-mounted, else just inside the body's right
-  // edge. y is the vertical center — i.e. halfway between the top & bottom screw holes.
+  // edge; y is the frame's vertical centre. With the screw holes gone the ear is clear, so the
+  // label takes the freed width (see EAR_LABEL_PX).
   const labelX = dims.earWidthPx > 0 ? dims.frameWidthPx - dims.earWidthPx / 2 : dims.frameWidthPx - LABEL_INSET_PX;
   return (
     <svg
@@ -202,7 +197,7 @@ export function Faceplate({
           textAnchor="middle"
           dominantBaseline="central"
           transform={`rotate(90, ${labelX}, ${height / 2})`}
-          fontSize={11}
+          fontSize={EAR_LABEL_PX}
           fontWeight={600}
           fontFamily="Inter, system-ui, sans-serif"
           fill="#9aa1ab"

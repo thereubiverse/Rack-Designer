@@ -104,7 +104,7 @@ describe("RackDeviceEditor", () => {
     expect(screen.getByText("BACK")).toBeInTheDocument();
   });
 
-  it("Rack Mounted toggle drops the screw holes in the preview", async () => {
+  it("Rack Mounted toggle drops the mounting ears in the preview", async () => {
     const user = userEvent.setup();
     render(
       <RackDeviceEditor
@@ -116,9 +116,10 @@ describe("RackDeviceEditor", () => {
         onCancel={noop}
       />,
     );
-    expect(screen.getAllByTestId("screw-hole").length).toBeGreaterThan(0);
+    // The ears are what the toggle governs now — screw holes were removed from the faceplate.
+    expect(screen.getAllByTestId("face-ear").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: /rack mounted/i }));
-    expect(screen.queryAllByTestId("screw-hole")).toHaveLength(0);
+    expect(screen.queryAllByTestId("face-ear")).toHaveLength(0);
   });
 
   it("edit mode pre-fills fields and the active face", () => {

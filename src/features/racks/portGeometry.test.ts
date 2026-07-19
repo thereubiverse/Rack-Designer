@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Face, PortGroup } from "@/domain/faceplate";
-import { frameDims, layoutPortGroup, CELL_W, ROW_H } from "@/domain/faceplate-geometry";
+import { frameDims, layoutPortGroup, CELL_W, ROW_H, RU_PX } from "@/domain/faceplate-geometry";
 import { ruTopY, RACK_GUTTER_L, RACK_PAD } from "./RackFrame";
 import { portCenters, portExitEdge } from "./portGeometry";
 
@@ -57,5 +57,41 @@ describe("portExitEdge", () => {
   it("lower-half ports always exit to the bottom regardless of rows", () => {
     expect(portExitEdge(bottom - 5, top, bottom, 1)).toBe("bottom");
     expect(portExitEdge(bottom - 5, top, bottom, 2)).toBe("bottom");
+  });
+});
+
+describe("exit direction is a property of the ROW", () => {
+  // Ports sharing a row must all leave toward the SAME edge. That holds because the decision reads
+  // only the port's y, its device's edges and its row count — all identical across a row — so it can
+  // never depend on which connection a port happens to belong to. These drive real port centres
+  // through portCenters rather than hand-picked ys, so a layout change can't quietly break it.
+  const edgesByRow = (rows: number, cols: number): ("top" | "bottom")[][] => {
+    const g: PortGroup = { ...group, id: "g", rows, cols };
+    const dots = portCenters({
+      rackDeviceId: "d", side: "front", face: { portGroups: [g], elements: [] },
+      startU: 1, rackUnits: 1, widthIn: 19, rackMounted: true, heightU: 12,
+    });
+    const top = ruTopY(1, 1, 12), bottom = top + RU_PX;
+    const byRow = new Map<number, ("top" | "bottom")[]>();
+    for (const d of dots) {
+      const key = Math.round(d.y * 1000); // same row === same y
+      byRow.set(key, [...(byRow.get(key) ?? []), portExitEdge(d.y, top, bottom, rows)]);
+    }
+    return [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  };
+
+  it("a single row of many ports all exit the same direction", () => {
+    const rows = edgesByRow(1, 8);
+    expect(rows).toHaveLength(1);            // one row...
+    expect(rows[0]).toHaveLength(8);         // ...of 8 ports
+    expect(new Set(rows[0]).size).toBe(1);   // every one of them agrees
+  });
+
+  it("each row of a 2-row group is internally consistent, and the two rows go opposite ways", () => {
+    const rows = edgesByRow(2, 8);
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(new Set(r).size).toBe(1); // no row is split
+    expect(rows[0][0]).toBe("top");                        // upper row up
+    expect(rows[1][0]).toBe("bottom");                     // lower row down
   });
 });

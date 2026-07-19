@@ -22,8 +22,9 @@ const MIN_SCALE = 0.05;
 const MAX_SCALE = 3;
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 /** How far the selection box sits outside the device it wraps. */
-/** Grip handle width — must stay in step with its `w-4` class (used to centre it on the ear). */
-const GRIP_W = 16;
+/** Grip handle width — must stay in step with its `w-6` class (used to centre it on the ear).
+ *  Widened along with the ear text once the screw holes freed up the ear. */
+const GRIP_W = 24;
 
 export type RackCanvasHandle = {
   zoomBy: (factor: number) => void;
@@ -443,9 +444,9 @@ export const RackCanvas = forwardRef<RackCanvasHandle, {
                       dragRef.current = { id: p.id, startY: e.clientY, origU: p.startU, ru: p.template.rackUnits, ghostU: p.startU };
                       setDragId(p.id);
                     }}
-                    className="pointer-events-auto absolute top-1/2 flex h-8 w-4 -translate-y-1/2 cursor-grab items-center justify-center rounded text-white"
+                    className="pointer-events-auto absolute top-1/2 flex h-11 w-6 -translate-y-1/2 cursor-grab items-center justify-center rounded text-white"
                     style={{ right: gripRight, backgroundColor: RK_SELECT }}>
-                    <svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>
+                    <svg width="12" height="21" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>
                   </div>
                 </>
               )}

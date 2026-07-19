@@ -8,7 +8,7 @@
 // cap on top and a ventilation-slat plinth + feet on the bottom.
 // No interactivity — RackCanvas overlays that (same split as Faceplate/EditorCanvas).
 import { memo } from "react";
-import { renderFace, CORNER_R, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
+import { renderFace, CORNER_R, EAR_LABEL_PX, type HighlightPort } from "@/features/device-library/faceplate/Faceplate";
 import { RU_PX, PX_PER_IN, RAIL_WIDTH_IN } from "@/domain/faceplate-geometry";
 import { type Face } from "@/domain/faceplate";
 
@@ -47,6 +47,9 @@ export const RK_INVALID = "#ef4444";
 /** Vertical code tag on the left ear: grey normally, white once the ear turns blue under it. */
 const RK_CODE = "#6b7280";
 const RK_CODE_SELECTED = "#ffffff";
+// The device code set into the left ear, rotated a quarter turn. Sized off the shared ear-text
+// scale — with the screw holes gone the ear is clear, so the code takes the freed width.
+const RK_CODE_PX = EAR_LABEL_PX + 7;
 
 // Frame half-widths (ref units from centre). The mounting ears stay at the mount edge (270); the
 // cabinet is pulled IN so the white gap between the inner wall and the ear equals the ear width.
@@ -243,7 +246,7 @@ export function RackFrame({ heightU, placements, side, dragId = null, highlight 
             {renderFace(face, opts, highlight ?? undefined)}
             {p.code && (() => {
               const midY = (p.template.rackUnits * RU_PX) / 2;
-              return <text data-testid={`rack-code-${p.id}`} x={18} y={midY} fontSize={16} fontWeight={600}
+              return <text data-testid={`rack-code-${p.id}`} x={18} y={midY} fontSize={RK_CODE_PX} fontWeight={600}
                 fill={selected ? RK_CODE_SELECTED : RK_CODE}
                 textAnchor="middle" dominantBaseline="central"
                 transform={`rotate(-90 18 ${midY})`}>{p.code}</text>;
