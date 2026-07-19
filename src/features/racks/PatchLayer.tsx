@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "rea
 import type { RackPlacementRender } from "./RackFrame";
 import { RACK_CABLE_LANE_X, ruTopY } from "./RackFrame";
 import { RU_PX } from "@/domain/faceplate-geometry";
-import { portCenters, type PortDot } from "./portGeometry";
+import { portCenters, portExitEdge, type PortDot } from "./portGeometry";
 import { portConnection, samePort, type Connection, type PortRef } from "./connectionOps";
 
 // Exact PatchDocs cable colours (their --color-primary-blue / highlighted amber).
@@ -148,6 +148,17 @@ export function PatchLayer(props: {
   }, [placements, faceSide, heightU]);
   const dotByKey = useMemo(() => new Map(dots.map((d) => [keyOf(d.port), d])), [dots]);
 
+  // Row count per port group ("<deviceId>-<groupId>" → rows), so exitY can special-case a
+  // single-row group centred in its device (see portExitEdge).
+  const groupRows = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of placements) {
+      const face = faceSide === "front" ? p.template.frontFace : p.template.backFace;
+      for (const g of face.portGroups) m.set(`${p.id}-${g.id}`, g.rows);
+    }
+    return m;
+  }, [placements, faceSide]);
+
   // Each device's top/bottom edges. A cable exits a port toward its NEAREST edge (up for a port in
   // the device's upper half, down for the lower half) and runs along the device edge, above/below
   // the port labels — the short segment onto the port is ANGLED (see LEAD below) so it clears the
@@ -169,8 +180,8 @@ export function PatchLayer(props: {
     const e = deviceEdges.get(port.rackDeviceId);
     if (!e) return dot.y;
     const top = e.top + dy, bottom = e.bottom + dy;
-    const up = dot.y - top, down = bottom - dot.y;
-    return up < down ? top + EDGE_INSET : bottom - EDGE_INSET;
+    const rows = groupRows.get(`${port.rackDeviceId}-${port.groupId}`) ?? 1;
+    return portExitEdge(dot.y, top, bottom, rows) === "top" ? top + EDGE_INSET : bottom - EDGE_INSET;
   };
 
   const laneBase = RACK_CABLE_LANE_X; // shared vertical trunk, seated in the widened gutter
