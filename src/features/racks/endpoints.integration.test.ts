@@ -7,7 +7,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { emptyFace, type Face, type PortGroup } from "@/domain/faceplate";
-import { getDefaultOrganization } from "@/features/locations/repository";
+import { createClient } from "@/features/clients/repository";
 import { listDeviceTypes } from "@/features/device-library/repository";
 import { saveEndpointsAction } from "./actions";
 import { listPortEndpoints } from "./endpointsRepository";
@@ -19,7 +19,7 @@ let otherRackId = ""; // a second rack on the SAME site — the valid uplink tar
 let ppId = "";
 let camTypeId = "";
 let switchId = ""; // a Switch-type rack_device seeded in otherRackId — the valid device-kind target
-const ids: { site?: string; templateId?: string; swTemplateId?: string } = {};
+const ids: { client?: string; templateId?: string; swTemplateId?: string } = {};
 
 // port_endpoints.group_id is `uuid not null`, so the seeded face's group id must be a real UUID.
 const GROUP_PP = crypto.randomUUID();
@@ -31,11 +31,11 @@ const g = (id: string): PortGroup => ({
 const faceWith = (gid: string): Face => ({ portGroups: [g(gid)], elements: [] });
 
 beforeAll(async () => {
-  const org = await getDefaultOrganization(db);
+  const client = await createClient(db, { code: "T-EP-CLI", name: "endpoints test" });
+  ids.client = client.id;
   const site = (await db.from("sites")
-    .insert({ organization_id: org.id, code: "T-EP", name: "endpoints test" })
+    .insert({ client_id: client.id, code: "T-EP", name: "endpoints test" })
     .select().single()).data!;
-  ids.site = site.id;
   const floor = (await db.from("floors")
     .insert({ site_id: site.id, code: "F-EP", name: "F" })
     .select().single()).data!;
@@ -60,14 +60,14 @@ beforeAll(async () => {
   if (!swType) throw new Error("no SW rack device type available for test");
 
   const tpl = (await db.from("device_templates").insert({
-    organization_id: org.id, name: "endpoints test tpl", device_type_id: rackType.id,
+    name: "endpoints test tpl", device_type_id: rackType.id,
     rack_units: 1, width_in: 19, rack_mounted: true,
     front_face: emptyFace(), back_face: emptyFace(),
   }).select().single()).data!;
   ids.templateId = tpl.id;
 
   const swTpl = (await db.from("device_templates").insert({
-    organization_id: org.id, name: "endpoints test switch tpl", device_type_id: swType.id,
+    name: "endpoints test switch tpl", device_type_id: swType.id,
     rack_units: 1, width_in: 19, rack_mounted: true,
     front_face: emptyFace(), back_face: emptyFace(),
   }).select().single()).data!;
@@ -87,10 +87,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // SCOPED cleanup: only this test's site. Cascades to floors → rooms → racks → rack_devices →
-  // port_endpoints. Never `.neq(...)` — that would wipe the developer's own data.
-  if (ids.site) await db.from("sites").delete().eq("id", ids.site);
-  // device_templates isn't cascaded from the site (ON DELETE RESTRICT), clean up separately.
+  // SCOPED cleanup: only this test's client. Cascades to sites → floors → rooms → racks →
+  // rack_devices → port_endpoints. Never `.neq(...)` — that would wipe the developer's own data.
+  if (ids.client) await db.from("clients").delete().eq("id", ids.client);
+  // device_templates isn't cascaded from the client (ON DELETE RESTRICT), clean up separately.
   if (ids.templateId) await db.from("device_templates").delete().eq("id", ids.templateId);
   if (ids.swTemplateId) await db.from("device_templates").delete().eq("id", ids.swTemplateId);
 });

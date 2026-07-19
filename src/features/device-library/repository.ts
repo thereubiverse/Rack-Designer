@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getDefaultOrganization } from "@/features/locations/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 
 export interface BrandRow { id: string; name: string; created_at: string; }
@@ -10,7 +9,7 @@ export interface DeviceTypeRow {
   is_standard: boolean;  // seeded by us: code editable, never deletable
 }
 export interface DeviceTemplateRow {
-  id: string; organization_id: string; name: string;
+  id: string; name: string;
   brand_id: string | null; device_type_id: string;
   rack_units: number; width_in: number; rack_mounted: boolean;
   front_face: unknown | null; back_face: unknown | null;
@@ -31,10 +30,9 @@ export async function createDeviceType(
   db: SupabaseClient,
   input: { name: string; code: string; category: "floor" | "rack" },
 ): Promise<DeviceTypeRow> {
-  const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("device_types")
     .insert({
-      organization_id: org.id, name: input.name, code: input.code,
+      name: input.name, code: input.code,
       category: input.category, is_standard: false,
     })
     .select("*").single();
@@ -76,9 +74,8 @@ export async function listBrands(db: SupabaseClient): Promise<BrandRow[]> {
 }
 
 export async function createBrand(db: SupabaseClient, input: { name: string }): Promise<BrandRow> {
-  const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("brands")
-    .insert({ organization_id: org.id, name: input.name }).select("*").single();
+    .insert({ name: input.name }).select("*").single();
   if (error) throw new Error(`createBrand: ${error.message}`);
   return data as BrandRow;
 }
@@ -113,9 +110,7 @@ export async function createDeviceTemplate(
   db: SupabaseClient,
   input: { name: string; deviceTypeId: string; brandId?: string; rackUnits?: number; widthIn?: number; rackMounted?: boolean; frontFace?: Face; backFace?: Face },
 ): Promise<DeviceTemplateRow> {
-  const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("device_templates").insert({
-    organization_id: org.id,
     name: input.name,
     device_type_id: input.deviceTypeId,
     brand_id: input.brandId ?? null,
@@ -138,10 +133,9 @@ export async function deleteDeviceTemplate(db: SupabaseClient, id: string): Prom
 export async function duplicateDeviceTemplate(db: SupabaseClient, id: string): Promise<DeviceTemplateRow> {
   const src = await getDeviceTemplate(db, id);
   if (!src) throw new Error("duplicateDeviceTemplate: template not found");
-  const org = await getDefaultOrganization(db);
   const { data, error } = await db.from("device_templates")
     .insert({
-      organization_id: org.id, name: `${src.name} (copy)`,
+      name: `${src.name} (copy)`,
       brand_id: src.brand_id, device_type_id: src.device_type_id,
       rack_units: src.rack_units, width_in: src.width_in, rack_mounted: src.rack_mounted,
       front_face: src.front_face, back_face: src.back_face,

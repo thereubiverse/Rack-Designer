@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ROOM_TYPES } from "@/domain/hierarchy";
-import { createRackWithHierarchyAction } from "@/features/locations/actions";
+import { createRackInSiteAction, findSiteIdByCodeAction } from "@/features/locations/actions";
 
 /** The Phase-1 create flow (site/floor/room/rack codes + height) restyled into a light modal. */
 export function CreateRackModal() {
@@ -13,7 +13,11 @@ export function CreateRackModal() {
 
   async function action(formData: FormData) {
     setError(null);
-    const res = await createRackWithHierarchyAction(formData);
+    const siteCode = String(formData.get("siteCode") ?? "");
+    const site = await findSiteIdByCodeAction(siteCode);
+    if (!site) { setError("Unknown site — create it first"); return; }
+    formData.set("siteId", site.id);
+    const res = await createRackInSiteAction(formData);
     if (!res.ok) { setError(res.error ?? "Failed"); return; }
     setOpen(false);
     router.refresh();

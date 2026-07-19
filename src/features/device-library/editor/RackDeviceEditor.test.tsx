@@ -40,8 +40,8 @@ vi.mock("./DeviceWizard", () => ({
   ),
 }));
 
-const types: DeviceTypeRow[] = [{ id: "t1", organization_id: "o", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true }];
-const brands: BrandRow[] = [{ id: "b1", organization_id: "o", name: "Cisco", created_at: "" }];
+const types: DeviceTypeRow[] = [{ id: "t1", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true }];
+const brands: BrandRow[] = [{ id: "b1", name: "Cisco", created_at: "" }];
 
 const oneGroupFace: Face = {
   portGroups: [{
@@ -142,7 +142,7 @@ describe("RackDeviceEditor", () => {
   it("adds a brand from inside the dropdown", async () => {
     const user = userEvent.setup();
     const onCreateBrand = vi.fn(async (name: string): Promise<BrandRow> => ({
-      id: "b2", organization_id: "o", name, created_at: "",
+      id: "b2", name, created_at: "",
     }));
     render(
       <RackDeviceEditor mode="create" types={types} brands={brands} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} onCreateBrand={onCreateBrand} />,
@@ -171,8 +171,8 @@ describe("RackDeviceEditor", () => {
   it("does not offer a delete button for the protected Generic brand", async () => {
     const user = userEvent.setup();
     const withGeneric: BrandRow[] = [
-      { id: "b1", organization_id: "o", name: "Cisco", created_at: "" },
-      { id: "bg", organization_id: "o", name: "Generic", created_at: "" },
+      { id: "b1", name: "Cisco", created_at: "" },
+      { id: "bg", name: "Generic", created_at: "" },
     ];
     render(
       <RackDeviceEditor mode="create" types={types} brands={withGeneric} wizardEnabled wizardHasKey onSave={noop} onCancel={noop} onDeleteBrand={vi.fn(async () => true)} />,

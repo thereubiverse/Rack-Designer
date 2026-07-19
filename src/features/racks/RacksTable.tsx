@@ -1,7 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import type { RackWithPath } from "@/features/locations/repository";
+import type { RoomType } from "@/domain/hierarchy";
+
+export interface RackWithPath {
+  id: string;
+  label: string;
+  siteCode: string;
+  floorCode: string;
+  roomCode: string;
+  roomType: RoomType;
+  rackCode: string;
+  heightU: number;
+}
 
 export type RackListRow = RackWithPath & { deviceCount: number };
 
