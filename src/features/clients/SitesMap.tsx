@@ -97,6 +97,11 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
  *  maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box for one
  *  blip, and with zoomSnap={0} allowing fractional zoom, fitting a zero-area box would otherwise
  *  drive to the tile layer's max (20), slamming a single-site client to street level. */
+/** Whole-level zoom while the user drives. Anything fractional makes L.Marker's rounded pixel
+ *  positioning drift against continuously-scaled tiles, which reads as the pins wiggling loose
+ *  from the map. Only the fit itself is allowed to be fractional. */
+const INTERACTIVE_ZOOM_SNAP = 1;
+
 const FIT_OPTIONS = {
   paddingTopLeft: [32, 48],
   paddingBottomRight: [32, 16],
@@ -124,7 +129,24 @@ function FitBounds({ bounds }: FitBoundsProps) {
   const first = useRef(true);
 
   useEffect(() => {
-    const fit = () => map.fitBounds(bounds, FIT_OPTIONS);
+    // Fit with FRACTIONAL zoom, then hand the map back to the user with INTEGER zoom.
+    //
+    // These genuinely conflict. zoomSnap=0 is what lets fitBounds pick the exact zoom (it took the
+    // fit from 51% to 87% of the frame — snapping rounds DOWN a whole power-of-two level). But
+    // leaving it at 0 makes every wheel event complete a fractional zoom, and L.Marker.update()
+    // positions markers with `.round()` — integer pixels — while tiles scale continuously. So the
+    // pins re-round against smoothly-scaling tiles and visibly wiggle instead of staying welded to
+    // the map. It also means a transition restart per wheel event, which Safari composites far
+    // worse than Chrome.
+    //
+    // fitBounds reads zoomSnap synchronously to compute its target zoom, so flipping it around the
+    // call gets both: an exact fit, and whole-level zooms for interaction.
+    const fit = () => {
+      const snap = map.options.zoomSnap;
+      map.options.zoomSnap = 0;
+      map.fitBounds(bounds, FIT_OPTIONS);
+      map.options.zoomSnap = snap;
+    };
 
     // The mount fit is done by MapContainer's own `bounds`/`boundsOptions`, so skip it here.
     // Re-fitting immediately after mount is not merely redundant — Leaflet treats fitBounds as
@@ -134,6 +156,9 @@ function FitBounds({ bounds }: FitBoundsProps) {
     // makes the padded fit unconditional rather than correct by luck.
     if (first.current) {
       first.current = false;
+      // MapContainer's own mount fit already ran, using the zoomSnap={0} prop, so it is exact.
+      // Hand interaction back to whole-level zooms now that it's done.
+      map.options.zoomSnap = INTERACTIVE_ZOOM_SNAP;
     } else {
       fit();
     }
@@ -179,8 +204,12 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
       <MapContainer
         bounds={bounds}
         boundsOptions={FIT_OPTIONS}
+        // zoomSnap=0 applies ONLY to MapContainer's mount fit, which needs fractional zoom to land
+        // exactly — snapping rounds down a whole power-of-two level and wasted half the frame
+        // (51% of the viewport used, versus 87% now). FitBounds flips it to INTERACTIVE_ZOOM_SNAP
+        // immediately after mount; see the long note there for why fractional zoom makes the pins
+        // wiggle loose from the map.
         zoomSnap={0}
-        zoomDelta={0.5}
         // Wheel zoom feel. By default every wheel notch fires its own ~250ms eased animation and
         // the map sits frozen between notches — measured as ~225ms of movement followed by ~200ms
         // of nothing, with the easing decelerating so hard that most of each step barely moves.
@@ -194,16 +223,13 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
         // them through the transition, so it has to stay.
         //
         // The sluggish feel is fixed instead by shortening Leaflet's stock 0.25s zoom transition to
-        // 90ms in globals.css, and by cutting the wheel debounce below, which together give the
-        // responsiveness without the blanking.
-        wheelDebounceTime={10}
-        // Leaflet's default: higher = less zoom per unit of scroll. Left at the default on
-        // purpose. Damping the magnitude (80 and 120 were both tried) was only worth doing while
-        // the animation was off and each step landed instantly; with the 90ms transition back in
-        // place the transition itself does the smoothing, so shrinking the steps as well just
-        // makes the map feel sluggish again — measured as 1.13x zoom per gesture at 80 versus
-        // 1.86x. This is the one number to tune if the feel is off.
-        wheelPxPerZoomLevel={60}
+        // 90ms in globals.css.
+        //
+        // wheelDebounceTime, wheelPxPerZoomLevel and zoomDelta are all left at Leaflet's DEFAULTS
+        // on purpose. Earlier versions tuned them (10ms / 80 / 0.5) for CONTINUOUS zoom, where the
+        // goal was many tiny instant steps. With whole-level snapping that calculus inverts: a
+        // 10ms debounce would let a single flick jump several zoom levels at once. The defaults
+        // are the right values for snapped zoom.
         className="h-[480px] w-full"
         scrollWheelZoom
       >
