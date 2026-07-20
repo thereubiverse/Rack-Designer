@@ -49,7 +49,15 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+    <div className="space-y-4">
+      {/* The root of the same breadcrumb the client and site pages carry. It is plain text here
+          rather than a link, because this IS /clients — but it keeps the slot occupied so the
+          heading never vanishes as you move between the three levels of the directory. */}
+      <nav data-testid="clients-breadcrumb" className="text-sm text-neutral-500">
+        <span className="text-neutral-900">Clients</span>
+      </nav>
+
+      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex items-center justify-between px-5 py-4">
         <h2 className="text-lg font-bold text-neutral-900">Clients</h2>
         <button
@@ -179,6 +187,7 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
           )}
         </>
       )}
+      </div>
     </div>
   );
 }
