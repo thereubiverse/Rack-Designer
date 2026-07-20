@@ -8,4 +8,6 @@ alter table sites add column geocode_status text not null default 'pending'
   check (geocode_status in ('pending', 'ok', 'not_found', 'failed'));
 alter table sites add column geocoded_at    timestamptz;
 
-grant select, insert, update, delete on all tables in schema public to anon, authenticated, service_role;
+grant usage on schema public to anon, authenticated, service_role;
+grant all privileges on all tables in schema public to service_role;
+grant select, insert, update, delete on all tables in schema public to anon, authenticated;
