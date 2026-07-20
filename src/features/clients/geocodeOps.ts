@@ -38,3 +38,44 @@ export function isAddressGeocodable(address: string | null): boolean {
   if (a.length < 8) return false;
   return a.includes(",") || a.split(/\s+/).length >= 4;
 }
+
+/** Ordinal + Floor/Fl phrase, e.g. "13th Floor", "2nd Fl." — the whole phrase must go, since
+ *  "13th" alone left behind reads as a street-number fragment, not a real address token. The \b
+ *  right after the alternation is load-bearing: without it, "Fl" partial-matches the first two
+ *  letters of "Flushing"/"Florida"/"Flatbush" and the rest of the word gets swept up as if it
+ *  were the unit identifier. */
+const ORDINAL_FLOOR_RE = /\b\d+(?:st|nd|rd|th)\s+(?:Floor|Fl)\b\.?/gi;
+
+/** Suite/Ste/Floor/Fl/Unit/Apt/Apartment/Room/Rm followed by an identifier (300, 3A, B-2).
+ *  Same word-boundary requirement as above and for the same reason. */
+const UNIT_DESIGNATOR_RE =
+  /\b(?:Suite|Ste|Floor|Fl|Unit|Apartment|Apt|Room|Rm)\b\.?\s+[A-Za-z0-9][A-Za-z0-9-]*\b/gi;
+
+/** "#300" style unit markers. */
+const HASH_UNIT_RE = /#\s*[A-Za-z0-9][A-Za-z0-9-]*\b/g;
+
+/** Straight and curly apostrophes. */
+const APOSTROPHE_RE = /['’]/g;
+
+/** Normalises an address for the geocoder QUERY only — the stored address is never touched.
+ *  Nominatim chokes on unit/suite/floor designators and on apostrophes ("St. John's" fails,
+ *  "St. Johns" succeeds); stripping them here, not in storage, keeps the MSP's operational
+ *  detail (which suite, which floor) intact in the database. */
+export function normaliseForGeocoding(address: string): string {
+  let result = address;
+
+  result = result.replace(ORDINAL_FLOOR_RE, "");
+  result = result.replace(UNIT_DESIGNATOR_RE, "");
+  result = result.replace(HASH_UNIT_RE, "");
+  result = result.replace(APOSTROPHE_RE, "");
+
+  // Tidy up whatever the removals above left behind: collapsed whitespace, a comma stranded
+  // with nothing (or just whitespace) before the next comma, and leading/trailing cruft.
+  result = result.replace(/\s+/g, " ");
+  result = result.replace(/\s*,\s*,/g, ",");
+  result = result.replace(/\s+,/g, ",");
+  result = result.replace(/^,\s*/, "");
+  result = result.replace(/,\s*$/, "");
+
+  return result.trim();
+}

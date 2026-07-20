@@ -122,6 +122,19 @@ describe("geocodeAddress", () => {
     expect(url).toContain(encodeURIComponent("221B Baker St, London, UK"));
   });
 
+  it("sends the geocoder the NORMALISED query, not the raw stored address", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([{ lat: "40.7527", lon: "-73.9772" }])
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await geocodeAddress("211 E 43rd St Suite 300, New York, NY 10017");
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain(encodeURIComponent("211 E 43rd St, New York, NY 10017"));
+    expect(url).not.toContain(encodeURIComponent("Suite 300"));
+  });
+
   it("returns failed rather than throwing when the response body fails to parse as JSON", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
