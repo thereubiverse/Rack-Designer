@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoomType } from "@/domain/hierarchy";
 import type { ClientRow, SiteRow } from "@/lib/supabase/types";
+import type { GeocodeResult } from "./geocodeOps";
 import { normaliseCode, type CascadeCounts } from "./validation";
 
 export interface ClientSummary {
@@ -17,6 +18,9 @@ export interface SiteSummary {
   code: string;
   name: string;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocodeStatus: SiteRow["geocode_status"];
   rackCount: number;
   deviceCount: number;
 }
@@ -84,6 +88,9 @@ export async function listSitesForClient(db: SupabaseClient, clientId: string): 
         code: site.code,
         name: site.name,
         address: site.address,
+        latitude: site.latitude,
+        longitude: site.longitude,
+        geocodeStatus: site.geocode_status,
         rackCount: counts.racks ?? 0,
         deviceCount: counts.devices ?? 0,
       };
@@ -104,6 +111,12 @@ export async function getSiteByCode(
     .eq("code", normaliseCode(code))
     .maybeSingle();
   if (error) throw new Error(`getSiteByCode: ${error.message}`);
+  return (data as SiteRow | null) ?? null;
+}
+
+export async function getSiteById(db: SupabaseClient, id: string): Promise<SiteRow | null> {
+  const { data, error } = await db.from("sites").select("*").eq("id", id).maybeSingle();
+  if (error) throw new Error(`getSiteById: ${error.message}`);
   return (data as SiteRow | null) ?? null;
 }
 
@@ -219,6 +232,23 @@ export async function renameSite(
 export async function deleteSite(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("sites").delete().eq("id", id);
   if (error) throw new Error(`deleteSite: ${error.message}`);
+}
+
+/** Maps a GeocodeResult onto the four geocode columns and stamps geocoded_at with "now". Callers
+ *  (createSiteAction, renameSiteAction, locateSiteAction, the backfill script) are responsible for
+ *  making sure a failure here never fails the write it decorates — this function itself still
+ *  throws on a DB error, same as every other repository function, so callers must catch it. */
+export async function setSiteGeocode(db: SupabaseClient, siteId: string, result: GeocodeResult): Promise<void> {
+  const patch =
+    result.status === "ok"
+      ? { latitude: result.lat, longitude: result.lng, geocode_status: "ok" as const }
+      : { latitude: null, longitude: null, geocode_status: result.status };
+
+  const { error } = await db
+    .from("sites")
+    .update({ ...patch, geocoded_at: new Date().toISOString() })
+    .eq("id", siteId);
+  if (error) throw new Error(`setSiteGeocode: ${error.message}`);
 }
 
 export async function countSiteCascade(db: SupabaseClient, siteId: string): Promise<CascadeCounts> {

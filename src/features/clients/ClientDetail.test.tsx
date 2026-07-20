@@ -11,7 +11,17 @@ vi.mock("./actions", () => ({
 
 const client = { id: "c1", code: "ACME", name: "Acme Corp", created_at: "2026-01-01" };
 const sites = [
-  { id: "s1", code: "HQ", name: "Headquarters", address: "123 Main St", rackCount: 5, deviceCount: 30 },
+  {
+    id: "s1",
+    code: "HQ",
+    name: "Headquarters",
+    address: "123 Main St",
+    latitude: null,
+    longitude: null,
+    geocodeStatus: "pending" as const,
+    rackCount: 5,
+    deviceCount: 30,
+  },
 ];
 
 describe("ClientDetail", () => {

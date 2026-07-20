@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import { validateCode } from "./validation";
+import { geocodeAddress } from "./geocode";
 import {
   createClient,
   renameClient,
@@ -10,6 +11,8 @@ import {
   createSiteForClient,
   renameSite,
   deleteSite,
+  getSiteById,
+  setSiteGeocode,
 } from "./repository";
 
 function friendly(e: unknown, kind: "client" | "site"): string {
@@ -79,11 +82,23 @@ export async function createSiteAction(formData: FormData): Promise<{ ok: boolea
   if (codeError) return { ok: false, error: codeError };
 
   const db = createServiceClient();
+  let siteId: string;
   try {
-    await createSiteForClient(db, { clientId, code, name, address: address ? String(address) : null });
+    const site = await createSiteForClient(db, { clientId, code, name, address: address ? String(address) : null });
+    siteId = site.id;
   } catch (e) {
     return { ok: false, error: friendly(e, "site") };
   }
+
+  // Geocoding must never fail a write: the site already saved above. This is deliberately its own
+  // try/catch, entirely separate from the one that guards the insert.
+  try {
+    const result = await geocodeAddress(address ? String(address) : null);
+    await setSiteGeocode(db, siteId, result);
+  } catch {
+    // Swallow — a geocoding hiccup (or a setSiteGeocode DB error) must not surface to the caller.
+  }
+
   revalidatePath("/clients");
   return { ok: true };
 }
@@ -97,12 +112,32 @@ export async function renameSiteAction(formData: FormData): Promise<{ ok: boolea
   const codeError = validateCode(code, "site");
   if (codeError) return { ok: false, error: codeError };
 
+  const newAddress = address ? String(address) : null;
+
   const db = createServiceClient();
+  let previousAddress: string | null = null;
   try {
-    await renameSite(db, id, { code, name, address: address ? String(address) : null });
+    const existing = await getSiteById(db, id);
+    previousAddress = existing?.address ?? null;
+    await renameSite(db, id, { code, name, address: newAddress });
   } catch (e) {
     return { ok: false, error: friendly(e, "site") };
   }
+
+  // Only re-geocode when the address actually changed, so a plain rename (or a whitespace-only
+  // edit) doesn't spend a request against Nominatim's ~1 req/sec budget. Compare trimmed values.
+  const addressChanged = (previousAddress ?? "").trim() !== (newAddress ?? "").trim();
+  if (addressChanged) {
+    // Own try/catch, separate from the write above — geocoding must never fail a write that
+    // already succeeded.
+    try {
+      const result = await geocodeAddress(newAddress);
+      await setSiteGeocode(db, id, result);
+    } catch {
+      // Swallow — same reasoning as createSiteAction.
+    }
+  }
+
   revalidatePath("/clients");
   return { ok: true };
 }
@@ -113,6 +148,22 @@ export async function deleteSiteAction(formData: FormData): Promise<{ ok: boolea
   const db = createServiceClient();
   try {
     await deleteSite(db, id);
+  } catch (e) {
+    return { ok: false, error: friendly(e, "site") };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function locateSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const siteId = String(formData.get("siteId") ?? "");
+
+  const db = createServiceClient();
+  try {
+    const site = await getSiteById(db, siteId);
+    if (!site) return { ok: false, error: "Site not found" };
+    const result = await geocodeAddress(site.address);
+    await setSiteGeocode(db, siteId, result);
   } catch (e) {
     return { ok: false, error: friendly(e, "site") };
   }
