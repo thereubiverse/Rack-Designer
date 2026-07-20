@@ -27,13 +27,19 @@ function site(overrides: Partial<SiteSummary>): SiteSummary {
 
 describe("UnlocatedSites", () => {
   it("never shows a site whose geocodeStatus is ok", () => {
-    render(<UnlocatedSites sites={[site({ id: "s1", code: "OK1", geocodeStatus: "ok" })]} />);
+    render(
+      <UnlocatedSites
+        sites={[site({ id: "s1", code: "OK1", geocodeStatus: "ok", latitude: 1, longitude: 2 })]}
+      />
+    );
     expect(screen.queryByText("OK1")).toBeNull();
   });
 
   it("renders nothing at all when every site is ok", () => {
     const { container } = render(
-      <UnlocatedSites sites={[site({ id: "s1", code: "OK1", geocodeStatus: "ok" })]} />
+      <UnlocatedSites
+        sites={[site({ id: "s1", code: "OK1", geocodeStatus: "ok", latitude: 1, longitude: 2 })]}
+      />
     );
     expect(container.firstChild).toBeNull();
   });
@@ -43,13 +49,73 @@ describe("UnlocatedSites", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders VAGUE_ADDRESS_HINT for a not_found site", () => {
+  it("renders VAGUE_ADDRESS_HINT for a not_found site whose address fails the geocodable pre-flight", () => {
+    // "12 Main St" is the exact vague-address example from geocodeOps.test.ts
+    // (isAddressGeocodable("12 Main St") === false): no locality, so the pre-flight would have
+    // rejected it and no request was ever sent. VAGUE_ADDRESS_HINT is correct here.
     render(
       <UnlocatedSites
-        sites={[site({ id: "s1", code: "NF1", geocodeStatus: "not_found" })]}
+        sites={[site({ id: "s1", code: "NF1", geocodeStatus: "not_found", address: "12 Main St" })]}
       />
     );
     expect(screen.getByText(VAGUE_ADDRESS_HINT)).toBeInTheDocument();
+  });
+
+  it("does NOT render VAGUE_ADDRESS_HINT for a not_found site whose address is real and was genuinely searched", () => {
+    // A real not_found site in this app's data: full address with city/state/zip. It passed the
+    // pre-flight and Nominatim just couldn't match the specific building. Telling the user to add
+    // a city here would be actively wrong.
+    render(
+      <UnlocatedSites
+        sites={[
+          site({
+            id: "s1",
+            code: "NF2",
+            geocodeStatus: "not_found",
+            address: "84-42 Smedley St, Jamaica, NY 11435",
+          }),
+        ]}
+      />
+    );
+    expect(screen.queryByText(VAGUE_ADDRESS_HINT)).toBeNull();
+    expect(
+      screen.getByText(/couldn't find this address on the map/i)
+    ).toBeInTheDocument();
+  });
+
+  it("tells the user to add an address when a not_found site has none on file", () => {
+    render(
+      <UnlocatedSites
+        sites={[site({ id: "s1", code: "NF3", geocodeStatus: "not_found", address: null })]}
+      />
+    );
+    expect(screen.queryByText(VAGUE_ADDRESS_HINT)).toBeNull();
+    expect(screen.getByText(/no address on file/i)).toBeInTheDocument();
+  });
+
+  it("also treats a blank (whitespace-only) address as no address on file", () => {
+    render(
+      <UnlocatedSites
+        sites={[site({ id: "s1", code: "NF4", geocodeStatus: "not_found", address: "   " })]}
+      />
+    );
+    expect(screen.getByText(/no address on file/i)).toBeInTheDocument();
+  });
+
+  it("includes a site with geocodeStatus ok but a null latitude — isMappable, not raw status, gates this list", () => {
+    // Not reachable through the app today (setSiteGeocode's "ok" arm always writes both
+    // coordinates), but a partial write or manual SQL repair could produce this. Before Fix 2 this
+    // site satisfied neither toBlips' filter nor this list's filter and vanished silently.
+    render(
+      <UnlocatedSites
+        sites={[
+          site({ id: "s1", code: "PARTIAL", geocodeStatus: "ok", latitude: null, longitude: -74 }),
+        ]}
+      />
+    );
+    expect(screen.getByText("1 site isn't on the map yet")).toBeInTheDocument();
+    expect(screen.getByTestId("unlocated-site-PARTIAL")).toBeInTheDocument();
+    expect(screen.getByTestId("locate-PARTIAL")).toBeInTheDocument();
   });
 
   it("reads a pending site as not yet located", () => {
@@ -158,7 +224,7 @@ describe("UnlocatedSites", () => {
     render(
       <UnlocatedSites
         sites={[
-          site({ id: "s1", code: "LOCATED", geocodeStatus: "ok" }),
+          site({ id: "s1", code: "LOCATED", geocodeStatus: "ok", latitude: 1, longitude: 2 }),
           site({ id: "s2", code: "MISSING", geocodeStatus: "not_found" }),
         ]}
       />

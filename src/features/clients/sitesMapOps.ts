@@ -11,16 +11,24 @@ export interface Blip {
 
 export type LatLngBounds = [[number, number], [number, number]];
 
-/** Maps sites onto map blips. Only sites whose geocoding actually succeeded should ever render a
- *  pin. The null-coordinate check is belt-and-braces on top of the status check: if the two ever
- *  disagree, a blip with a null coordinate would silently render at (0, 0) — a confident pin in
- *  the Gulf of Guinea. Dropping it here means a bug elsewhere fails safe (site missing from the
- *  map, and still visible in UnlocatedSites) rather than failing dangerously (wrong location shown
- *  as if correct). */
+/** Whether a site can be plotted on the map: geocoding succeeded AND both coordinates are
+ *  present. The null-coordinate check is belt-and-braces on top of the status check — if the two
+ *  ever disagree (a partial write, a manual SQL repair), a site with `geocodeStatus === "ok"` but
+ *  a null coordinate must NOT silently render at (0, 0), a confident pin in the Gulf of Guinea.
+ *
+ *  This is exported and shared with UnlocatedSites (which filters on `!isMappable(site)`) so the
+ *  map and the "N sites aren't on the map yet" list are complements BY CONSTRUCTION rather than
+ *  two independently-maintained predicates that could drift apart. A site failing this check is
+ *  guaranteed to show up in UnlocatedSites instead of being silently absent from both surfaces. */
+export function isMappable(site: SiteSummary): boolean {
+  return site.geocodeStatus === "ok" && site.latitude != null && site.longitude != null;
+}
+
+/** Maps sites onto map blips. Filtering goes through `isMappable` so this function stays in
+ *  lock-step with UnlocatedSites by construction — see that function's doc comment. */
 export function toBlips(sites: SiteSummary[]): Blip[] {
   return sites
-    .filter((site) => site.geocodeStatus === "ok")
-    .filter((site) => site.latitude != null && site.longitude != null)
+    .filter(isMappable)
     .map((site) => ({
       id: site.id,
       code: site.code,

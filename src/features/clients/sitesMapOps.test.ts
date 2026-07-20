@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toBlips, boundsOf, type Blip } from "./sitesMapOps";
+import { toBlips, boundsOf, isMappable, type Blip } from "./sitesMapOps";
 import type { SiteSummary } from "./repository";
 
 function makeSite(overrides: Partial<SiteSummary> = {}): SiteSummary {
@@ -111,6 +111,30 @@ describe("toBlips", () => {
 
     expect(blips.map((b) => b.id)).toEqual(["a"]);
     expect(blips[0].lng).toBe(0);
+  });
+});
+
+describe("isMappable", () => {
+  it("is true for a site with ok status and both coordinates present", () => {
+    expect(isMappable(makeSite({ geocodeStatus: "ok", latitude: 10, longitude: 20 }))).toBe(true);
+  });
+
+  it("is false for a site with ok status but a null latitude — the exact case toBlips must also drop", () => {
+    // This is the shared predicate at the center of Fix 2: toBlips and UnlocatedSites both call
+    // this function, so a site like this one is guaranteed to be excluded from the map AND
+    // included in UnlocatedSites — never neither.
+    const site = makeSite({ geocodeStatus: "ok", latitude: null, longitude: 20 });
+    expect(isMappable(site)).toBe(false);
+    // Confirm toBlips (which filters via this same predicate) agrees.
+    expect(toBlips([site])).toEqual([]);
+  });
+
+  it("is false for a site with ok status but a null longitude", () => {
+    expect(isMappable(makeSite({ geocodeStatus: "ok", latitude: 10, longitude: null }))).toBe(false);
+  });
+
+  it("is false for a non-ok status even with coordinates present", () => {
+    expect(isMappable(makeSite({ geocodeStatus: "not_found", latitude: 10, longitude: 20 }))).toBe(false);
   });
 });
 
