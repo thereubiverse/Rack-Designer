@@ -7,8 +7,8 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import Link from "next/link";
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
-import { boundsOf, type Blip } from "./sitesMapOps";
+import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import { boundsOf, type Blip, type LatLngBounds } from "./sitesMapOps";
 
 // CARTO Positron is a key-free, near-greyscale basemap (Mapbox Light's usage-free equivalent).
 // Both OpenStreetMap (source data) and CARTO (tile styling/hosting) require attribution on the
@@ -87,6 +87,39 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
   );
 }
 
+interface FitBoundsProps {
+  bounds: LatLngBounds;
+}
+
+/** Refits the map viewport whenever `bounds` changes — e.g. a site gains coordinates after
+ *  Locate, or `SitesMap` is reused across a client navigation. `MapContainer`'s `bounds` prop
+ *  only applies at mount, so without this the map would stay frozen on its initial fit forever.
+ *
+ *  Must live inside `MapContainer`: `useMap()` only works within its context, which is why this
+ *  is a child component rather than logic inlined into `SitesMap` itself.
+ *
+ *  The effect is keyed on `key`, a stable string built from the bounds' four numbers — NOT on
+ *  `bounds` itself. `boundsOf` returns a fresh array every render, so depending on the array
+ *  identity would refit on every render, fighting the user's own panning/zooming. Depending on
+ *  the primitive value means the effect only fires when the actual box changes. */
+function FitBounds({ bounds }: FitBoundsProps) {
+  const map = useMap();
+  const key = bounds.flat().join(",");
+
+  useEffect(() => {
+    // maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box when
+    // there is exactly one blip. With zoomSnap={0} allowing fractional zoom, fitBounds on a
+    // zero-area box can otherwise drive the zoom to the map's maximum (20, per the TileLayer),
+    // slamming a single-site client to street level. 16 is a reasonable "one building" zoom.
+    map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16 });
+    // `bounds` is intentionally omitted: its identity changes every render, but `key` already
+    // captures every value it could vary by.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return null;
+}
+
 export interface SitesMapProps {
   blips: Blip[];
   clientCode: string;
@@ -106,13 +139,20 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
   return (
     <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       {/* Leaflet collapses to nothing in a container with no explicit height. */}
-      <MapContainer bounds={bounds} className="h-[480px] w-full" scrollWheelZoom>
+      <MapContainer
+        bounds={bounds}
+        zoomSnap={0}
+        zoomDelta={0.5}
+        className="h-[480px] w-full"
+        scrollWheelZoom
+      >
         <TileLayer
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           subdomains="abcd"
           maxZoom={20}
           attribution={MAP_ATTRIBUTION}
         />
+        <FitBounds bounds={bounds} />
         {blips.map((blip) => (
           <SiteMarker
             key={blip.id}
