@@ -82,6 +82,46 @@ describe("UnlocatedSites", () => {
     expect(formData.get("siteId")).toBe("site-abc");
   });
 
+  it("calls locateSiteAction with the clicked row's id, not the first row's, when a non-first Locate button is clicked", async () => {
+    // Other tests in this file share the same module-level `locateSiteAction` mock (it is
+    // vi.mock'd once at the top, not reset per-test), so calls accumulate across tests. We
+    // record the call count already accrued from earlier tests and assert relative to it,
+    // rather than assuming this test's clicks start the mock at zero.
+    const callsBeforeThisTest = vi.mocked(locateSiteAction).mock.calls.length;
+
+    render(
+      <UnlocatedSites
+        sites={[
+          site({ id: "site-id-alpha", code: "ALPHA", geocodeStatus: "pending" }),
+          site({ id: "site-id-beta", code: "BETA", geocodeStatus: "failed" }),
+          site({ id: "site-id-gamma", code: "GAMMA", geocodeStatus: "not_found" }),
+        ]}
+      />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("locate-GAMMA"));
+    });
+
+    expect(locateSiteAction).toHaveBeenCalledTimes(callsBeforeThisTest + 1);
+    const gammaCallFormData = vi
+      .mocked(locateSiteAction)
+      .mock.calls[callsBeforeThisTest][0] as FormData;
+    expect(gammaCallFormData.get("siteId")).toBe("site-id-gamma");
+
+    // Click a second, different non-first row (BETA) to also catch a stale-closure bug where
+    // every button submits whichever row happened to render last.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("locate-BETA"));
+    });
+
+    expect(locateSiteAction).toHaveBeenCalledTimes(callsBeforeThisTest + 2);
+    const betaCallFormData = vi
+      .mocked(locateSiteAction)
+      .mock.calls[callsBeforeThisTest + 1][0] as FormData;
+    expect(betaCallFormData.get("siteId")).toBe("site-id-beta");
+  });
+
   it("gives each site its own Locate button keyed by code", () => {
     render(
       <UnlocatedSites
