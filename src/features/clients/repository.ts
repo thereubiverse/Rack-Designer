@@ -9,6 +9,7 @@ export interface ClientSummary {
   name: string;
   siteCount: number;
   rackCount: number;
+  deviceCount: number;
 }
 
 export interface SiteSummary {
@@ -17,6 +18,7 @@ export interface SiteSummary {
   name: string;
   address: string | null;
   rackCount: number;
+  deviceCount: number;
 }
 
 export interface SiteRackRow {
@@ -46,6 +48,7 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
         name: client.name,
         siteCount: counts.sites ?? 0,
         rackCount: counts.racks ?? 0,
+        deviceCount: counts.devices ?? 0,
       };
     })
   );
@@ -82,6 +85,7 @@ export async function listSitesForClient(db: SupabaseClient, clientId: string): 
         name: site.name,
         address: site.address,
         rackCount: counts.racks ?? 0,
+        deviceCount: counts.devices ?? 0,
       };
     })
   );

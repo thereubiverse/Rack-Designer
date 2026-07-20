@@ -10,9 +10,9 @@ export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
 // Signed-in user (placeholder until auth lands). The avatar defaults to the first-name initial.
 const USER = { name: "Reuben Singh" };
 
-/** The app's left navigation rail. Racks and Device Library are live routes; the other
- *  destinations are placeholders until those areas ship. Active state is derived from the
- *  current pathname so it stays correct across navigations.
+/** The app's left navigation rail. Clients, Device Library and Settings & Billing are live
+ *  routes; the other destinations are placeholders until those areas ship. Active state is
+ *  derived from the current pathname so it stays correct across navigations.
  *  Collapsing animates the aside's width while the inner content stays a fixed width and is clipped
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
  *  translate keeps them centred in the narrow rail). */

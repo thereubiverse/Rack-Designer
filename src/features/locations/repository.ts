@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoomType } from "@/domain/hierarchy";
+import { normaliseCode } from "@/features/clients/validation";
 import type {
   SiteRow,
   FloorRow,
@@ -15,7 +16,7 @@ export async function createSite(
     .from("sites")
     .insert({
       client_id: input.clientId,
-      code: input.code,
+      code: normaliseCode(input.code),
       name: input.name,
       address: input.address ?? null,
     })
