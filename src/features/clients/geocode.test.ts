@@ -59,7 +59,7 @@ describe("geocodeAddress", () => {
     expect(result.status).toBe("failed");
   });
 
-  it("returns failed rather than throwing when fetch rejects", async () => {
+  it("returns failed rather than throwing when fetch rejects with a plain network error", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -68,12 +68,72 @@ describe("geocodeAddress", () => {
     expect(result.status).toBe("failed");
   });
 
-  it("returns failed rather than throwing when fetch aborts", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new DOMException("The operation was aborted", "AbortError"));
+  it("aborts via the real AbortController after exactly TIMEOUT_MS and returns failed", async () => {
+    vi.useFakeTimers();
+    try {
+      // Never resolves on its own — only rejects if the signal the implementation handed us
+      // actually fires its abort event. This proves the real AbortController drives the
+      // rejection, not the mock deciding independently.
+      const fetchMock = vi.fn().mockImplementation((_url: string, options: { signal: AbortSignal }) => {
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted", "AbortError"));
+          });
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      let settled = false;
+      const resultPromise = geocodeAddress("12 Main St, Manchester, UK").then((result) => {
+        settled = true;
+        return result;
+      });
+
+      // Just under the timeout: must still be pending.
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(settled).toBe(false);
+
+      // Cross the 5000ms threshold: must now settle to failed.
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await resultPromise;
+
+      expect(settled).toBe(true);
+      expect(result.status).toBe("failed");
+
+      const [, options] = fetchMock.mock.calls[0];
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("URL-encodes the address into the Nominatim search endpoint with format=jsonv2 and limit=1", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse([{ lat: "51.5238", lon: "-0.1586" }])
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await geocodeAddress("221B Baker St, London, UK");
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("https://nominatim.openstreetmap.org/search?");
+    expect(url).toContain("format=jsonv2");
+    expect(url).toContain("limit=1");
+    expect(url).toContain(encodeURIComponent("221B Baker St, London, UK"));
+  });
+
+  it("returns failed rather than throwing when the response body fails to parse as JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("Unexpected token in JSON");
+      },
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await geocodeAddress("12 Main St, Manchester, UK");
 
-    expect(result.status).toBe("failed");
+    expect(result).toEqual({ status: "failed", error: "Unexpected token in JSON" });
   });
 });
