@@ -13,6 +13,10 @@ export interface SiteRow {
   code: string;
   name: string;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocode_status: "pending" | "ok" | "not_found" | "failed";
+  geocoded_at: string | null;
   created_at: string;
 }
 

@@ -11,7 +11,7 @@ vi.mock("./actions", () => ({
 }));
 
 const client = { id: "c1", code: "ACME", name: "Acme Corp", created_at: "2026-01-01" };
-const site = { id: "s1", client_id: "c1", code: "HQ", name: "Headquarters", address: null, created_at: "2026-01-01" };
+const site = { id: "s1", client_id: "c1", code: "HQ", name: "Headquarters", address: null, latitude: null, longitude: null, geocode_status: "pending" as const, geocoded_at: null, created_at: "2026-01-01" };
 
 const racks = [
   { id: "r1", code: "RK01", heightU: 20, floorCode: "GF", roomCode: "MDF", roomType: "MDF" as const, deviceCount: 3 },
