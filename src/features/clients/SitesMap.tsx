@@ -181,6 +181,25 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
         boundsOptions={FIT_OPTIONS}
         zoomSnap={0}
         zoomDelta={0.5}
+        // Wheel zoom feel. By default every wheel notch fires its own ~250ms eased animation and
+        // the map sits frozen between notches — measured as ~225ms of movement followed by ~200ms
+        // of nothing, with the easing decelerating so hard that most of each step barely moves.
+        // That start-stop cadence is what reads as "slow and choppy"; it was never a frame-rate
+        // problem (frames measured at a median 8.3ms with none over 50ms).
+        //
+        // Turning the animation off makes each wheel event apply immediately, and with zoomSnap={0}
+        // the zoom is continuous rather than stepped. Smoothness then comes from the wheel's own
+        // event rate, so the debounce is cut and each event is made SMALLER — many small instant
+        // updates read as smooth, where few large animated ones read as janky.
+        zoomAnimation={false}
+        wheelDebounceTime={10}
+        // Leaflet's default is 60. Higher = less zoom per unit of scroll. 80 is only slightly
+        // finer than default, deliberately: the sluggishness was the animation, not the
+        // magnitude, so cutting the magnitude much further (120 was tried) just trades one kind
+        // of slow for another — noticeable on a click-wheel mouse, which sends few large deltas
+        // rather than the trackpad's many small ones. This is the one number to tune if the
+        // feel is off.
+        wheelPxPerZoomLevel={80}
         className="h-[480px] w-full"
         scrollWheelZoom
       >
