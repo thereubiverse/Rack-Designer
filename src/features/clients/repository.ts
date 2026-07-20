@@ -52,10 +52,13 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
 }
 
 export async function getClientByCode(db: SupabaseClient, code: string): Promise<ClientRow | null> {
+  // Codes are always stored normalised (uppercase, trimmed) — see normaliseCode. Matching on the
+  // normalised segment with `.eq` is exact and case-insensitive by construction, so it never treats
+  // the URL segment as a LIKE pattern (no wildcard surface from `_`/`%` in a legal code).
   const { data, error } = await db
     .from("clients")
     .select("*")
-    .ilike("code", code)
+    .eq("code", normaliseCode(code))
     .maybeSingle();
   if (error) throw new Error(`getClientByCode: ${error.message}`);
   return (data as ClientRow | null) ?? null;
@@ -89,11 +92,12 @@ export async function getSiteByCode(
   clientId: string,
   code: string
 ): Promise<SiteRow | null> {
+  // Same fix as getClientByCode: exact match on the normalised code, never `.ilike` on raw input.
   const { data, error } = await db
     .from("sites")
     .select("*")
     .eq("client_id", clientId)
-    .ilike("code", code)
+    .eq("code", normaliseCode(code))
     .maybeSingle();
   if (error) throw new Error(`getSiteByCode: ${error.message}`);
   return (data as SiteRow | null) ?? null;

@@ -199,4 +199,48 @@ describe("clients repository (integration)", () => {
     expect(goneSite).toBeNull();
     expect(site.id).toBeTruthy();
   });
+
+  // Regression for the CRITICAL `.ilike` finding: a raw URL segment must never be treated as a
+  // LIKE pattern. `_` is a legal character in a code (isValidCode allows it) and a LIKE
+  // metacharacter at the same time, so a client whose code literally contains `_` must resolve
+  // only itself, and a segment containing `_` must never wildcard-match a different client whose
+  // code happens to share every other character.
+  it("resolves a code containing a literal underscore to itself only, not as a wildcard", async () => {
+    const underscored = await createClientRow(db, { code: "T-CLI-A_ME", name: "Underscore client" });
+    // Same shape but with a real character where the underscore is — an ilike pattern built from
+    // "T-CLI-A_ME" would match this row too via the `_` wildcard.
+    const lookalike = await createClientRow(db, { code: "T-CLI-AXME", name: "Lookalike client" });
+
+    const found = await getClientByCode(db, "t-cli-a_me"); // lowercase, exercising case-insensitivity too
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(underscored.id);
+    expect(found!.code).toBe("T-CLI-A_ME");
+    expect(found!.id).not.toBe(lookalike.id);
+  });
+
+  it("does not let an underscore segment wildcard-match a code without a literal underscore", async () => {
+    // Mirrors the review's ACME / A_ME example: no client literally named "T-CLI-A_ME" exists here,
+    // only "T-CLI-ACME" — an ilike pattern would still match it via the `_` wildcard; exact match must not.
+    await createClientRow(db, { code: "T-CLI-ACME", name: "Acme-like client" });
+    const found = await getClientByCode(db, "T-CLI-A_ME");
+    expect(found).toBeNull();
+  });
+
+  it("resolves a site code containing a literal underscore to itself only, not as a wildcard", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I" });
+    const underscored = await createSiteForClient(db, { clientId: client.id, code: "S_TE", name: "Site underscore" });
+    const lookalike = await createSiteForClient(db, { clientId: client.id, code: "SXTE", name: "Site lookalike" });
+
+    const found = await getSiteByCode(db, client.id, "s_te");
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(underscored.id);
+    expect(found!.id).not.toBe(lookalike.id);
+  });
+
+  it("does not let a site underscore segment wildcard-match a lookalike code", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J" });
+    await createSiteForClient(db, { clientId: client.id, code: "SATE", name: "Site A" });
+    const found = await getSiteByCode(db, client.id, "S_TE");
+    expect(found).toBeNull();
+  });
 });
