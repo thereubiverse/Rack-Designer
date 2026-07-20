@@ -231,6 +231,55 @@ export async function countSiteCascade(db: SupabaseClient, siteId: string): Prom
   return { racks: rackIds.length, devices: count ?? 0 };
 }
 
+export interface RackBreadcrumb {
+  clientCode: string;
+  clientName: string;
+  siteCode: string;
+  siteName: string;
+  rackCode: string;
+}
+
+/** Resolves a rack's path upward — rack -> room -> floor -> site -> client — so the rack builder
+ *  can render a breadcrumb back to its directory listing. One round trip per hop, matching the
+ *  existing siteScope helper's style; returns null if any hop is missing (orphaned/racing delete). */
+export async function getRackBreadcrumb(db: SupabaseClient, rackId: string): Promise<RackBreadcrumb | null> {
+  const { data: rack, error: e1 } = await db.from("racks").select("code, room_id").eq("id", rackId).maybeSingle();
+  if (e1) throw new Error(`getRackBreadcrumb(rack): ${e1.message}`);
+  if (!rack) return null;
+
+  const { data: room, error: e2 } = await db.from("rooms").select("floor_id").eq("id", rack.room_id).maybeSingle();
+  if (e2) throw new Error(`getRackBreadcrumb(room): ${e2.message}`);
+  if (!room) return null;
+
+  const { data: floor, error: e3 } = await db.from("floors").select("site_id").eq("id", room.floor_id).maybeSingle();
+  if (e3) throw new Error(`getRackBreadcrumb(floor): ${e3.message}`);
+  if (!floor) return null;
+
+  const { data: site, error: e4 } = await db
+    .from("sites")
+    .select("code, name, client_id")
+    .eq("id", floor.site_id)
+    .maybeSingle();
+  if (e4) throw new Error(`getRackBreadcrumb(site): ${e4.message}`);
+  if (!site) return null;
+
+  const { data: client, error: e5 } = await db
+    .from("clients")
+    .select("code, name")
+    .eq("id", site.client_id)
+    .maybeSingle();
+  if (e5) throw new Error(`getRackBreadcrumb(client): ${e5.message}`);
+  if (!client) return null;
+
+  return {
+    clientCode: client.code,
+    clientName: client.name,
+    siteCode: site.code,
+    siteName: site.name,
+    rackCode: rack.code,
+  };
+}
+
 export async function countClientCascade(db: SupabaseClient, clientId: string): Promise<CascadeCounts> {
   const { data: sites, error } = await db.from("sites").select("id").eq("client_id", clientId);
   if (error) throw new Error(`countClientCascade: ${error.message}`);

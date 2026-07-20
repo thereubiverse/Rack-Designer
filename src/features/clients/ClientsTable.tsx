@@ -19,6 +19,7 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   const [renameTarget, setRenameTarget] = useState<ClientSummary | null>(null);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ClientSummary | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function handleCreate(formData: FormData) {
     setCreateError(null);
@@ -38,9 +39,11 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+    setDeleteError(null);
     const formData = new FormData();
     formData.set("id", deleteTarget.id);
-    await deleteClientAction(formData);
+    const res = await deleteClientAction(formData);
+    if (!res.ok) { setDeleteError(res.error ?? "Delete failed"); return; }
     setDeleteTarget(null);
     router.refresh();
   }
@@ -97,7 +100,7 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
                   <button
                     type="button"
                     data-testid={`delete-client-${c.code}`}
-                    onClick={() => setDeleteTarget(c)}
+                    onClick={() => { setDeleteError(null); setDeleteTarget(c); }}
                     className="text-sm font-semibold text-neutral-400 hover:text-red-600"
                   >
                     Delete
@@ -158,14 +161,23 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
       )}
 
       {deleteTarget && (
-        <DeleteDialog
-          open
-          kind="client"
-          code={deleteTarget.code}
-          counts={{ sites: deleteTarget.siteCount, racks: deleteTarget.rackCount }}
-          onConfirm={handleDelete}
-          onCancel={() => setDeleteTarget(null)}
-        />
+        <>
+          <DeleteDialog
+            open
+            kind="client"
+            code={deleteTarget.code}
+            counts={{ sites: deleteTarget.siteCount, racks: deleteTarget.rackCount, devices: deleteTarget.deviceCount }}
+            onConfirm={handleDelete}
+            onCancel={() => { setDeleteError(null); setDeleteTarget(null); }}
+          />
+          {deleteError && (
+            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
+              <p data-testid="delete-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
+                {deleteError}
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

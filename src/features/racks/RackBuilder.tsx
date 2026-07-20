@@ -2,7 +2,9 @@
 
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { flushSync } from "react-dom";
+import Link from "next/link";
 import type { RackRow, RackDeviceRow, RackDeviceInput } from "./repository";
+import type { RackBreadcrumb } from "@/features/clients/repository";
 import type { DeviceTypeRow, PickerTemplate, BrandRow } from "@/features/device-library/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackDeviceEditor } from "@/features/device-library/editor/RackDeviceEditor";
@@ -44,13 +46,14 @@ function toInput(d: PlacementDraft): RackDeviceInput {
 
 type RackState = { placements: PlacementDraft[]; connections: Connection[]; endpoints: PortEndpoint[] };
 
-export function RackBuilder({ rack, initialDevices, initialConnections, initialEndpoints, siteScope, floorTypes, types, templatesByType: initialTemplatesByType, brands, wizard }: {
+export function RackBuilder({ rack, initialDevices, initialConnections, initialEndpoints, siteScope, floorTypes, breadcrumb, types, templatesByType: initialTemplatesByType, brands, wizard }: {
   rack: RackRow;
   initialDevices: RackDeviceRow[];
   initialConnections: Connection[];
   initialEndpoints: PortEndpoint[];
   siteScope: SiteScope;
   floorTypes: DeviceTypeRow[];
+  breadcrumb: RackBreadcrumb | null;
   types: DeviceTypeRow[];
   templatesByType: Record<string, PickerTemplate[]>;
   brands: BrandRow[];
@@ -364,7 +367,26 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     }));
 
   return (
-    <div className="flex gap-4">
+    <div className="space-y-3">
+      {breadcrumb && (
+        <nav className="text-sm text-neutral-500" data-testid="rack-breadcrumb">
+          <Link href="/clients" className="hover:underline">Clients</Link>
+          {" / "}
+          <Link href={`/clients/${encodeURIComponent(breadcrumb.clientCode)}`} className="hover:underline">
+            {breadcrumb.clientName}
+          </Link>
+          {" / "}
+          <Link
+            href={`/clients/${encodeURIComponent(breadcrumb.clientCode)}/${encodeURIComponent(breadcrumb.siteCode)}`}
+            className="hover:underline"
+          >
+            {breadcrumb.siteName}
+          </Link>
+          {" / "}
+          <span className="text-neutral-900">{breadcrumb.rackCode}</span>
+        </nav>
+      )}
+      <div className="flex gap-4">
       {/* Palette: rack device types */}
       <div className="w-48 shrink-0 space-y-1.5">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</p>
@@ -557,6 +579,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
         <PalettePullLayer pullRef={pullRef} scaleOf={() => canvasRef.current?.getScale() ?? 1}
           rackCentreXOf={() => canvasRef.current?.getRackCentreX() ?? null} />
       )}
+      </div>
     </div>
   );
 }

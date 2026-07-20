@@ -14,6 +14,7 @@ import {
   deleteSite,
   countClientCascade,
   countSiteCascade,
+  getRackBreadcrumb,
 } from "./repository";
 
 function testDb(): SupabaseClient {
@@ -152,6 +153,50 @@ describe("clients repository (integration)", () => {
     expect(racks[0].deviceCount).toBe(0);
   });
 
+  // Regression for the IMPORTANT finding: the existing coverage only ever asserted deviceCount at
+  // 0, so an implementation that returns an empty map unconditionally would pass everything. This
+  // seeds one rack with a real, non-zero device count and a sibling rack in the same site with
+  // none, and asserts both exact numbers.
+  it("reports the exact non-zero device count per rack, and 0 for a rack with none", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-L", name: "Client L" });
+    const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
+    const { data: floor } = await db
+      .from("floors")
+      .insert({ site_id: site.id, code: "1" })
+      .select("*")
+      .single();
+    const { data: room } = await db
+      .from("rooms")
+      .insert({ floor_id: floor!.id, code: "MDF1", type: "MDF" })
+      .select("*")
+      .single();
+    const { data: busyRack } = await db
+      .from("racks")
+      .insert({ room_id: room!.id, code: "RK-BUSY", height_u: 42 })
+      .select("*")
+      .single();
+    const { data: emptyRack } = await db
+      .from("racks")
+      .insert({ room_id: room!.id, code: "RK-EMPTY", height_u: 42 })
+      .select("*")
+      .single();
+
+    const { data: template } = await db.from("device_templates").select("id").limit(1).single();
+    await db.from("rack_devices").insert([
+      { rack_id: busyRack!.id, device_template_id: template!.id, code: "DEV1", start_u: 1 },
+      { rack_id: busyRack!.id, device_template_id: template!.id, code: "DEV2", start_u: 2 },
+      { rack_id: busyRack!.id, device_template_id: template!.id, code: "DEV3", start_u: 3 },
+    ]);
+
+    const racks = await listRacksForSite(db, site.id);
+    const busy = racks.find((r) => r.id === busyRack!.id);
+    const empty = racks.find((r) => r.id === emptyRack!.id);
+    expect(busy).toBeDefined();
+    expect(empty).toBeDefined();
+    expect(busy!.deviceCount).toBe(3);
+    expect(empty!.deviceCount).toBe(0);
+  });
+
   it("counts the full cascade under a client and a site", async () => {
     const client = await createClientRow(db, { code: "T-CLI-G", name: "Client G" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
@@ -242,5 +287,39 @@ describe("clients repository (integration)", () => {
     await createSiteForClient(db, { clientId: client.id, code: "SATE", name: "Site A" });
     const found = await getSiteByCode(db, client.id, "S_TE");
     expect(found).toBeNull();
+  });
+
+  it("resolves a rack's breadcrumb up through room, floor and site to its client", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-K", name: "Client K" });
+    const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site One" });
+    const { data: floor } = await db
+      .from("floors")
+      .insert({ site_id: site.id, code: "1" })
+      .select("*")
+      .single();
+    const { data: room } = await db
+      .from("rooms")
+      .insert({ floor_id: floor!.id, code: "MDF1", type: "MDF" })
+      .select("*")
+      .single();
+    const { data: rack } = await db
+      .from("racks")
+      .insert({ room_id: room!.id, code: "RK1", height_u: 42 })
+      .select("*")
+      .single();
+
+    const breadcrumb = await getRackBreadcrumb(db, rack!.id);
+    expect(breadcrumb).toEqual({
+      clientCode: "T-CLI-K",
+      clientName: "Client K",
+      siteCode: "S1",
+      siteName: "Site One",
+      rackCode: "RK1",
+    });
+  });
+
+  it("returns null from getRackBreadcrumb for a rack id that doesn't exist", async () => {
+    const breadcrumb = await getRackBreadcrumb(db, "00000000-0000-0000-0000-000000000000");
+    expect(breadcrumb).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render, screen, within, fireEvent, act, waitFor } from "@testing-library/react";
 import { RackBuilder } from "./RackBuilder";
 import type { RackRow, RackDeviceRow } from "./repository";
 import type { DeviceTypeRow, PickerTemplate, BrandRow } from "@/features/device-library/repository";
@@ -8,6 +8,7 @@ import type { PortEndpoint } from "./endpointOps";
 import type { PortGroup, Face } from "@/domain/faceplate";
 import { emptyFace } from "@/domain/faceplate";
 import type { SiteScope } from "./siteScope";
+import type { RackBreadcrumb } from "@/features/clients/repository";
 import { listTemplatesForTypeAction } from "@/features/device-library/actions";
 import { SNAP_MS, RACK_LATCH_X } from "./palettePull";
 import { RACK_GUTTER_L, RACK_INTERIOR_W } from "./RackFrame";
@@ -84,6 +85,12 @@ const conn: Connection = {
 
 const siteScope: SiteScope = { racks: [], switches: [] };
 
+const breadcrumb: RackBreadcrumb = {
+  clientCode: "ACME", clientName: "Acme Corp",
+  siteCode: "HQ", siteName: "Headquarters",
+  rackCode: "RK01",
+};
+
 function baseProps() {
   return {
     rack,
@@ -92,6 +99,7 @@ function baseProps() {
     initialEndpoints: [] as PortEndpoint[],
     siteScope,
     floorTypes: [] as DeviceTypeRow[],
+    breadcrumb,
     types: [deviceType],
     templatesByType: { [typeId]: [template] },
     brands: [] as BrandRow[],
@@ -358,4 +366,30 @@ describe("RackBuilder sidebar selection", () => {
     }
   });
 
+});
+
+describe("RackBuilder breadcrumb", () => {
+  // Regression for the IMPORTANT finding: /racks/[id] was a navigational dead end once the flat
+  // /racks list retired. The breadcrumb must resolve the rack's path back up to its client, with
+  // the client and site segments linking to their directory pages.
+  it("renders Clients / <client> / <site> / <rack code>, with client and site as links", () => {
+    render(<RackBuilder {...baseProps()} />);
+    const nav = screen.getByTestId("rack-breadcrumb");
+
+    const clientsLink = within(nav).getByRole("link", { name: "Clients" });
+    expect(clientsLink).toHaveAttribute("href", "/clients");
+
+    const clientLink = within(nav).getByRole("link", { name: "Acme Corp" });
+    expect(clientLink).toHaveAttribute("href", "/clients/ACME");
+
+    const siteLink = within(nav).getByRole("link", { name: "Headquarters" });
+    expect(siteLink).toHaveAttribute("href", "/clients/ACME/HQ");
+
+    expect(nav).toHaveTextContent("RK01");
+  });
+
+  it("renders nothing when the rack's path could not be resolved", () => {
+    render(<RackBuilder {...baseProps()} breadcrumb={null} />);
+    expect(screen.queryByTestId("rack-breadcrumb")).toBeNull();
+  });
 });
