@@ -87,6 +87,26 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
   );
 }
 
+/** Zoom granularity while the user drives. Only the fit itself is fully fractional.
+ *
+ *  This single number is the entire feel of the wheel zoom, because Leaflet's wheel handler does
+ *      d4 = snap ? Math.ceil(d3 / snap) * snap : d3
+ *  — Math.ceil, NOT round. Every scroll is forced UP to a whole snap unit, so the snap value is a
+ *  hard FLOOR on how small a zoom step can be:
+ *      1     -> 100% scale per step (the gentlest flick doubles the map: unusable)
+ *      0.25  ->  19% per step (still visibly stepped)
+ *      0.1   ->   7% per step  <- here
+ *      0     -> continuous, but then pins visibly wiggle: Leaflet positions markers with .round(),
+ *               i.e. whole pixels, while tiles scale continuously, so the pins drift against the
+ *               map as the zoom changes.
+ *
+ *  Lower is smoother but edges back toward that wiggle, so this is the dial to turn if the feel is
+ *  wrong. Removing the trade-off properly means stopping Leaflet rounding marker positions — that
+ *  was attempted (overriding Marker.update and Marker._animateZoom to drop the .round()) and
+ *  REVERTED, because measurement could not show it helping and an unproven patch of two library
+ *  internals is not worth carrying. */
+const INTERACTIVE_ZOOM_SNAP = 0.1;
+
 /** Shared by MapContainer's mount fit and FitBounds' later refits — they must agree, or the map
  *  would jump the first time the bounds changed.
  *
@@ -97,20 +117,6 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
  *  maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box for one
  *  blip, and with zoomSnap={0} allowing fractional zoom, fitting a zero-area box would otherwise
  *  drive to the tile layer's max (20), slamming a single-site client to street level. */
-/** Zoom granularity while the user drives. Only the fit itself is allowed to be fully fractional.
- *
- *  Why not 0 (continuous): L.Marker.update() positions markers with .round() — integer pixels —
- *  while tiles scale continuously, so under continuous zoom the pins re-round every frame and
- *  visibly wiggle loose from the map.
- *
- *  Why not 1 (whole levels): Leaflet's wheel handler does
- *      d4 = snap ? Math.ceil(d3 / snap) * snap : d3
- *  — Math.ceil, not round. At snap=1 ANY nonzero scroll rounds UP to a full level, so the
- *  gentlest flick doubles the scale. That is both maximally sensitive and maximally choppy.
- *
- *  0.25 puts the floor at a ~19% scale change per step instead of 100%, four steps per level. */
-const INTERACTIVE_ZOOM_SNAP = 0.25;
-
 const FIT_OPTIONS = {
   paddingTopLeft: [32, 48],
   paddingBottomRight: [32, 16],
