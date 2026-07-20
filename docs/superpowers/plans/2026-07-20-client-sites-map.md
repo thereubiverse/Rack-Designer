@@ -249,6 +249,16 @@ In `createSiteAction` and `renameSiteAction`: after the write succeeds, `await g
 
 Takes `siteId`, reads the site's address, geocodes, persists, `revalidatePath("/clients")`, returns `{ ok, error? }`. This is the retry button behind §5 of the spec, and the reason a bulk backfill script is optional.
 
+- [ ] **Step 3b: Add a throttled backfill script**
+
+The database now holds ONE client (`URI`) with **31 sites, all `pending`**. Clicking Locate 31 times
+is not a workflow, and firing them concurrently would breach Nominatim's ~1 req/sec policy. Add
+`scripts/backfill-geocode.ts` that walks sites with `geocode_status = 'pending'`, geocodes each via
+`geocodeAddress`, persists with `setSiteGeocode`, and **sleeps 1100ms between calls**. ~35s for 31
+sites. Log each result so a run says plainly which sites resolved and which did not.
+
+This supersedes spec §9, which assumed one site and recommended relying on the button alone.
+
 - [ ] **Step 4: Typecheck and commit**
 
 ```bash
@@ -362,10 +372,15 @@ npx vitest run src/features/clients/ClientDetail.test.tsx
 - [ ] **Step 4: Browser verification**
 
 Use the preview tooling; never `npm run dev` in a shell.
-1. Open `/clients/acme`. The existing `HQ` site is `pending` → it appears in the unlocated list, not on a map.
-2. Click **Locate**. Its address is "12 Main St" → the pre-flight rejects it, status becomes `not_found`, and the hint tells you to add a city and country. **This is the headline behaviour: the site stays visible.**
-3. Edit the address to "12 Main St, Manchester, UK" → it geocodes, the map appears, and a blip sits in Manchester.
+1. Open `/clients/uri`. All 31 sites start `pending` → they appear in the unlocated list, not on a map.
+2. Click **Locate** on one. Its address is well-formed, so it should geocode and move onto the map.
+3. Run the Step 3b backfill for the rest, then reload: the map shows a blip per resolved site, bounds
+   fitted to them all.
 4. Click the blip → the popup shows the site and its "Open site" link navigates to the site page.
+4b. Check how many of the 31 landed: `select geocode_status, count(*) from sites group by 1;`
+    Every address passes the pre-flight (all have a comma, 6-10 words), so `not_found` here means
+    the GEOCODER could not place that specific building — not that the address was too vague. Those
+    sites must still be reachable via the unlocated list; that is the check that matters.
 5. Confirm "© OpenStreetMap contributors" is visible on the map.
 
 - [ ] **Step 5: Commit**
