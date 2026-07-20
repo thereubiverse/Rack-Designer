@@ -2,9 +2,12 @@
  * One-off backfill: geocodes every site whose geocode_status is still "pending".
  *
  * Runs outside Next.js, so process.env is not populated by the framework the way it is for the
- * app or for vitest — load .env.local the same way vitest.config.ts does, before anything else
- * touches createServiceClient() (which reads NEXT_PUBLIC_SUPABASE_URL and
- * SUPABASE_SERVICE_ROLE_KEY and throws without them).
+ * app or for vitest — load .env.local the same way vitest.config.ts does. Note that ESM hoists
+ * imports, so every imported module below is already evaluated by the time this line runs — this
+ * works not because loadEnv() runs "before the imports" (it doesn't) but because
+ * createServiceClient() reads NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from
+ * process.env inside its own function body, called later from main(), rather than at module
+ * scope.
  *
  * Requests are strictly sequential with a 1100ms sleep BETWEEN calls (never Promise.all) to stay
  * under Nominatim's ~1 req/sec policy — breaching it risks the app's IP getting blocked.
@@ -41,26 +44,41 @@ async function main() {
   let ok = 0;
   let notFound = 0;
   let failed = 0;
+  let errored = 0;
 
   for (let i = 0; i < sites.length; i++) {
     const site = sites[i];
-    const result = await geocodeAddress(site.address);
-    await setSiteGeocode(db, site.id, result);
 
-    if (result.status === "ok") ok++;
-    else if (result.status === "not_found") notFound++;
-    else failed++;
+    // This is a single ~35-second unattended run over every pending site. One bad site (a
+    // transient DB blip, an unexpected geocodeAddress/setSiteGeocode throw) must not abandon
+    // every remaining site — log it and move on to the next one.
+    try {
+      const result = await geocodeAddress(site.address);
+      await setSiteGeocode(db, site.id, result);
 
-    console.log(
-      `[${i + 1}/${sites.length}] ${site.code}: ${result.status}` +
-        (result.status === "failed" ? ` (${result.error})` : "")
-    );
+      if (result.status === "ok") ok++;
+      else if (result.status === "not_found") notFound++;
+      else failed++;
+
+      console.log(
+        `[${i + 1}/${sites.length}] ${site.code}: ${result.status}` +
+          (result.status === "failed" ? ` (${result.error})` : "")
+      );
+    } catch (e) {
+      errored++;
+      console.error(
+        `[${i + 1}/${sites.length}] ${site.code}: errored — ${e instanceof Error ? e.message : e}`
+      );
+    }
 
     // Sleep between calls, not after the last one, and never in parallel with the next request.
+    // This still runs on the error path — the rate limit applies regardless of outcome.
     if (i < sites.length - 1) await sleep(SLEEP_MS);
   }
 
-  console.log(`backfill-geocode: done — ok=${ok} not_found=${notFound} failed=${failed}`);
+  console.log(
+    `backfill-geocode: done — ok=${ok} not_found=${notFound} failed=${failed} errored=${errored}`
+  );
 }
 
 main().catch((e) => {

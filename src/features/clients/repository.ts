@@ -239,10 +239,15 @@ export async function deleteSite(db: SupabaseClient, id: string): Promise<void> 
  *  making sure a failure here never fails the write it decorates — this function itself still
  *  throws on a DB error, same as every other repository function, so callers must catch it. */
 export async function setSiteGeocode(db: SupabaseClient, siteId: string, result: GeocodeResult): Promise<void> {
+  // `not_found` is definitive (the service ran and matched nothing) so the old pin is wrong and
+  // must be cleared. `failed` is transient (the service errored/timed out) so the existing
+  // latitude/longitude are left untouched — a retry-worthy blip must never erase a good pin.
   const patch =
     result.status === "ok"
       ? { latitude: result.lat, longitude: result.lng, geocode_status: "ok" as const }
-      : { latitude: null, longitude: null, geocode_status: result.status };
+      : result.status === "not_found"
+        ? { latitude: null, longitude: null, geocode_status: "not_found" as const }
+        : { geocode_status: "failed" as const };
 
   const { error } = await db
     .from("sites")

@@ -115,10 +115,21 @@ export async function renameSiteAction(formData: FormData): Promise<{ ok: boolea
   const newAddress = address ? String(address) : null;
 
   const db = createServiceClient();
+
+  // This read exists SOLELY to capture the previous address for geocode bookkeeping (below), so
+  // it must have its own try/catch, ahead of — and separate from — the write's try/catch. If this
+  // read throws, we must not let it reject the rename. Defaulting to null makes addressChanged
+  // (below) come out true, so we simply re-geocode; that costs one extra request but never fails
+  // a user's rename over a geocode-support read.
   let previousAddress: string | null = null;
   try {
     const existing = await getSiteById(db, id);
     previousAddress = existing?.address ?? null;
+  } catch {
+    previousAddress = null;
+  }
+
+  try {
     await renameSite(db, id, { code, name, address: newAddress });
   } catch (e) {
     return { ok: false, error: friendly(e, "site") };
@@ -131,6 +142,16 @@ export async function renameSiteAction(formData: FormData): Promise<{ ok: boolea
     // Own try/catch, separate from the write above — geocoding must never fail a write that
     // already succeeded.
     try {
+      // The address just changed, so any existing pin belongs to the OLD address. Clear it and
+      // drop back to pending before attempting the new geocode, so that if the re-geocode fails
+      // (setSiteGeocode's "failed" arm now preserves existing coordinates), we don't leave a
+      // stale pin pointing at an address that no longer applies.
+      const { error: clearError } = await db
+        .from("sites")
+        .update({ latitude: null, longitude: null, geocode_status: "pending" })
+        .eq("id", id);
+      if (clearError) throw new Error(`renameSiteAction(clear geocode): ${clearError.message}`);
+
       const result = await geocodeAddress(newAddress);
       await setSiteGeocode(db, id, result);
     } catch {
