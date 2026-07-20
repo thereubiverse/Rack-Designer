@@ -136,6 +136,18 @@ fieldset:disabled [data-testid$="-trigger"] {
   background-color: #f5f5f5 !important;
 }
 
+/* Zoom animation must stay ENABLED on the sites map: it is what makes Leaflet keep the existing
+   tiles and CSS-scale them through the transition. With it off, every zoom does a full view reset
+   that drops the old tiles before the new ones load — measured as the map going to 0% tile
+   coverage 14 times during one fast zoom, including ~200ms fully blank.
+
+   But Leaflet's stock 0.25s transition is what made wheel zoom feel sluggish and choppy in the
+   first place. Shortening it to 90ms keeps the tiles on screen while making the zoom feel
+   immediate — the fast feel without the blanking. */
+.leaflet-zoom-anim .leaflet-zoom-animated {
+  transition: transform 90ms ease-out !important;
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

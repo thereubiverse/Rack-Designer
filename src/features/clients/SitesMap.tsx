@@ -187,19 +187,23 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
         // That start-stop cadence is what reads as "slow and choppy"; it was never a frame-rate
         // problem (frames measured at a median 8.3ms with none over 50ms).
         //
-        // Turning the animation off makes each wheel event apply immediately, and with zoomSnap={0}
-        // the zoom is continuous rather than stepped. Smoothness then comes from the wheel's own
-        // event rate, so the debounce is cut and each event is made SMALLER — many small instant
-        // updates read as smooth, where few large animated ones read as janky.
-        zoomAnimation={false}
+        // zoomAnimation is deliberately LEFT ON (Leaflet's default). Turning it off did make the
+        // zoom feel immediate, but it also made Leaflet reset the view on every zoom, dropping the
+        // old tiles before the new ones loaded — the map blanked completely 14 times during a
+        // single fast zoom. The animation is what keeps the existing tiles on screen and CSS-scales
+        // them through the transition, so it has to stay.
+        //
+        // The sluggish feel is fixed instead by shortening Leaflet's stock 0.25s zoom transition to
+        // 90ms in globals.css, and by cutting the wheel debounce below, which together give the
+        // responsiveness without the blanking.
         wheelDebounceTime={10}
-        // Leaflet's default is 60. Higher = less zoom per unit of scroll. 80 is only slightly
-        // finer than default, deliberately: the sluggishness was the animation, not the
-        // magnitude, so cutting the magnitude much further (120 was tried) just trades one kind
-        // of slow for another — noticeable on a click-wheel mouse, which sends few large deltas
-        // rather than the trackpad's many small ones. This is the one number to tune if the
-        // feel is off.
-        wheelPxPerZoomLevel={80}
+        // Leaflet's default: higher = less zoom per unit of scroll. Left at the default on
+        // purpose. Damping the magnitude (80 and 120 were both tried) was only worth doing while
+        // the animation was off and each step landed instantly; with the 90ms transition back in
+        // place the transition itself does the smoothing, so shrinking the steps as well just
+        // makes the map feel sluggish again — measured as 1.13x zoom per gesture at 80 versus
+        // 1.86x. This is the one number to tune if the feel is off.
+        wheelPxPerZoomLevel={60}
         className="h-[480px] w-full"
         scrollWheelZoom
       >
@@ -208,6 +212,13 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
           subdomains="abcd"
           maxZoom={20}
           attribution={MAP_ATTRIBUTION}
+          // Don't fetch tiles mid-gesture: while zooming, every intermediate level would request
+          // a full screen of tiles that is discarded a frame later. Waiting until the zoom settles
+          // removes that churn, and the scaled existing tiles cover the gap.
+          updateWhenZooming={false}
+          // Keep a wider ring of off-screen tiles (default 2) so there is already-loaded imagery
+          // to scale into view instead of blank space.
+          keepBuffer={4}
         />
         <FitBounds bounds={bounds} />
         {blips.map((blip) => (
