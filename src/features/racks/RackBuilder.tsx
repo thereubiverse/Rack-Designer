@@ -367,7 +367,9 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
     }));
 
   return (
-    <div className="space-y-3">
+    // The breadcrumb needs room to read as its own line rather than crowding the toolbar and the
+    // palette heading that sit immediately beneath it — hence the wider gap and the small top inset.
+    <div className="space-y-5 pt-1">
       {breadcrumb && (
         <nav className="text-sm text-neutral-500" data-testid="rack-breadcrumb">
           <Link href="/clients" className="hover:underline">Clients</Link>
@@ -406,7 +408,10 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
 
       {/* Canvas + toolbar */}
       <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex items-center gap-2">
+        {/* Wraps rather than overflows: this column is squeezed between the palette and the settings
+            panel, and at narrower widths the buttons alone fill it — without wrapping, the save
+            state is pushed off the edge and silently clipped. */}
+        <div className="flex flex-wrap items-center gap-2 gap-y-2">
           <div className="flex rounded-lg border border-neutral-200 bg-white p-0.5 text-sm font-semibold">
             {(["FRONT", "BACK"] as const).map((s) => (
               <button key={s} type="button" onClick={() => setSide(s)}
@@ -426,7 +431,9 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
           <button type="button" aria-label="Fit" title={`Fit to ${fitMode === "height" ? "width" : "height"}`}
             onClick={() => setFitMode((m) => (m === "height" ? "width" : "height"))}
             className="h-8 rounded-lg border border-neutral-200 bg-white px-3 text-sm">Fit</button>
-          <span className={`ml-auto text-xs font-semibold ${saveState === "error" ? "text-red-600" : saveState === "saving" ? "text-amber-600" : "text-green-600"}`}>
+          {/* shrink-0 + nowrap: the toolbar lives in a min-w-0 column squeezed between the palette
+              and the settings panel, so without these the save state is the thing that gets clipped. */}
+          <span className={`ml-auto shrink-0 whitespace-nowrap pl-2 text-xs font-semibold ${saveState === "error" ? "text-red-600" : saveState === "saving" ? "text-amber-600" : "text-green-600"}`}>
             {saveState === "error" ? error : saveState === "saving" ? "Saving…" : "✓ Saved"}
           </span>
         </div>
