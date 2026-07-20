@@ -102,6 +102,40 @@ fieldset:disabled [data-testid$="-trigger"] {
   animation: patch-snap-pop 0.6s ease-out infinite;
 }
 
+/* Sites map (PatchDocs-style): the black pin divIcon has no img/background of its own, so this
+   neutralises Leaflet's default `.leaflet-div-icon` chrome (white box + grey border) that would
+   otherwise show behind every inline-SVG pin. */
+.site-pin-icon {
+  background: transparent;
+  border: none;
+}
+
+/* Sites map zoom control: small white rounded squares with a soft shadow instead of Leaflet's
+   default flat, fused, bordered bar — matches the app's neutral/rounded-lg palette. Scoped to
+   `.leaflet-control-zoom` only; the rest of Leaflet's chrome (attribution, popups) is untouched. */
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.leaflet-control-zoom a,
+.leaflet-control-zoom a:first-child,
+.leaflet-control-zoom a:last-child {
+  background-color: #ffffff !important;
+  color: #404040 !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+.leaflet-control-zoom a:hover,
+.leaflet-control-zoom a:focus {
+  background-color: #f5f5f5 !important;
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

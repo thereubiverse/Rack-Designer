@@ -10,22 +10,38 @@ import Link from "next/link";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import { boundsOf, type Blip } from "./sitesMapOps";
 
-const OSM_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+// CARTO Positron is a key-free, near-greyscale basemap (Mapbox Light's usage-free equivalent).
+// Both OpenStreetMap (source data) and CARTO (tile styling/hosting) require attribution on the
+// map itself — this isn't optional styling, it's each provider's usage policy.
+const MAP_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
-/** Leaflet's default marker icon resolves its image URLs relative to leaflet.css at load time.
- *  Bundlers (Next.js/webpack) rewrite asset paths, so that relative lookup 404s and the default
- *  markers render invisibly. Self-hosting the same images under `public/leaflet/` (copied from
- *  the installed `leaflet` package) sidesteps the broken default resolution without needing
- *  bundler-specific asset-import configuration or a runtime dependency on a third-party CDN. */
-const siteIcon = L.icon({
-  iconUrl: "/leaflet/marker-icon.png",
-  iconRetinaUrl: "/leaflet/marker-icon-2x.png",
-  shadowUrl: "/leaflet/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+// A black teardrop pin with a white building glyph knocked out of the centre, matching
+// PatchDocs' marker aesthetic (drawn from scratch here, not lifted from their asset). Inline SVG
+// via L.divIcon keeps this self-contained: no extra network request, no CDN, no bundler asset
+// pipeline the way the old self-hosted `public/leaflet/*.png` icons needed.
+const SITE_PIN_SVG = `
+<svg width="28" height="38" viewBox="0 0 28 38" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path d="M14 0C6.268 0 0 6.268 0 14c0 10.5 14 24 14 24s14-13.5 14-24C28 6.268 21.732 0 14 0z" fill="#171717"/>
+  <rect x="9" y="7" width="10" height="13" rx="1" fill="#ffffff"/>
+  <rect x="11" y="9.5" width="2" height="2" fill="#171717"/>
+  <rect x="15" y="9.5" width="2" height="2" fill="#171717"/>
+  <rect x="11" y="13" width="2" height="2" fill="#171717"/>
+  <rect x="15" y="13" width="2" height="2" fill="#171717"/>
+  <rect x="12" y="16.5" width="4" height="3.5" fill="#171717"/>
+</svg>`;
+
+const siteIcon = L.divIcon({
+  html: SITE_PIN_SVG,
+  // Overrides Leaflet's default divIcon className ("leaflet-div-icon", which carries a white
+  // background + grey border) so no box renders behind the pin — see the matching rule in
+  // globals.css that also neutralises it defensively.
+  className: "site-pin-icon",
+  iconSize: [28, 38],
+  // The anchor is the pin's tip, not its centre/bounding-box corner — otherwise every site would
+  // render offset from its true coordinate.
+  iconAnchor: [14, 38],
+  popupAnchor: [0, -34],
 });
 
 interface SiteMarkerProps {
@@ -92,8 +108,10 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
       {/* Leaflet collapses to nothing in a container with no explicit height. */}
       <MapContainer bounds={bounds} className="h-[480px] w-full" scrollWheelZoom>
         <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution={OSM_ATTRIBUTION}
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+          subdomains="abcd"
+          maxZoom={20}
+          attribution={MAP_ATTRIBUTION}
         />
         {blips.map((blip) => (
           <SiteMarker
