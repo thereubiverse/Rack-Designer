@@ -6,12 +6,24 @@ export type GeocodeResult =
 export const VAGUE_ADDRESS_HINT =
   "Add a city and country to this address so it can be found on the map";
 
+/** Only a number, or a non-empty (post-trim) string, is an acceptable coordinate value.
+ *  Everything else — null, undefined, arrays, objects, booleans — coerces through bare
+ *  Number() to 0 or NaN, and 0 is a false-positive "ok" (Null Island) that Number.isFinite
+ *  can't catch on its own. Reject the type before ever coercing it. */
+function isCoordinateLike(value: unknown): value is number | string {
+  if (typeof value === "number") return true;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 /** Nominatim returns lat/lon as STRINGS in a JSON array — [] means no match. */
 export function parseNominatimResponse(json: unknown): GeocodeResult {
   if (!Array.isArray(json)) return { status: "failed", error: "Unexpected response" };
   if (json.length === 0) return { status: "not_found" };
   const first = json[0] as { lat?: unknown; lon?: unknown };
-  const lat = Number(first?.lat), lng = Number(first?.lon);
+  if (!isCoordinateLike(first?.lat) || !isCoordinateLike(first?.lon)) {
+    return { status: "failed", error: "Response had no usable coordinates" };
+  }
+  const lat = Number(first.lat), lng = Number(first.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return { status: "failed", error: "Response had no usable coordinates" };
   }

@@ -10,9 +10,29 @@ describe("parseNominatimResponse", () => {
     expect(parseNominatimResponse([])).toEqual({ status: "not_found" });
   });
   it("anything malformed is failed, never a throw", () => {
-    for (const bad of [null, undefined, {}, "nope", [{ lat: "x", lon: "y" }], [{}]]) {
+    for (const bad of [
+      null,
+      undefined,
+      {},
+      "nope",
+      [{ lat: "x", lon: "y" }],
+      [{}],
+      [{ lat: null, lon: "-2.2426" }],
+      [{ lat: "", lon: "-2.2426" }],
+      [{ lat: [], lon: "-2.2426" }],
+      [{ lat: "53.4808", lon: null }],
+      [{ lat: {}, lon: "-2.2426" }],
+      [{ lat: true, lon: "-2.2426" }],
+    ]) {
       expect(parseNominatimResponse(bad).status).toBe("failed");
     }
+  });
+  it("a genuine 0 coordinate is a real place, not rejected", () => {
+    expect(parseNominatimResponse([{ lat: "0", lon: "0" }])).toEqual({
+      status: "ok",
+      lat: 0,
+      lng: 0,
+    });
   });
 });
 
