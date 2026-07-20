@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServiceClient } from "@/lib/supabase/server";
 import { emptyFace } from "@/domain/faceplate";
-import { getDefaultOrganization } from "@/features/locations/repository";
+import { createClient } from "@/features/clients/repository";
 import { listDeviceTypes } from "@/features/device-library/repository";
 import { listConnections, replaceConnections } from "./connectionsRepository";
 import type { Connection } from "./connectionOps";
@@ -10,7 +10,7 @@ const db = createServiceClient();
 let rackId = "";
 let swId = "";
 let ppId = "";
-const ids: { site?: string; templateId?: string } = {};
+const ids: { client?: string; templateId?: string } = {};
 
 // Real schema: connections.a_group_id/b_group_id are `uuid not null` columns (matching how
 // portGroup ids are generated app-side via crypto.randomUUID()), so test group ids must be
@@ -19,16 +19,16 @@ const GROUP_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const GROUP_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 beforeAll(async () => {
-  // Minimal hierarchy: organization (seeded) → site → floor → room → rack → 2 rack_devices.
+  // Minimal hierarchy: client (seeded) → site → floor → room → rack → 2 rack_devices.
   // (The brief's illustrative seed used a "locations" table with location_id/level columns;
   // the real hierarchy migration (0001_location_hierarchy.sql) has no "locations" table — it's
-  // sites (organization_id, code, name) → floors (site_id, code, sort_order) → rooms (floor_id,
+  // sites (client_id, code, name) → floors (site_id, code, sort_order) → rooms (floor_id,
   // code, type-defaulted) → racks (room_id, code, height_u). Adapted seed calls below accordingly.)
-  const org = await getDefaultOrganization(db);
+  const client = await createClient(db, { code: "T-CONN-CLI", name: "conn repo test" });
+  ids.client = client.id;
   const site = (await db.from("sites")
-    .insert({ organization_id: org.id, code: "T-CONN", name: "conn repo test" })
+    .insert({ client_id: client.id, code: "T-CONN", name: "conn repo test" })
     .select().single()).data!;
-  ids.site = site.id;
   const floor = (await db.from("floors")
     .insert({ site_id: site.id, code: "F-CONN", name: "F" })
     .select().single()).data!;
@@ -48,7 +48,7 @@ beforeAll(async () => {
   if (!rackType) throw new Error("no rack-category device type available for test");
 
   const tpl = (await db.from("device_templates").insert({
-    organization_id: org.id, name: "conn repo test tpl", device_type_id: rackType.id,
+    name: "conn repo test tpl", device_type_id: rackType.id,
     rack_units: 1, width_in: 19, rack_mounted: true,
     front_face: emptyFace(), back_face: emptyFace(),
   }).select().single()).data!;
@@ -63,9 +63,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Cascades: site → floors → rooms → racks → rack_devices → connections.
-  if (ids.site) await db.from("sites").delete().eq("id", ids.site);
-  // device_templates isn't cascaded from the site (device_template_id is ON DELETE RESTRICT),
+  // Cascades: client → sites → floors → rooms → racks → rack_devices → connections.
+  if (ids.client) await db.from("clients").delete().eq("id", ids.client);
+  // device_templates isn't cascaded from the client (device_template_id is ON DELETE RESTRICT),
   // so it must be cleaned up separately, after the rack_devices referencing it are gone.
   if (ids.templateId) await db.from("device_templates").delete().eq("id", ids.templateId);
 });

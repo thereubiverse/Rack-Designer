@@ -8,7 +8,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { emptyFace, type Face, type PortGroup } from "@/domain/faceplate";
-import { getDefaultOrganization } from "@/features/locations/repository";
+import { createClient } from "@/features/clients/repository";
 import { listDeviceTypes } from "@/features/device-library/repository";
 import { saveConnectionsAction } from "./actions";
 import { listConnections } from "./connectionsRepository";
@@ -18,7 +18,7 @@ const db = createServiceClient();
 let rackId = "";
 let swId = "";
 let ppId = "";
-const ids: { site?: string; templateId?: string } = {};
+const ids: { client?: string; templateId?: string } = {};
 
 // Real schema: connections.a_group_id/b_group_id are `uuid not null` columns, so the seeded
 // face's portGroups[].id must be a real UUID (matching the connectionsRepository integration
@@ -33,13 +33,13 @@ const g = (id: string): PortGroup => ({
 const faceWith = (gid: string): Face => ({ portGroups: [g(gid)], elements: [] });
 
 beforeAll(async () => {
-  // Same hierarchy shape as connectionsRepository.integration.test.ts: organization (seeded)
+  // Same hierarchy shape as connectionsRepository.integration.test.ts: client (seeded)
   // → site → floor → room → rack → 2 rack_devices with snapshot faces carrying real port groups.
-  const org = await getDefaultOrganization(db);
+  const client = await createClient(db, { code: "T-ACT-CLI", name: "actions test" });
+  ids.client = client.id;
   const site = (await db.from("sites")
-    .insert({ organization_id: org.id, code: "T-ACT", name: "actions test" })
+    .insert({ client_id: client.id, code: "T-ACT", name: "actions test" })
     .select().single()).data!;
-  ids.site = site.id;
   const floor = (await db.from("floors")
     .insert({ site_id: site.id, code: "F-ACT", name: "F" })
     .select().single()).data!;
@@ -58,7 +58,7 @@ beforeAll(async () => {
   if (!rackType) throw new Error("no rack-category device type available for test");
 
   const tpl = (await db.from("device_templates").insert({
-    organization_id: org.id, name: "actions test tpl", device_type_id: rackType.id,
+    name: "actions test tpl", device_type_id: rackType.id,
     rack_units: 1, width_in: 19, rack_mounted: true,
     front_face: emptyFace(), back_face: emptyFace(),
   }).select().single()).data!;
@@ -75,9 +75,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Cascades: site → floors → rooms → racks → rack_devices → connections.
-  if (ids.site) await db.from("sites").delete().eq("id", ids.site);
-  // device_templates isn't cascaded from the site (ON DELETE RESTRICT), clean up separately.
+  // Cascades: client → sites → floors → rooms → racks → rack_devices → connections.
+  if (ids.client) await db.from("clients").delete().eq("id", ids.client);
+  // device_templates isn't cascaded from the client (ON DELETE RESTRICT), clean up separately.
   if (ids.templateId) await db.from("device_templates").delete().eq("id", ids.templateId);
 });
 

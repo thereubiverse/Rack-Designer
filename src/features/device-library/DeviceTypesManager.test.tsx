@@ -15,7 +15,7 @@ import { createDeviceTypeAction, saveDeviceTypesAction, deleteDeviceTypeAction }
 
 function row(over: Partial<DeviceTypeRow>): DeviceTypeRow {
   return {
-    id: "t1", organization_id: "o1", name: "Switch", created_at: "2026-01-01",
+    id: "t1", name: "Switch", created_at: "2026-01-01",
     category: "rack", code: "SW", is_standard: true, ...over,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient as createClientRecord } from "@/features/clients/repository";
 import {
-  getDefaultOrganization,
   createSite,
   createFloor,
   createRoom,
@@ -15,16 +15,17 @@ import { replaceRackDevices, listRackDevices, type RackDeviceInput } from "./rep
 function testDb(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createSupabaseClient(url, key, { auth: { persistSession: false } });
 }
 
 const db = testDb();
 
 const TEMPLATE_NAME = "IT swap-test tpl";
+const CLIENT_CODE = "T-RACK-CLI";
 
 async function cleanup() {
-  // Cascades from sites down to racks down to rack_devices.
-  await db.from("sites").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  // Cascades: client → sites → floors → rooms → racks → rack_devices.
+  await db.from("clients").delete().eq("code", CLIENT_CODE);
   await db.from("device_templates").delete().eq("name", TEMPLATE_NAME);
 }
 
@@ -37,10 +38,10 @@ describe("rack repository (integration)", () => {
   });
 
   it("reconciles a same-statement code swap between two kept devices", async () => {
-    const org = await getDefaultOrganization(db);
-    expect(org.id).toBeTruthy();
+    const client = await createClientRecord(db, { code: CLIENT_CODE, name: "rack repo test" });
+    expect(client.id).toBeTruthy();
 
-    const site = await createSite(db, { code: "HQ", name: "Headquarters" });
+    const site = await createSite(db, { clientId: client.id, code: "HQ", name: "Headquarters" });
     const floor = await createFloor(db, { siteId: site.id, code: "28" });
     const room = await createRoom(db, { floorId: floor.id, code: "SL", type: "MDF" });
     const rack = await createRack(db, { roomId: room.id, code: "RK001_M", heightU: 12 });

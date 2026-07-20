@@ -10,9 +10,9 @@ export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
 // Signed-in user (placeholder until auth lands). The avatar defaults to the first-name initial.
 const USER = { name: "Reuben Singh" };
 
-/** The app's left navigation rail. Racks and Device Library are live routes; the other
- *  destinations are placeholders until those areas ship. Active state is derived from the
- *  current pathname so it stays correct across navigations.
+/** The app's left navigation rail. Clients, Device Library and Settings & Billing are live
+ *  routes; the other destinations are placeholders until those areas ship. Active state is
+ *  derived from the current pathname so it stays correct across navigations.
  *  Collapsing animates the aside's width while the inner content stays a fixed width and is clipped
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
  *  translate keeps them centred in the narrow rail). */
@@ -42,14 +42,13 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
 
         {/* Primary nav */}
         <nav className="space-y-0.5">
-          <NavItem icon="tabler:building-community" label="Clients" />
+          <NavItem icon="tabler:building-community" label="Clients" href="/clients" active={pathname.startsWith("/clients")} />
           <NavItem icon="tabler:network" label="Networks" />
           <NavItem icon="tabler:folders" label="Resources" />
           <NavItem icon="tabler:history" label="Activity Log" />
         </nav>
 
         <nav className="space-y-0.5">
-          <NavItem icon="tabler:server-2" label="Racks" href="/racks" active={pathname.startsWith("/racks")} />
           <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
           <NavItem icon="tabler:users" label="Users & Permissions" />
           <NavItem icon="tabler:settings" label="Settings & Billing" href="/settings" active={pathname.startsWith("/settings")} />
