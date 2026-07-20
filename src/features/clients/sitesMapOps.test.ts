@@ -78,6 +78,40 @@ describe("toBlips", () => {
   it("returns an empty array for an empty input", () => {
     expect(toBlips([])).toEqual([]);
   });
+
+  it("keeps a site at Null Island (0, 0) when geocodeStatus is ok — 0 is a real coordinate, not a missing one", () => {
+    const sites: SiteSummary[] = [
+      makeSite({ id: "a", geocodeStatus: "ok", latitude: 0, longitude: 0 }),
+    ];
+
+    const blips = toBlips(sites);
+
+    expect(blips.map((b) => b.id)).toEqual(["a"]);
+    expect(blips[0].lat).toBe(0);
+    expect(blips[0].lng).toBe(0);
+  });
+
+  it("keeps a site on the equator (latitude 0, non-zero longitude)", () => {
+    const sites: SiteSummary[] = [
+      makeSite({ id: "a", geocodeStatus: "ok", latitude: 0, longitude: 20 }),
+    ];
+
+    const blips = toBlips(sites);
+
+    expect(blips.map((b) => b.id)).toEqual(["a"]);
+    expect(blips[0].lat).toBe(0);
+  });
+
+  it("keeps a site on the prime meridian (longitude 0, non-zero latitude)", () => {
+    const sites: SiteSummary[] = [
+      makeSite({ id: "a", geocodeStatus: "ok", latitude: 10, longitude: 0 }),
+    ];
+
+    const blips = toBlips(sites);
+
+    expect(blips.map((b) => b.id)).toEqual(["a"]);
+    expect(blips[0].lng).toBe(0);
+  });
 });
 
 describe("boundsOf", () => {

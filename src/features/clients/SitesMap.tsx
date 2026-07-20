@@ -15,12 +15,13 @@ const OSM_ATTRIBUTION =
 
 /** Leaflet's default marker icon resolves its image URLs relative to leaflet.css at load time.
  *  Bundlers (Next.js/webpack) rewrite asset paths, so that relative lookup 404s and the default
- *  markers render invisibly. Pointing at fixed CDN URLs for the same images sidesteps the broken
- *  default resolution entirely, without needing bundler-specific asset-import configuration. */
+ *  markers render invisibly. Self-hosting the same images under `public/leaflet/` (copied from
+ *  the installed `leaflet` package) sidesteps the broken default resolution without needing
+ *  bundler-specific asset-import configuration or a runtime dependency on a third-party CDN. */
 const siteIcon = L.icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconUrl: "/leaflet/marker-icon.png",
+  iconRetinaUrl: "/leaflet/marker-icon-2x.png",
+  shadowUrl: "/leaflet/marker-shadow.png",
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
