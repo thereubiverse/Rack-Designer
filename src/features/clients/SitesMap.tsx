@@ -87,6 +87,22 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
   );
 }
 
+/** Shared by MapContainer's mount fit and FitBounds' later refits — they must agree, or the map
+ *  would jump the first time the bounds changed.
+ *
+ *  Padding is ASYMMETRIC because the pin is a teardrop anchored at its TIP: its 38px body extends
+ *  upward from the coordinate and nothing extends below it. Symmetric padding smaller than the
+ *  icon height clipped the topmost pin clean off the map.
+ *
+ *  maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box for one
+ *  blip, and with zoomSnap={0} allowing fractional zoom, fitting a zero-area box would otherwise
+ *  drive to the tile layer's max (20), slamming a single-site client to street level. */
+const FIT_OPTIONS = {
+  paddingTopLeft: [32, 48],
+  paddingBottomRight: [32, 16],
+  maxZoom: 16,
+} satisfies L.FitBoundsOptions;
+
 interface FitBoundsProps {
   bounds: LatLngBounds;
 }
@@ -105,17 +121,34 @@ interface FitBoundsProps {
 function FitBounds({ bounds }: FitBoundsProps) {
   const map = useMap();
   const key = bounds.flat().join(",");
+  const first = useRef(true);
 
   useEffect(() => {
-    // maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box when
-    // there is exactly one blip. With zoomSnap={0} allowing fractional zoom, fitBounds on a
-    // zero-area box can otherwise drive the zoom to the map's maximum (20, per the TileLayer),
-    // slamming a single-site client to street level. 16 is a reasonable "one building" zoom.
-    map.fitBounds(bounds, { padding: [32, 32], maxZoom: 16 });
+    const fit = () => map.fitBounds(bounds, FIT_OPTIONS);
+
+    // The mount fit is done by MapContainer's own `bounds`/`boundsOptions`, so skip it here.
+    // Re-fitting immediately after mount is not merely redundant — Leaflet treats fitBounds as
+    // a NO-OP when the target view is already close to the current one, and that swallowed the
+    // padding: pins ended up clipped off the top edge, and the bug only disappeared if the
+    // seeded zoom happened to be far from the answer. Owning the mount fit in exactly one place
+    // makes the padded fit unconditional rather than correct by luck.
+    if (first.current) {
+      first.current = false;
+    } else {
+      fit();
+    }
+
+    // Refit when the container changes size (sidebar collapse, window resize). Leaflet has
+    // already re-measured by the time it emits `resize`, so this must not call invalidateSize
+    // itself — that would re-emit `resize` and refit against transient mid-layout sizes.
+    map.on("resize", fit);
+    return () => {
+      map.off("resize", fit);
+    };
     // `bounds` is intentionally omitted: its identity changes every render, but `key` already
     // captures every value it could vary by.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, map]);
 
   return null;
 }
@@ -139,8 +172,13 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
   return (
     <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       {/* Leaflet collapses to nothing in a container with no explicit height. */}
+      {/* `boundsOptions` is the load-bearing part: without it MapContainer's mount fit runs
+          UNPADDED, and a later padded fitBounds is swallowed as a no-op because the view is
+          already close — which clipped the topmost pin off the map. Both fits share
+          FIT_OPTIONS so they can never drift apart. */}
       <MapContainer
         bounds={bounds}
+        boundsOptions={FIT_OPTIONS}
         zoomSnap={0}
         zoomDelta={0.5}
         className="h-[480px] w-full"
