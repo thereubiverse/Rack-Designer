@@ -1,12 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { ClientRow } from "@/lib/supabase/types";
 import type { SiteSummary } from "./repository";
 import { createSiteAction, renameSiteAction, deleteSiteAction } from "./actions";
 import { DeleteDialog } from "./DeleteDialog";
+import { UnlocatedSites } from "./UnlocatedSites";
+import { toBlips } from "./sitesMapOps";
+
+// Leaflet touches `window` at import time, which breaks the server render of this page if
+// imported directly. Loading it via next/dynamic with ssr:false defers the import to the client.
+const SitesMap = dynamic(() => import("./SitesMap").then((m) => m.SitesMap), { ssr: false });
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -20,6 +27,9 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SiteSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
+
+  const blips = toBlips(sites);
 
   async function handleCreate(formData: FormData) {
     setCreateError(null);
@@ -56,6 +66,17 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
         <span className="text-neutral-900">{client.name}</span>
       </nav>
 
+      {blips.length > 0 && (
+        <SitesMap
+          blips={blips}
+          clientCode={client.code}
+          selectedId={selectedSiteId}
+          onSelect={setSelectedSiteId}
+        />
+      )}
+
+      <UnlocatedSites sites={sites} />
+
       <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
         <div className="flex items-center justify-between px-5 py-4">
           <h2 className="text-lg font-bold text-neutral-900">Sites</h2>
@@ -84,7 +105,10 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
               <tr
                 key={s.id}
                 data-testid={`site-row-${s.code}`}
-                className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50"
+                onClick={() => setSelectedSiteId(s.id)}
+                className={`cursor-pointer border-b border-neutral-100 transition-colors last:border-0 ${
+                  selectedSiteId === s.id ? "bg-blue-50 hover:bg-blue-100" : "hover:bg-neutral-50"
+                }`}
               >
                 <td className="px-5 py-3 font-medium text-neutral-900">
                   <Link href={`/clients/${encodeURIComponent(client.code)}/${encodeURIComponent(s.code)}`} className="text-blue-700 hover:underline">
@@ -94,7 +118,7 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
                 <td className="px-5 py-3 text-neutral-600">{s.code}</td>
                 <td className="px-5 py-3 text-neutral-600">{s.address ?? "—"}</td>
                 <td className="px-5 py-3 text-neutral-600">{s.rackCount}</td>
-                <td className="px-5 py-3 text-right">
+                <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
