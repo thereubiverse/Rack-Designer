@@ -97,10 +97,19 @@ function SiteMarker({ blip, clientCode, selected, onSelect }: SiteMarkerProps) {
  *  maxZoom guards the single-site case: boundsOf returns a zero-area (degenerate) box for one
  *  blip, and with zoomSnap={0} allowing fractional zoom, fitting a zero-area box would otherwise
  *  drive to the tile layer's max (20), slamming a single-site client to street level. */
-/** Whole-level zoom while the user drives. Anything fractional makes L.Marker's rounded pixel
- *  positioning drift against continuously-scaled tiles, which reads as the pins wiggling loose
- *  from the map. Only the fit itself is allowed to be fractional. */
-const INTERACTIVE_ZOOM_SNAP = 1;
+/** Zoom granularity while the user drives. Only the fit itself is allowed to be fully fractional.
+ *
+ *  Why not 0 (continuous): L.Marker.update() positions markers with .round() — integer pixels —
+ *  while tiles scale continuously, so under continuous zoom the pins re-round every frame and
+ *  visibly wiggle loose from the map.
+ *
+ *  Why not 1 (whole levels): Leaflet's wheel handler does
+ *      d4 = snap ? Math.ceil(d3 / snap) * snap : d3
+ *  — Math.ceil, not round. At snap=1 ANY nonzero scroll rounds UP to a full level, so the
+ *  gentlest flick doubles the scale. That is both maximally sensitive and maximally choppy.
+ *
+ *  0.25 puts the floor at a ~19% scale change per step instead of 100%, four steps per level. */
+const INTERACTIVE_ZOOM_SNAP = 0.25;
 
 const FIT_OPTIONS = {
   paddingTopLeft: [32, 48],
