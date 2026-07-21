@@ -7,7 +7,14 @@ import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import Link from "next/link";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import {
+  AttributionControl,
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMap,
+} from "react-leaflet";
 import { boundsOf, type Blip, type LatLngBounds } from "./sitesMapOps";
 
 // CARTO Positron is a key-free, near-greyscale basemap (Mapbox Light's usage-free equivalent).
@@ -274,6 +281,10 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
       <MapContainer
         bounds={bounds}
         boundsOptions={FIT_OPTIONS}
+        // Replaced below by an explicit AttributionControl with the "Leaflet" prefix turned off.
+        // The OSM/CARTO credit itself stays — it is a licence condition of these tiles, not a
+        // style choice — but it is muted in globals.css so it recedes into the map.
+        attributionControl={false}
         // zoomSnap=0 applies ONLY to MapContainer's mount fit, which needs fractional zoom to land
         // exactly — snapping rounds down a whole power-of-two level and wasted half the frame
         // (51% of the viewport used, versus 87% now). FitBounds flips it to INTERACTIVE_ZOOM_SNAP
@@ -316,6 +327,7 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
           // to scale into view instead of blank space.
           keepBuffer={4}
         />
+        <AttributionControl position="bottomright" prefix={false} />
         <FitBounds bounds={bounds} />
         <GestureAwareZoom />
         {blips.map((blip) => (

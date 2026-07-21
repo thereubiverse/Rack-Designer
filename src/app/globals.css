@@ -148,6 +148,30 @@ fieldset:disabled [data-testid$="-trigger"] {
   transition: transform 90ms ease-out !important;
 }
 
+/* The OSM/CARTO credit is a LICENCE CONDITION of these tiles, not decoration — it has to stay
+   visible, so it is muted rather than removed: no panel, small, low contrast, sitting flush in the
+   corner so it reads as part of the map rather than as UI. The "Leaflet" prefix is separate and is
+   switched off in the component; that one is a courtesy, not a requirement.
+   Links keep enough contrast on hover to stay usable, which the licence expects. */
+.leaflet-control-attribution {
+  background: transparent !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  padding: 0 4px 1px 0 !important;
+  font-size: 9px !important;
+  line-height: 1.4 !important;
+  color: rgba(115, 115, 115, 0.55) !important; /* neutral-500, heavily faded */
+}
+.leaflet-control-attribution a {
+  color: rgba(115, 115, 115, 0.65) !important;
+  text-decoration: none !important;
+}
+.leaflet-control-attribution a:hover,
+.leaflet-control-attribution a:focus {
+  color: rgb(64, 64, 64) !important; /* neutral-700 */
+  text-decoration: underline !important;
+}
+
 /* The map rounds ITSELF rather than being clipped by a rounded, overflow-hidden ancestor.
    Visually identical; the difference is where the clip lives. Safari re-rasterizes a rounded
    ancestor clip over transform-animating descendants — here that is the entire tile grid plus
