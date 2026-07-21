@@ -148,6 +148,20 @@ fieldset:disabled [data-testid$="-trigger"] {
   transition: transform 90ms ease-out !important;
 }
 
+/* The map rounds ITSELF rather than being clipped by a rounded, overflow-hidden ancestor.
+   Visually identical; the difference is where the clip lives. Safari re-rasterizes a rounded
+   ancestor clip over transform-animating descendants — here that is the entire tile grid plus
+   every marker, on every frame of a zoom — which is a known Safari cost that Chrome does not pay.
+   Putting the radius on the element that owns the compositing layer keeps the clip on the GPU.
+
+   `contain: paint` tells the browser nothing paints outside this box, so it can skip work that
+   would otherwise escape the subtree. `translateZ(0)` forces its own layer in Safari. */
+.leaflet-container {
+  border-radius: 1rem; /* matches Tailwind rounded-2xl on the wrapper */
+  contain: paint;
+  transform: translateZ(0);
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

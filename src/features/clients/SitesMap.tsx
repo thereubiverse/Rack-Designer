@@ -210,7 +210,11 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
   if (!bounds) return null;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+    // No `overflow-hidden` here on purpose — see the .leaflet-container rule in globals.css.
+    // An ancestor combining overflow:hidden with border-radius forces Safari to re-rasterize a
+    // rounded clip over transform-animating descendants (the whole tile grid plus every marker),
+    // which Chrome composites cheaply. The rounding is applied to the map element itself instead.
+    <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
       {/* Leaflet collapses to nothing in a container with no explicit height. */}
       {/* `boundsOptions` is the load-bearing part: without it MapContainer's mount fit runs
           UNPADDED, and a later padded fitBounds is swallowed as a no-op because the view is
