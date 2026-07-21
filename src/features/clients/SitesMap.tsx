@@ -123,6 +123,42 @@ const FIT_OPTIONS = {
   maxZoom: 16,
 } satisfies L.FitBoundsOptions;
 
+/** Snap used while PINCHING, as opposed to scrolling.
+ *
+ *  A macOS trackpad pinch is not a touch gesture — it arrives as a wheel event with ctrlKey set,
+ *  so Leaflet runs it through the same handler as a scroll wheel. That is a problem, because the
+ *  snap value is a FLOOR (Math.ceil), and the two gestures have opposite needs:
+ *
+ *    scroll — a few large discrete notches. A floor is GOOD: it guarantees each notch does
+ *             something visible.
+ *    pinch  — a continuous stream of tiny deltas. A floor is BAD: it amplifies each one. A single
+ *             pinch event's proportional zoom is around 0.018 levels; the 0.1 scroll floor rounds
+ *             that up by roughly 5x, so a gentle pinch tore through 0.84 zoom levels.
+ *
+ *  A much finer floor lets pinch stay proportional to the fingers while still snapping enough to
+ *  keep the pins from drifting the way fully continuous zoom does. */
+const PINCH_ZOOM_SNAP = 0.02;
+
+/** Switches the zoom granularity to match the gesture, since Leaflet cannot tell them apart.
+ *  Leaflet reads `zoomSnap` inside its debounced `_performZoom`, which runs on a timer AFTER the
+ *  wheel event, so setting the option from a wheel listener always lands in time. */
+function GestureAwareZoom() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const onWheel = (e: WheelEvent) => {
+      map.options.zoomSnap = e.ctrlKey ? PINCH_ZOOM_SNAP : INTERACTIVE_ZOOM_SNAP;
+    };
+    container.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    return () => {
+      container.removeEventListener("wheel", onWheel, { capture: true });
+    };
+  }, [map]);
+
+  return null;
+}
+
 interface FitBoundsProps {
   bounds: LatLngBounds;
 }
@@ -266,6 +302,7 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
           keepBuffer={4}
         />
         <FitBounds bounds={bounds} />
+        <GestureAwareZoom />
         {blips.map((blip) => (
           <SiteMarker
             key={blip.id}
