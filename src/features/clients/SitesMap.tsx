@@ -139,6 +139,17 @@ const FIT_OPTIONS = {
  *  keep the pins from drifting the way fully continuous zoom does. */
 const PINCH_ZOOM_SNAP = 0.02;
 
+/** How much scroll distance equals one zoom level, while PINCHING. Lower = more sensitive.
+ *
+ *  This is the honest sensitivity dial: unlike zoomSnap (which only sets a floor on the step size)
+ *  this scales the response proportionally across the whole gesture. Leaflet's default of 60 is
+ *  tuned for a scroll wheel's large deltas; a trackpad pinch reports much smaller ones, so it needs
+ *  a smaller divisor to travel a comparable distance. */
+const PINCH_PX_PER_ZOOM_LEVEL = 20;
+
+/** Leaflet's default, used for the scroll wheel. Named so the two gestures are visibly paired. */
+const SCROLL_PX_PER_ZOOM_LEVEL = 60;
+
 /** Switches the zoom granularity to match the gesture, since Leaflet cannot tell them apart.
  *  Leaflet reads `zoomSnap` inside its debounced `_performZoom`, which runs on a timer AFTER the
  *  wheel event, so setting the option from a wheel listener always lands in time. */
@@ -148,7 +159,11 @@ function GestureAwareZoom() {
   useEffect(() => {
     const container = map.getContainer();
     const onWheel = (e: WheelEvent) => {
-      map.options.zoomSnap = e.ctrlKey ? PINCH_ZOOM_SNAP : INTERACTIVE_ZOOM_SNAP;
+      const pinching = e.ctrlKey;
+      map.options.zoomSnap = pinching ? PINCH_ZOOM_SNAP : INTERACTIVE_ZOOM_SNAP;
+      map.options.wheelPxPerZoomLevel = pinching
+        ? PINCH_PX_PER_ZOOM_LEVEL
+        : SCROLL_PX_PER_ZOOM_LEVEL;
     };
     container.addEventListener("wheel", onWheel, { capture: true, passive: true });
     return () => {
