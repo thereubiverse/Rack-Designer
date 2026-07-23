@@ -107,6 +107,41 @@ const plans: FloorPlanRow[] = [
 ];
 const planUrls: Record<string, string> = { "floor-gf": "https://signed.test/floor-gf.png" };
 
+// Both floors carrying a plan, with clearly different dimensions (2000x1400 vs 600x900), is what
+// exercises the keyed-remount fix: with the FALLBACK_PANE_WIDTH=870/CANVAS_HEIGHT=560 jsdom
+// fallback, GF's fit is min(870/2000, 560/1400) = 0.4 (height-bound) and 1F's is
+// min(870/600, 560/900) = 0.6222... (height-bound too, but a different value) — hand-derived and
+// asserted exactly in the switching test below, so a stale (unkeyed) fit-on-mount is caught by an
+// inequality *and* a wrong absolute transform, not just a vague "changed" check.
+const plansBothFloors: FloorPlanRow[] = [
+  {
+    id: "plan-gf-2",
+    floor_id: "floor-gf",
+    storage_path: "s1/floor-gf-2.png",
+    width_px: 2000,
+    height_px: 1400,
+    original_filename: "plan-gf.png",
+    source: "image",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "plan-1f",
+    floor_id: "floor-1f",
+    storage_path: "s1/floor-1f.png",
+    width_px: 600,
+    height_px: 900,
+    original_filename: "plan-1f.png",
+    source: "image",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+];
+const planUrlsBothFloors: Record<string, string> = {
+  "floor-gf": "https://signed.test/floor-gf-2.png",
+  "floor-1f": "https://signed.test/floor-1f.png",
+};
+
 // Racks span TWO floors: GF has two groups (MDF with 2 racks, IDF with 1 — proving first-seen
 // grouping order survives the new floor filtering), 1F has one rack in its own IDF room. RK03 is
 // used to prove the other floor's rack never leaks into the active floor's view.
@@ -348,5 +383,45 @@ describe("SiteDetail", () => {
 
     fireEvent.click(deletePlanButton);
     expect(screen.getByText('Delete plan “GF”?')).toBeInTheDocument();
+  });
+
+  it("switching tabs to a floor with a differently-sized plan re-fits the canvas (keyed remount) and shows that floor's own signed URL", () => {
+    // Both floors have plans here (unlike the module-level `plans`/`planUrls` fixture, where only
+    // GF has one) — this is the only test that needs two plan-bearing floors, so it overrides
+    // locally rather than changing fixtures the other 15 tests depend on.
+    const { rerender } = renderSite({ plans: plansBothFloors, planUrls: planUrlsBothFloors });
+
+    const canvasGF = screen.getByTestId("floor-plan-canvas");
+    expect(canvasGF.querySelector("image")).toHaveAttribute("href", "https://signed.test/floor-gf-2.png");
+    // GF fit: min(870/2000, 560/1400) = 0.4 (height-bound); panX = (870 - 2000*0.4)/2 = 35, panY = 0.
+    expect(canvasGF.querySelector(":scope > g")).toHaveAttribute("transform", "translate(35 0) scale(0.4)");
+
+    // Simulate the tab switch the way ?floor= actually changes here: update what useSearchParams
+    // returns, then re-render the SAME tree (not a fresh render()) — exactly what happens when
+    // Next re-renders SiteDetail with new searchParams after router.replace, while FloorPlanCanvas
+    // itself is a normal child element that (absent a key) is never unmounted by that alone.
+    mockSearch = "floor=1F";
+    rerender(
+      <SiteDetail
+        client={client}
+        site={site}
+        racks={racks}
+        floors={floors}
+        rooms={rooms}
+        devices={devices}
+        deviceTypes={deviceTypes}
+        plans={plansBothFloors}
+        planUrls={planUrlsBothFloors}
+      />
+    );
+
+    const canvas1F = screen.getByTestId("floor-plan-canvas");
+    expect(canvas1F.querySelector("image")).toHaveAttribute("href", "https://signed.test/floor-1f.png");
+    const transform1F = canvas1F.querySelector(":scope > g")?.getAttribute("transform");
+    // 1F fit: min(870/600, 560/900) = 0.6222... (height-bound); panX = (870 - 600*0.62222...)/2 =
+    // 248.33333333333334, panY = 0 — materially different from GF's fit above, both in the zoom
+    // factor and in the resulting pan offset.
+    expect(transform1F).not.toBe("translate(35 0) scale(0.4)");
+    expect(transform1F).toBe("translate(248.33333333333334 0) scale(0.6222222222222222)");
   });
 });

@@ -363,7 +363,10 @@ export function FloorPlanCanvas({
     ro.observe(el);
     return () => ro.disconnect();
     // imgW/imgH come from `plan`, which is stable per mounted floor — a plan swap remounts this
-    // component (new floor -> new key upstream), so this intentionally only runs once.
+    // component because SiteDetail keys it by `activeFloor.id`, so this intentionally only runs
+    // once. If that key is ever removed, this effect goes stale on plan swaps: switching floors
+    // would update props (imgW/imgH, planUrl) without remounting, leaving the fit zoom/pan frozen
+    // at whichever floor mounted first.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

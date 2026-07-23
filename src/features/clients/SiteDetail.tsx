@@ -279,6 +279,7 @@ export function SiteDetail({
                     </div>
                   </div>
                   <FloorPlanCanvas
+                    key={activeFloor.id}
                     plan={activeFloorPlan}
                     planUrl={activePlanUrl}
                     rooms={activeFloorRooms}
