@@ -238,6 +238,20 @@ function enterEditMode() {
   fireEvent.click(screen.getByTestId("edit-layout-toggle"));
 }
 
+/** Tap a room's polygon to select it (pointer-down on the polygon, pointer-up at the same spot on
+ *  the SVG root — a zero-travel tap the pan handler treats as a select, not a drag). */
+function tapRoom(code: string) {
+  const poly = screen.getByTestId(`plan-room-${code}`);
+  fireEvent.pointerDown(poly, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+  fireEvent.pointerUp(screen.getByTestId("floor-plan-canvas"), { clientX: 120, clientY: 120, pointerId: 1 });
+}
+
+/** Select a room and promote it to vertex editing via the popover's Edit icon. */
+function editRoomOutline(code: string) {
+  tapRoom(code);
+  fireEvent.click(screen.getByTestId("room-action-edit"));
+}
+
 describe("FloorPlanCanvas (edit mode)", () => {
   it("places a NON-first tray device at the clicked plan position", async () => {
     const callsBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
@@ -446,10 +460,9 @@ describe("FloorPlanCanvas (edit mode)", () => {
     renderCanvas(true);
     enterEditMode();
 
-    fireEvent.click(screen.getByTestId("plan-room-TRI"));
+    editRoomOutline("TRI");
+    const originalPoints = screen.getByTestId("plan-room-TRI").getAttribute("points");
     const vertex = screen.getByTestId("vertex-TRI-0");
-    const originalCx = vertex.getAttribute("cx");
-    const originalCy = vertex.getAttribute("cy");
     const svg = screen.getByTestId("floor-plan-canvas");
 
     fireEvent.pointerDown(vertex, { clientX: 10, clientY: 10, button: 0, pointerId: 6 });
@@ -461,10 +474,10 @@ describe("FloorPlanCanvas (edit mode)", () => {
       fireEvent.pointerUp(svg, { clientX: 50, clientY: 50, pointerId: 6 });
     });
 
+    // Esc cancels the drag: nothing commits and the polygon's geometry is untouched (asserting on
+    // the durable outline, not the vertex handle, which Esc also dismisses by exiting edit mode).
     expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
-    const vertexAfter = screen.getByTestId("vertex-TRI-0");
-    expect(vertexAfter.getAttribute("cx")).toBe(originalCx);
-    expect(vertexAfter.getAttribute("cy")).toBe(originalCy);
+    expect(screen.getByTestId("plan-room-TRI").getAttribute("points")).toBe(originalPoints);
   });
 
   it("refuses to delete a vertex below 3 points, leaving the polygon unchanged", async () => {
@@ -473,7 +486,7 @@ describe("FloorPlanCanvas (edit mode)", () => {
     enterEditMode();
 
     // TRI has exactly 3 vertices — deleting any one must be refused.
-    fireEvent.click(screen.getByTestId("plan-room-TRI"));
+    editRoomOutline("TRI");
     const vertex = screen.getByTestId("vertex-TRI-0");
     const svg = screen.getByTestId("floor-plan-canvas");
     fireEvent.pointerDown(vertex, { clientX: 10, clientY: 10, button: 0, pointerId: 3 });
@@ -488,30 +501,66 @@ describe("FloorPlanCanvas (edit mode)", () => {
     expect(points).toHaveLength(3);
   });
 
-  it("lists an already-outlined room in the Outlined-rooms tray, not the not-outlined section", () => {
+  it("tapping a room shows its edit/delete popover but no vertex handles yet", () => {
     renderCanvas(true);
     enterEditMode();
-    // MDF has a polygon → it belongs to the editable list, never the drawing list.
-    expect(screen.getByTestId("tray-edit-room-MDF")).toBeInTheDocument();
-    expect(screen.queryByTestId("tray-room-MDF")).toBeNull();
-    // NOPLAN has none → the reverse.
-    expect(screen.getByTestId("tray-room-NOPLAN")).toBeInTheDocument();
-    expect(screen.queryByTestId("tray-edit-room-NOPLAN")).toBeNull();
+    expect(screen.queryByTestId("room-actions-popover")).toBeNull();
+
+    // A NON-first outlined room, tapped (zero-travel).
+    tapRoom("TRI");
+
+    expect(screen.getByTestId("room-actions-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("room-action-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("room-action-delete")).toBeInTheDocument();
+    // Handles only appear once Edit is clicked — a plain select can't be fumbled into a drag.
+    expect(screen.queryByTestId("vertex-TRI-0")).toBeNull();
   });
 
-  it("selects an outlined room for editing from the tray button — the reliable path a canvas tap can't guarantee", () => {
+  it("a pan (press that travels past the tap threshold) does NOT select a room", () => {
     renderCanvas(true);
     enterEditMode();
-    // Nothing selected yet: no vertex handles, no edit toolbar.
+    const poly = screen.getByTestId("plan-room-TRI");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(poly, { clientX: 120, clientY: 120, button: 0, pointerId: 2 });
+    fireEvent.pointerMove(svg, { clientX: 180, clientY: 150, pointerId: 2 });
+    fireEvent.pointerUp(svg, { clientX: 180, clientY: 150, pointerId: 2 });
+    expect(screen.queryByTestId("room-actions-popover")).toBeNull();
+  });
+
+  it("the Edit icon reveals vertex handles for that room", () => {
+    renderCanvas(true);
+    enterEditMode();
+    tapRoom("TRI");
     expect(screen.queryByTestId("vertex-TRI-0")).toBeNull();
-    expect(screen.queryByTestId("room-edit-toolbar")).toBeNull();
-
-    // A NON-first outlined room, selected by a plain button click (no pointer drift to lose).
-    fireEvent.click(screen.getByTestId("tray-edit-room-TRI"));
-
-    // Vertex handles for THAT room appear and the Clear-outline toolbar is reachable.
+    fireEvent.click(screen.getByTestId("room-action-edit"));
     expect(screen.getByTestId("vertex-TRI-0")).toBeInTheDocument();
     expect(screen.getByTestId("vertex-TRI-2")).toBeInTheDocument();
-    expect(screen.getByTestId("room-edit-toolbar")).toBeInTheDocument();
+  });
+
+  it("the Delete icon clears the OUTLINE (not the room) via clearRoomPolygonAction with that room's id", async () => {
+    const callsBefore = vi.mocked(clearRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    tapRoom("TRI");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("room-action-delete"));
+    });
+    expect(clearRoomPolygonAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const fd = vi.mocked(clearRoomPolygonAction).mock.calls.at(-1)![0] as FormData;
+    expect(fd.get("roomId")).toBe("room-tri");
+    // Popover closes on delete.
+    expect(screen.queryByTestId("room-actions-popover")).toBeNull();
+  });
+
+  it("tapping empty plan space deselects the room", () => {
+    renderCanvas(true);
+    enterEditMode();
+    tapRoom("TRI");
+    expect(screen.getByTestId("room-actions-popover")).toBeInTheDocument();
+    // A zero-travel tap that starts on the SVG root (no data-room-id) clears the selection.
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: 300, clientY: 300, button: 0, pointerId: 4 });
+    fireEvent.pointerUp(svg, { clientX: 300, clientY: 300, pointerId: 4 });
+    expect(screen.queryByTestId("room-actions-popover")).toBeNull();
   });
 });

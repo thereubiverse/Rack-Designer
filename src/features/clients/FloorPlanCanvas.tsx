@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Icon } from "@iconify/react";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import {
@@ -23,6 +24,9 @@ import {
 } from "./actions";
 
 const CANVAS_HEIGHT = 560;
+// A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
+// pointer drift every physical click carries, small enough that a deliberate pan never selects.
+const TAP_THRESHOLD_PX = 6;
 // jsdom has no ResizeObserver (feature-detected below), so tests always land here — a fixed
 // number keeps the fit-on-mount deterministic instead of depending on whatever jsdom's default
 // (0-width) container measures as.
@@ -79,8 +83,8 @@ function RoomPolygon({
   zoom,
   editMode,
   selected,
+  editing,
   vertexPreview,
-  onSelectRoom,
   onVertexPointerDown,
   onInsertVertex,
 }: {
@@ -90,8 +94,8 @@ function RoomPolygon({
   zoom: number;
   editMode?: boolean;
   selected?: boolean;
+  editing?: boolean;
   vertexPreview?: VertexPreview | null;
-  onSelectRoom?: (roomId: string) => void;
   onVertexPointerDown?: (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => void;
   onInsertVertex?: (roomId: string, polygon: NormPoint[], edgeIndex: number) => void;
 }) {
@@ -114,20 +118,16 @@ function RoomPolygon({
 
   return (
     <g>
+      {/* No onClick/stopPropagation here: the press bubbles to the SVG root, which decides
+          tap-vs-pan from pointer travel and reads this room via data-room-id. A click handler
+          was the old, drift-fragile path. */}
       <polygon
         data-testid={`plan-room-${room.code}`}
+        data-room-id={room.id}
         points={points}
         fill={selected ? "rgb(37 99 235 / 0.18)" : ROOM_FILL}
         stroke={ROOM_STROKE}
         strokeWidth={selected ? 3 : 2}
-        onClick={
-          editMode
-            ? (e) => {
-                e.stopPropagation();
-                onSelectRoom?.(room.id);
-              }
-            : undefined
-        }
         style={editMode ? { cursor: "pointer" } : undefined}
       />
       {/* Counter-scaled label chip — see the pin comment below for why translate/scale are split
@@ -141,7 +141,7 @@ function RoomPolygon({
         </g>
       </g>
       {editMode &&
-        selected &&
+        editing &&
         // Vertex handles: index `i` is derived HERE, synchronously, from the polygon this
         // instance is actually rendering — never a cached/stale index (Task 2 review note).
         polygon.map((p, i) => {
@@ -168,7 +168,7 @@ function RoomPolygon({
           );
         })}
       {editMode &&
-        selected &&
+        editing &&
         polygon.map((p, i) => {
           const next = polygon[(i + 1) % polygon.length];
           const mid: NormPoint = [(p[0] + next[0]) / 2, (p[1] + next[1]) / 2];
@@ -414,7 +414,11 @@ export function FloorPlanCanvas({
 
   // ---- Selection for move / un-place / vertex-edit ----
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  // A tapped room shows its edit/delete popover (selectedRoomId). Its vertex handles only appear
+  // once the popover's Edit icon promotes it to editingRoomId — so a plain select can't be
+  // fumbled into an accidental vertex drag.
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
   const [selectedVertex, setSelectedVertex] = useState<{ roomId: string; index: number } | null>(null);
 
   // ---- Live drag previews (visual only — the action commits ONCE, on pointer-up) ----
@@ -425,7 +429,7 @@ export function FloorPlanCanvas({
 
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
   // even if the cursor leaves the SVG mid-gesture.
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null } | null>(null);
   // Pin-move drag: set by DevicePin's onPointerDown (which stopPropagation's, so the ROOT's own
   // onPointerDown above never fires — panning and pin-dragging can never both start from the same
   // gesture). `moved` distinguishes a plain select-click (no commit) from an actual drag (commits
@@ -575,11 +579,10 @@ export function FloorPlanCanvas({
     setSelectedRoomId(null);
   }
 
-  /** Select an already-outlined room for vertex editing. Reached from the "Outlined rooms" tray
-   *  section AND from clicking the polygon directly — the tray button is the reliable, discoverable
-   *  path, since a direct polygon click competes with the canvas pan gesture and is lost the moment
-   *  the pointer drifts a pixel. */
-  function selectRoomForEditing(id: string) {
+  /** Select an outlined room (tapping its polygon) → shows the edit/delete popover. Switching to a
+   *  different room drops any in-progress vertex editing; re-selecting the same room leaves it be. */
+  function selectRoom(id: string) {
+    if (id !== selectedRoomId) setEditingRoomId(null);
     setSelectedRoomId(id);
     setPlacingDeviceId(null);
     setDrawingRoomId(null);
@@ -587,6 +590,18 @@ export function FloorPlanCanvas({
     setHoverPoint(null);
     setSelectedPinId(null);
     setSelectedVertex(null);
+  }
+
+  function clearRoomSelection() {
+    setSelectedRoomId(null);
+    setEditingRoomId(null);
+    setSelectedVertex(null);
+  }
+
+  async function deleteSelectedRoomOutline(roomId: string) {
+    // Clears the OUTLINE, never the room — the room and its devices stay in the lists below.
+    clearRoomSelection();
+    await commitClearRoomPolygon(roomId);
   }
 
   // ---- Pin / vertex drag start (attached by the child shapes; both stopPropagation first) ----
@@ -607,7 +622,16 @@ export function FloorPlanCanvas({
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    dragRef.current = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
+    // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
+    // desync from event ordering. Pins/vertices stopPropagation and never reach here.
+    const roomEl = (e.target as Element).closest?.("[data-room-id]");
+    dragRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: view.panX,
+      panY: view.panY,
+      roomId: roomEl?.getAttribute("data-room-id") ?? null,
+    };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (pinDragRef.current) {
@@ -661,8 +685,20 @@ export function FloorPlanCanvas({
       }
       return;
     }
+    const d = dragRef.current;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
+    // Tap vs pan: a press that barely moved is a TAP, not a pan — and the browser's own `click`
+    // event is unreliable here because any sub-threshold pan still fires pointermove. So selection
+    // is decided from the pointer travel, not from `click`, which is exactly what made a real
+    // click on a room fail before (the smallest drift suppressed it).
+    if (d && editMode && !placingDeviceId && !drawingRoomId) {
+      const travel = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+      if (travel < TAP_THRESHOLD_PX) {
+        if (d.roomId) selectRoom(d.roomId);
+        else clearRoomSelection();
+      }
+    }
   };
 
   // Simple taps (not drags) — device placement and room-outline vertex clicks.
@@ -702,6 +738,8 @@ export function FloorPlanCanvas({
         setDrawPoints([]);
         setHoverPoint(null);
         setSelectedPinId(null);
+        setSelectedRoomId(null);
+        setEditingRoomId(null);
         setSelectedVertex(null);
         // A pin or vertex drag in progress must be cancelled too, not just its selection UI: the
         // subsequent pointerup handler commits based on `pinDragRef`/`vertexDragRef` (and
@@ -740,7 +778,6 @@ export function FloorPlanCanvas({
 
   const { placed, unplaced } = partitionPlacement(devices);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
-  const roomsWithPolygon = rooms.filter((r) => r.plan_polygon != null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
@@ -787,11 +824,9 @@ export function FloorPlanCanvas({
 
       {editMode && (
         <div data-testid="plan-tray" className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-          {unplaced.length === 0 &&
-            roomsWithoutPolygon.length === 0 &&
-            roomsWithPolygon.length === 0 &&
-            !placingDeviceId &&
-            !drawingRoomId && <p className="text-sm text-neutral-400">Everything is placed</p>}
+          {unplaced.length === 0 && roomsWithoutPolygon.length === 0 && !placingDeviceId && !drawingRoomId && (
+            <p className="text-sm text-neutral-400">Everything is placed</p>
+          )}
           {unplaced.length > 0 && (
             <div className="mb-3">
               <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
@@ -842,31 +877,6 @@ export function FloorPlanCanvas({
               </div>
             </div>
           )}
-          {roomsWithPolygon.length > 0 && (
-            <div className="mt-3">
-              <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                Outlined rooms
-              </h3>
-              <div className="flex flex-wrap gap-1.5">
-                {roomsWithPolygon.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    data-testid={`tray-edit-room-${r.code}`}
-                    aria-pressed={selectedRoomId === r.id}
-                    onClick={() => selectRoomForEditing(r.id)}
-                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
-                      selectedRoomId === r.id
-                        ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
-                    }`}
-                  >
-                    {r.code}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -885,27 +895,6 @@ export function FloorPlanCanvas({
           >
             Remove from plan
           </button>
-        </div>
-      )}
-
-      {editMode && selectedRoom && (
-        <div
-          data-testid="room-edit-toolbar"
-          className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm shadow-sm"
-        >
-          <span className="text-neutral-600">
-            <span className="font-semibold text-neutral-900">{selectedRoom.code}</span> selected — drag vertices,
-            click an edge dot to add one, Delete to remove the selected vertex
-          </span>
-          {selectedRoom.plan_polygon && (
-            <button
-              type="button"
-              onClick={() => void commitClearRoomPolygon(selectedRoom.id)}
-              className="text-sm font-semibold text-red-600 hover:text-red-700"
-            >
-              Clear outline
-            </button>
-          )}
         </div>
       )}
 
@@ -941,9 +930,9 @@ export function FloorPlanCanvas({
                 imgH={imgH}
                 zoom={view.zoom}
                 editMode={editMode}
-                selected={selectedRoomId === room.id}
+                selected={selectedRoomId === room.id || editingRoomId === room.id}
+                editing={editingRoomId === room.id}
                 vertexPreview={vertexPreviewForRoom(room.id)}
-                onSelectRoom={selectRoomForEditing}
                 onVertexPointerDown={onVertexPointerDown}
                 onInsertVertex={onInsertVertexClick}
               />
@@ -997,6 +986,47 @@ export function FloorPlanCanvas({
             )}
           </g>
         </svg>
+        {/* Edit/Delete popover, anchored over the selected room's centroid. Edit promotes the room
+            to vertex editing (handles); Delete clears the OUTLINE only (the room survives). Both
+            are plain buttons — a click here can't be lost to the pan gesture the way a canvas tap
+            once was. */}
+        {editMode && selectedRoom && selectedRoom.plan_polygon && (
+          (() => {
+            const c = normToScreen(polygonCentroid(selectedRoom.plan_polygon), identityView(imgW, imgH));
+            const left = view.panX + c.x * view.zoom;
+            const top = view.panY + c.y * view.zoom;
+            const editingThis = editingRoomId === selectedRoom.id;
+            return (
+              <div
+                data-testid="room-actions-popover"
+                className="pointer-events-auto absolute z-10 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 shadow-md"
+                style={{ left, top }}
+              >
+                <button
+                  type="button"
+                  data-testid="room-action-edit"
+                  aria-pressed={editingThis}
+                  title={editingThis ? "Done editing" : "Edit outline"}
+                  onClick={() => setEditingRoomId(editingThis ? null : selectedRoom.id)}
+                  className={`flex h-8 w-8 items-center justify-center rounded-md ${
+                    editingThis ? "bg-blue-50 text-blue-700" : "text-neutral-600 hover:bg-neutral-100"
+                  }`}
+                >
+                  <Icon icon={editingThis ? "tabler:check" : "tabler:pencil"} width={17} height={17} />
+                </button>
+                <button
+                  type="button"
+                  data-testid="room-action-delete"
+                  title="Delete outline"
+                  onClick={() => void deleteSelectedRoomOutline(selectedRoom.id)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50"
+                >
+                  <Icon icon="tabler:trash" width={17} height={17} />
+                </button>
+              </div>
+            );
+          })()
+        )}
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
           <button
             type="button"
