@@ -17,17 +17,18 @@ function floor(overrides: Partial<FloorRow>): FloorRow {
 
 describe("FloorTabs", () => {
   it("renders one tab per floor in the given order, not re-sorted by code", () => {
-    // sort_order gives [1F, GF] deliberately not code-alphabetical (GF < 1F alphabetically would
-    // be wrong to assume) — the component must preserve prop order, not re-sort.
+    // Prop order is [GF, 2F], but alphabetically "2F" < "GF" (digits sort before letters in JS
+    // string comparison). If the component secretly sorted by code, tabs would flip to [2F, GF].
+    // This test ensures the component preserves prop order and does not re-sort.
     const floors = [
-      floor({ id: "f1", code: "1F", sort_order: 0 }),
-      floor({ id: "f2", code: "GF", sort_order: 1 }),
+      floor({ id: "f1", code: "GF", sort_order: 0 }),
+      floor({ id: "f2", code: "2F", sort_order: 1 }),
     ];
-    render(<FloorTabs floors={floors} activeCode="1F" onSelect={vi.fn()} onAdd={vi.fn()} />);
+    render(<FloorTabs floors={floors} activeCode="GF" onSelect={vi.fn()} onAdd={vi.fn()} />);
     const tabs = screen.getAllByTestId(/^floor-tab-/);
     expect(tabs.map((t) => t.getAttribute("data-testid"))).toEqual([
-      "floor-tab-1F",
       "floor-tab-GF",
+      "floor-tab-2F",
     ]);
   });
 
