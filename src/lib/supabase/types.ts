@@ -36,6 +36,7 @@ export interface RoomRow {
   name: string | null;
   type: RoomType;
   created_at: string;
+  plan_polygon: [number, number][] | null;
 }
 
 export interface FloorDeviceRow {
@@ -47,6 +48,20 @@ export interface FloorDeviceRow {
   code: string;
   name: string;
   status: "planned" | "installed";
+  created_at: string;
+  updated_at: string;
+  x: number | null;
+  y: number | null;
+}
+
+export interface FloorPlanRow {
+  id: string;
+  floor_id: string;
+  storage_path: string;
+  width_px: number;
+  height_px: number;
+  original_filename: string;
+  source: "image" | "pdf";
   created_at: string;
   updated_at: string;
 }

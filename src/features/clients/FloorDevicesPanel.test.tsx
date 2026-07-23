@@ -36,9 +36,9 @@ const floor: FloorRow = {
 // sort before letters in JS) so a component that happened to render rooms in given-array order
 // would still have to prove it groups devices under the RIGHT card, not just render in order.
 const rooms: RoomRow[] = [
-  { id: "room-gf", floor_id: "floor-1", code: "GF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01" },
-  { id: "room-2f", floor_id: "floor-1", code: "2F", name: "Second Floor IDF", type: "IDF", created_at: "2026-01-01" },
-  { id: "room-closet", floor_id: "floor-1", code: "CLOSET", name: "Storage Closet", type: "other", created_at: "2026-01-01" },
+  { id: "room-gf", floor_id: "floor-1", code: "GF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01", plan_polygon: null },
+  { id: "room-2f", floor_id: "floor-1", code: "2F", name: "Second Floor IDF", type: "IDF", created_at: "2026-01-01", plan_polygon: null },
+  { id: "room-closet", floor_id: "floor-1", code: "CLOSET", name: "Storage Closet", type: "other", created_at: "2026-01-01", plan_polygon: null },
 ];
 
 const deviceTypes: DeviceTypeRow[] = [
@@ -50,10 +50,10 @@ const deviceTypes: DeviceTypeRow[] = [
 // CLOSET has zero devices (note must be absent there); the roomless device lands on the floor
 // level bucket.
 const devices: FloorDeviceRow[] = [
-  { id: "dev-cam01", site_id: "site-1", floor_id: "floor-1", room_id: "room-gf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "dev-cam06", site_id: "site-1", floor_id: "floor-1", room_id: "room-gf", device_type_id: "type-cam", code: "CAM06", name: "Server Room Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "dev-cam02", site_id: "site-1", floor_id: "floor-1", room_id: "room-2f", device_type_id: "type-cam", code: "CAM02", name: "Stair Cam", status: "installed", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "dev-ap01", site_id: "site-1", floor_id: "floor-1", room_id: null, device_type_id: "type-ap", code: "AP01", name: "Hallway AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01" },
+  { id: "dev-cam01", site_id: "site-1", floor_id: "floor-1", room_id: "room-gf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-cam06", site_id: "site-1", floor_id: "floor-1", room_id: "room-gf", device_type_id: "type-cam", code: "CAM06", name: "Server Room Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-cam02", site_id: "site-1", floor_id: "floor-1", room_id: "room-2f", device_type_id: "type-cam", code: "CAM02", name: "Stair Cam", status: "installed", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-ap01", site_id: "site-1", floor_id: "floor-1", room_id: null, device_type_id: "type-ap", code: "AP01", name: "Hallway AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
 ];
 
 // Site-wide codes: includes CAM05 from a DIFFERENT floor of the same site — not present in the

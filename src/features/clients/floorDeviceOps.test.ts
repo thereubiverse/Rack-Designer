@@ -6,11 +6,11 @@ function device(over: Partial<FloorDeviceRow>): FloorDeviceRow {
   return {
     id: "d1", site_id: "s1", floor_id: "f1", room_id: null, device_type_id: "t1",
     code: "CAM01", name: "", status: "planned",
-    created_at: "2026-01-01", updated_at: "2026-01-01", ...over,
+    created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null, ...over,
   };
 }
 function room(over: Partial<RoomRow>): RoomRow {
-  return { id: "r1", floor_id: "f1", code: "MDF", name: null, type: "MDF", created_at: "2026-01-01", ...over };
+  return { id: "r1", floor_id: "f1", code: "MDF", name: null, type: "MDF", created_at: "2026-01-01", plan_polygon: null, ...over };
 }
 
 describe("suggestDeviceCode", () => {

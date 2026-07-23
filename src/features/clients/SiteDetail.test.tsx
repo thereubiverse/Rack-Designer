@@ -57,8 +57,8 @@ const floor1F: FloorRow = { id: "floor-1f", site_id: "s1", code: "1F", name: "Fi
 const floors: FloorRow[] = [floorGF, floor1F];
 
 const rooms: RoomRow[] = [
-  { id: "room-mdf", floor_id: "floor-gf", code: "MDF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01" },
-  { id: "room-idf", floor_id: "floor-1f", code: "IDF", name: "First Floor IDF", type: "IDF", created_at: "2026-01-01" },
+  { id: "room-mdf", floor_id: "floor-gf", code: "MDF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01", plan_polygon: null },
+  { id: "room-idf", floor_id: "floor-1f", code: "IDF", name: "First Floor IDF", type: "IDF", created_at: "2026-01-01", plan_polygon: null },
 ];
 
 const deviceTypes: DeviceTypeRow[] = [
@@ -66,9 +66,9 @@ const deviceTypes: DeviceTypeRow[] = [
 ];
 
 const devices: FloorDeviceRow[] = [
-  { id: "dev-cam01", site_id: "s1", floor_id: "floor-gf", room_id: "room-mdf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "dev-ap01", site_id: "s1", floor_id: "floor-gf", room_id: null, device_type_id: "type-cam", code: "AP01", name: "Floor AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01" },
-  { id: "dev-cam02", site_id: "s1", floor_id: "floor-1f", room_id: "room-idf", device_type_id: "type-cam", code: "CAM02", name: "Stair Cam", status: "installed", created_at: "2026-01-01", updated_at: "2026-01-01" },
+  { id: "dev-cam01", site_id: "s1", floor_id: "floor-gf", room_id: "room-mdf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-ap01", site_id: "s1", floor_id: "floor-gf", room_id: null, device_type_id: "type-cam", code: "AP01", name: "Floor AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-cam02", site_id: "s1", floor_id: "floor-1f", room_id: "room-idf", device_type_id: "type-cam", code: "CAM02", name: "Stair Cam", status: "installed", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
 ];
 
 // Racks span TWO floors: GF has two groups (MDF with 2 racks, IDF with 1 — proving first-seen
