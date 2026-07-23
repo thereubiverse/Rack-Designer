@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoomType } from "@/domain/hierarchy";
 import { normaliseCode } from "@/features/clients/validation";
+import { isNorm, isValidPolygon, type NormPoint } from "@/features/clients/floorPlanOps";
 import type {
   SiteRow,
   FloorRow,
@@ -238,4 +239,44 @@ export async function deleteFloorPlan(db: SupabaseClient, floorId: string): Prom
   const { error: roomErr } = await db.from("rooms")
     .update({ plan_polygon: null }).eq("floor_id", floorId);
   if (roomErr) throw new Error(`deleteFloorPlan: ${roomErr.message}`);
+}
+
+/** Both x and y are written in the SAME update — the DB enforces
+ *  `(x is null) = (y is null)`, so a placement can never split the pair across two calls.
+ *  `isNorm` uses `Number.isFinite` + range checks, never falsy coercion, so x=0/y=0 is a valid
+ *  placement (Null Island), not a rejection. */
+export async function placeFloorDevice(
+  db: SupabaseClient,
+  id: string,
+  input: { x: number; y: number }
+): Promise<void> {
+  if (!isNorm(input.x) || !isNorm(input.y)) {
+    throw new Error(`placeFloorDevice: coordinates must be within the plan`);
+  }
+  const { error } = await db.from("floor_devices")
+    .update({ x: input.x, y: input.y }).eq("id", id);
+  if (error) throw new Error(`placeFloorDevice: ${error.message}`);
+}
+
+export async function clearFloorDevicePlacement(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("floor_devices")
+    .update({ x: null, y: null }).eq("id", id);
+  if (error) throw new Error(`clearFloorDevicePlacement: ${error.message}`);
+}
+
+export async function setRoomPolygon(
+  db: SupabaseClient,
+  roomId: string,
+  polygon: NormPoint[]
+): Promise<void> {
+  if (!isValidPolygon(polygon)) throw new Error(`setRoomPolygon: invalid polygon`);
+  const { error } = await db.from("rooms")
+    .update({ plan_polygon: polygon }).eq("id", roomId);
+  if (error) throw new Error(`setRoomPolygon: ${error.message}`);
+}
+
+export async function clearRoomPolygon(db: SupabaseClient, roomId: string): Promise<void> {
+  const { error } = await db.from("rooms")
+    .update({ plan_polygon: null }).eq("id", roomId);
+  if (error) throw new Error(`clearRoomPolygon: ${error.message}`);
 }

@@ -29,7 +29,12 @@ import {
   getFloorPlan,
   upsertFloorPlan,
   deleteFloorPlan,
+  placeFloorDevice,
+  clearFloorDevicePlacement,
+  setRoomPolygon,
+  clearRoomPolygon,
 } from "@/features/locations/repository";
+import type { NormPoint } from "./floorPlanOps";
 import { readPngDimensions } from "./pngHeader";
 import { uploadPlanObject, removePlanObject } from "./planStorage";
 
@@ -514,6 +519,74 @@ export async function deleteFloorPlanAction(formData: FormData): Promise<{ ok: b
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+/** `Number(String(...))` on a missing/blank field yields NaN, and NaN fails `isNorm`'s
+ *  `Number.isFinite` check inside `placeFloorDevice` — a missing field rejects rather than
+ *  placing a pin at NaN. */
+export async function placeFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+  const x = Number(String(formData.get("x")));
+  const y = Number(String(formData.get("y")));
+
+  const db = createServiceClient();
+  try {
+    await placeFloorDevice(db, id, { x, y });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function clearFloorDevicePlacementAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+
+  const db = createServiceClient();
+  try {
+    await clearFloorDevicePlacement(db, id);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+/** `JSON.parse` gets its OWN try/catch, separate from the repository call below — a malformed
+ *  JSON string must reject with {ok:false} exactly like an invalid (but well-formed) polygon
+ *  shape, never throw out of this action. */
+export async function setRoomPolygonAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const roomId = String(formData.get("roomId") ?? "");
+  const raw = String(formData.get("polygon") ?? "");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "Invalid polygon data" };
+  }
+
+  const db = createServiceClient();
+  try {
+    await setRoomPolygon(db, roomId, parsed as NormPoint[]);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function clearRoomPolygonAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const roomId = String(formData.get("roomId") ?? "");
+
+  const db = createServiceClient();
+  try {
+    await clearRoomPolygon(db, roomId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
   revalidatePath("/clients");
   return { ok: true };
 }
