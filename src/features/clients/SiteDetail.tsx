@@ -1,14 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROOM_TYPES } from "@/domain/hierarchy";
-import type { ClientRow, SiteRow } from "@/lib/supabase/types";
+import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
 import { createRackInSiteAction } from "@/features/locations/actions";
-import { deleteRackAction } from "./actions";
+import { deleteRackAction, createFloorAction, renameFloorAction, deleteFloorAction } from "./actions";
+import { normaliseCode, type CascadeCounts } from "./validation";
 import { DeleteDialog } from "./DeleteDialog";
+import { FloorTabs } from "./FloorTabs";
+import { FloorDevicesPanel } from "./FloorDevicesPanel";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -34,20 +38,75 @@ function groupRacks(racks: SiteRackRow[]): RackGroup[] {
   return [...groups.values()];
 }
 
-/** One site's racks, grouped by floor · room. Each rack links to its /racks/<id> permalink
- *  (rack codes repeat across rooms, so only the id identifies a rack uniquely). "+ Add rack"
- *  posts createRackInSiteAction; the floor/room inputs are datalist-backed from the racks
- *  already on this site so an existing floor/room is picked rather than retyped. */
-export function SiteDetail({ client, site, racks }: { client: ClientRow; site: SiteRow; racks: SiteRackRow[] }) {
+/** One site's floors, rooms, devices and racks. The active floor comes from `?floor=` (normalised,
+ *  falling back to the first floor whenever the param is missing or doesn't match any floor's
+ *  code — a deep link never 404s). Rooms/devices/racks are all site-wide props, sliced down to the
+ *  active floor here before being handed to `FloorDevicesPanel`; `SiteRackRow` carries
+ *  `floorCode`/`roomCode` (not ids), so racks are matched to the active floor by code and rooms are
+ *  matched to racks by code too. Rack groups (the existing table view) are filtered the same way.
+ *  Floor add/rename/delete all live here, right alongside `FloorTabs`; the delete confirmation's
+ *  counts are computed from these same sliced props, exactly like the existing rack delete. */
+export function SiteDetail({
+  client,
+  site,
+  racks,
+  floors,
+  rooms,
+  devices,
+  deviceTypes,
+}: {
+  client: ClientRow;
+  site: SiteRow;
+  racks: SiteRackRow[];
+  floors: FloorRow[];
+  rooms: RoomRow[];
+  devices: FloorDeviceRow[];
+  deviceTypes: DeviceTypeRow[];
+}) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SiteRackRow | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const groups = groupRacks(racks);
+  const [addFloorOpen, setAddFloorOpen] = useState(false);
+  const [addFloorError, setAddFloorError] = useState<string | null>(null);
+  const [renameFloorOpen, setRenameFloorOpen] = useState(false);
+  const [renameFloorError, setRenameFloorError] = useState<string | null>(null);
+  const [deleteFloorOpen, setDeleteFloorOpen] = useState(false);
+  const [deleteFloorError, setDeleteFloorError] = useState<string | null>(null);
+
+  const rawFloorParam = searchParams.get("floor");
+  const normalisedFloorParam = rawFloorParam ? normaliseCode(rawFloorParam) : null;
+  const activeFloor = floors.find((f) => f.code === normalisedFloorParam) ?? floors[0];
+  const activeCode = activeFloor?.code ?? "";
+
+  const activeFloorRooms = activeFloor ? rooms.filter((r) => r.floor_id === activeFloor.id) : [];
+  const activeFloorDevices = activeFloor ? devices.filter((d) => d.floor_id === activeFloor.id) : [];
+  const activeFloorRacks = activeFloor ? racks.filter((r) => r.floorCode === activeFloor.code) : [];
+  const allSiteDeviceCodes = devices.map((d) => d.code);
+
+  const rackCountByRoomId: Record<string, number> = {};
+  for (const room of activeFloorRooms) {
+    rackCountByRoomId[room.id] = activeFloorRacks.filter((r) => r.roomCode === room.code).length;
+  }
+
+  const floorDeleteCounts: CascadeCounts = {
+    rooms: activeFloorRooms.length,
+    racks: activeFloorRacks.length,
+    devices: activeFloorDevices.length + activeFloorRacks.reduce((sum, r) => sum + r.deviceCount, 0),
+  };
+
+  const groups = groupRacks(activeFloorRacks);
   const floorOptions = [...new Set(racks.map((r) => r.floorCode))];
   const roomOptions = [...new Set(racks.map((r) => r.roomCode))];
+
+  function handleSelectFloor(code: string) {
+    router.replace(`${pathname}?floor=${encodeURIComponent(code)}`, { scroll: false });
+  }
 
   async function handleCreate(formData: FormData) {
     setCreateError(null);
@@ -66,6 +125,36 @@ export function SiteDetail({ client, site, racks }: { client: ClientRow; site: S
     const res = await deleteRackAction(formData);
     if (!res.ok) { setDeleteError(res.error ?? "Delete failed"); return; }
     setDeleteTarget(null);
+    router.refresh();
+  }
+
+  async function handleAddFloor(formData: FormData) {
+    setAddFloorError(null);
+    formData.set("siteId", site.id);
+    const res = await createFloorAction(formData);
+    if (!res.ok) { setAddFloorError(res.error ?? "Failed"); return; }
+    setAddFloorOpen(false);
+    router.refresh();
+  }
+
+  async function handleRenameFloor(formData: FormData) {
+    if (!activeFloor) return;
+    setRenameFloorError(null);
+    formData.set("id", activeFloor.id);
+    const res = await renameFloorAction(formData);
+    if (!res.ok) { setRenameFloorError(res.error ?? "Failed"); return; }
+    setRenameFloorOpen(false);
+    router.refresh();
+  }
+
+  async function handleDeleteFloor() {
+    if (!activeFloor) return;
+    setDeleteFloorError(null);
+    const formData = new FormData();
+    formData.set("id", activeFloor.id);
+    const res = await deleteFloorAction(formData);
+    if (!res.ok) { setDeleteFloorError(res.error ?? "Delete failed"); return; }
+    setDeleteFloorOpen(false);
     router.refresh();
   }
 
@@ -91,53 +180,101 @@ export function SiteDetail({ client, site, racks }: { client: ClientRow; site: S
         </button>
       </div>
 
-      {groups.length === 0 && (
-        <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-14 text-center text-sm text-neutral-400 shadow-sm">
-          No racks yet
-        </div>
-      )}
+      <div className="flex items-center justify-between">
+        <FloorTabs
+          floors={floors}
+          activeCode={activeCode}
+          onSelect={handleSelectFloor}
+          onAdd={() => { setAddFloorError(null); setAddFloorOpen(true); }}
+        />
+        {activeFloor && (
+          <div className="flex items-center gap-2 pb-2">
+            <button
+              type="button"
+              data-testid="rename-floor"
+              onClick={() => { setRenameFloorError(null); setRenameFloorOpen(true); }}
+              className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
+            >
+              Rename floor
+            </button>
+            <button
+              type="button"
+              data-testid="delete-floor"
+              onClick={() => { setDeleteFloorError(null); setDeleteFloorOpen(true); }}
+              className="text-sm font-semibold text-neutral-400 hover:text-red-600"
+            >
+              Delete floor
+            </button>
+          </div>
+        )}
+      </div>
 
-      {groups.map((g) => (
-        <section key={`${g.floorCode}-${g.roomCode}`} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-          <h3
-            data-testid={`rack-group-${g.floorCode}-${g.roomCode}`}
-            className="border-b border-neutral-200 bg-neutral-50 px-5 py-2.5 text-sm font-semibold text-neutral-700"
-          >
-            {g.floorCode} · {g.roomCode}
-          </h3>
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100">
-                <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Rack</th>
-                <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Height</th>
-                <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</th>
-                <th className="px-5 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {g.racks.map((r) => (
-                <tr key={r.id} className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50">
-                  <td className="px-5 py-3 font-medium">
-                    <Link href={`/racks/${r.id}`} className="text-blue-700 hover:underline">{r.code}</Link>
-                  </td>
-                  <td className="px-5 py-3 text-neutral-600">{r.heightU} U</td>
-                  <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
-                  <td className="px-5 py-3 text-right">
-                    <button
-                      type="button"
-                      data-testid={`delete-rack-${r.id}`}
-                      onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
-                      className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
+      {floors.length === 0 ? (
+        <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-14 text-center text-sm text-neutral-400 shadow-sm">
+          No floors yet
+        </div>
+      ) : (
+        <>
+          {activeFloor && (
+            <FloorDevicesPanel
+              floor={activeFloor}
+              rooms={activeFloorRooms}
+              devices={activeFloorDevices}
+              deviceTypes={deviceTypes}
+              allSiteDeviceCodes={allSiteDeviceCodes}
+              rackCountByRoomId={rackCountByRoomId}
+            />
+          )}
+
+          {groups.length === 0 && (
+            <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-14 text-center text-sm text-neutral-400 shadow-sm">
+              No racks yet
+            </div>
+          )}
+
+          {groups.map((g) => (
+            <section key={`${g.floorCode}-${g.roomCode}`} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+              <h3
+                data-testid={`rack-group-${g.floorCode}-${g.roomCode}`}
+                className="border-b border-neutral-200 bg-neutral-50 px-5 py-2.5 text-sm font-semibold text-neutral-700"
+              >
+                {g.floorCode} · {g.roomCode}
+              </h3>
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-100">
+                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Rack</th>
+                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Height</th>
+                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</th>
+                    <th className="px-5 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.racks.map((r) => (
+                    <tr key={r.id} className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50">
+                      <td className="px-5 py-3 font-medium">
+                        <Link href={`/racks/${r.id}`} className="text-blue-700 hover:underline">{r.code}</Link>
+                      </td>
+                      <td className="px-5 py-3 text-neutral-600">{r.heightU} U</td>
+                      <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          type="button"
+                          data-testid={`delete-rack-${r.id}`}
+                          onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
+                          className="text-sm font-semibold text-neutral-400 hover:text-red-600"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ))}
+        </>
+      )}
 
       {createOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add rack">
@@ -196,6 +333,68 @@ export function SiteDetail({ client, site, racks }: { client: ClientRow; site: S
             <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
               <p data-testid="delete-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
                 {deleteError}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {addFloorOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add floor">
+          <form action={handleAddFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-base font-bold">Add floor</h3>
+            <label className="block text-[11px] font-semibold text-neutral-600">
+              Code *
+              <input name="code" placeholder="GF" required className={input} />
+            </label>
+            <label className="block text-[11px] font-semibold text-neutral-600">
+              Name
+              <input name="name" className={input} />
+            </label>
+            {addFloorError && <p className="text-sm text-red-600">{addFloorError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setAddFloorOpen(false)} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">Cancel</button>
+              <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-[#376ad9]">Create</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {renameFloorOpen && activeFloor && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Rename floor">
+          <form action={handleRenameFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-base font-bold">Rename floor</h3>
+            <label className="block text-[11px] font-semibold text-neutral-600">
+              Code *
+              <input name="code" defaultValue={activeFloor.code} required className={input} />
+            </label>
+            <label className="block text-[11px] font-semibold text-neutral-600">
+              Name
+              <input name="name" defaultValue={activeFloor.name ?? ""} className={input} />
+            </label>
+            {renameFloorError && <p className="text-sm text-red-600">{renameFloorError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setRenameFloorOpen(false)} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">Cancel</button>
+              <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-[#376ad9]">Save</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {deleteFloorOpen && activeFloor && (
+        <>
+          <DeleteDialog
+            open
+            kind="floor"
+            code={activeFloor.code}
+            counts={floorDeleteCounts}
+            onConfirm={handleDeleteFloor}
+            onCancel={() => { setDeleteFloorError(null); setDeleteFloorOpen(false); }}
+          />
+          {deleteFloorError && (
+            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
+              <p data-testid="delete-floor-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
+                {deleteFloorError}
               </p>
             </div>
           )}
