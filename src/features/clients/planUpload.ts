@@ -6,19 +6,24 @@
  *  functions have no automated coverage of their own in this slice; they're exercised manually /
  *  by a future E2E pass instead. */
 
-import * as pdfjs from "pdfjs-dist";
+import type * as PdfjsModule from "pdfjs-dist";
 
-// pdf.js needs a worker script URL. `new URL(..., import.meta.url)` is resolvable by both
-// Turbopack (dev) and webpack (build) at bundle time. This assignment is a plain top-level
-// side effect of importing the module — safe here because PlanUploadZone.test.tsx mocks
-// "./planUpload" entirely via `vi.mock`, so this file's body is never evaluated under vitest.
-// (Contingency, unused: if a real build/dev server can't resolve this worker URL, copy
-// node_modules/pdfjs-dist/build/pdf.worker.min.mjs to public/pdf.worker.min.mjs and set
-// `workerSrc = "/pdf.worker.min.mjs"` instead.)
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
+let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
+/** pdf.js evaluates `new DOMMatrix()` at MODULE scope, which crashes Node during SSR — so the
+ *  library may only ever be imported lazily, inside the browser-only conversion calls. Same
+ *  disease as Leaflet's window-at-import-time; same cure, one level deeper. */
+function loadPdfjs(): Promise<typeof PdfjsModule> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import("pdfjs-dist").then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url
+      ).toString();
+      return pdfjs;
+    });
+  }
+  return pdfjsPromise;
+}
 
 const MAX_IMAGE_LONG_EDGE = 3000;
 const MAX_PDF_PAGE_LONG_EDGE = 2600;
@@ -62,6 +67,7 @@ export async function convertImageFile(file: File): Promise<{ blob: Blob; source
 // `destroy()` (worker + network teardown) lives on the *loading task* pdfjs.getDocument()
 // returns, not on the PDFDocumentProxy its `.promise` resolves to — so callers need both.
 async function loadPdfDocument(file: File) {
+  const pdfjs = await loadPdfjs();
   const data = await file.arrayBuffer();
   const loadingTask = pdfjs.getDocument({ data });
   const doc = await loadingTask.promise;
