@@ -43,7 +43,7 @@ const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute 
 // exact issue (see SitesMap.tsx's PINCH_PX_PER_ZOOM_LEVEL comment) and needed a gentler divisor
 // for pinch specifically, or a light flick tore through multiple zoom levels at once.
 const K_SCROLL = 0.0015;
-const K_PINCH = K_SCROLL / 3;
+const K_PINCH = K_SCROLL / 1.5;
 
 // A native double-click gesture delivers click, click, THEN dblclick — each `click` appends a
 // draw point before `dblclick` ever commits — so a dblclick-close's raw drawPoints always carries
