@@ -34,6 +34,35 @@ export function removeVertex(polygon: NormPoint[], index: number): NormPoint[] {
   return polygon.filter((_, i) => i !== index);
 }
 
+function dist(a: NormPoint, b: NormPoint): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+/** Collapses CONSECUTIVE vertices closer than `epsilon` (normalized-space distance) into one,
+ *  then drops a trailing vertex that duplicates the first (wrap-around close). Pure — never
+ *  mutates `points` — and does NOT enforce a minimum vertex count on its own: a heavily
+ *  duplicated input can legitimately come back with fewer than 3 points, and it is the caller's
+ *  job to treat that exactly like any other invalid (<3) polygon and refuse to save it.
+ *
+ *  Exists to fix a real bug: a native double-click gesture fires two `click` events (each of
+ *  which appends a draw point) before `dblclick` ever runs, so without this the LAST TWO points
+ *  saved from a dblclick-close are byte-identical while an Enter-close of the same drawing never
+ *  has the problem. Calling this once, in the one place both closing gestures funnel through,
+ *  keeps their saved output identical. */
+export function dedupePolygon(points: NormPoint[], epsilon: number): NormPoint[] {
+  const out: NormPoint[] = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (!prev || dist(prev, p) >= epsilon) {
+      out.push(p);
+    }
+  }
+  if (out.length > 1 && dist(out[0], out[out.length - 1]) < epsilon) {
+    out.pop();
+  }
+  return out;
+}
+
 /** Arithmetic mean — a stable, cheap label anchor (not the area centroid; labels don't care). */
 export function polygonCentroid(polygon: NormPoint[]): NormPoint {
   const n = polygon.length;

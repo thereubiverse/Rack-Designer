@@ -259,10 +259,21 @@ describe("FloorPlanCanvas (edit mode)", () => {
     const y = Number(formData.get("y"));
     expect(Number.isFinite(x)).toBe(true);
     expect(Number.isFinite(y)).toBe(true);
-    expect(x).toBeGreaterThanOrEqual(0);
-    expect(x).toBeLessThanOrEqual(1);
-    expect(y).toBeGreaterThanOrEqual(0);
-    expect(y).toBeLessThanOrEqual(1);
+    // Hand-derived expected value for the jsdom fallback view (no ResizeObserver in jsdom, so
+    // FloorPlanCanvas's fit-on-mount effect always uses FALLBACK_PANE_WIDTH=870; CANVAS_HEIGHT is
+    // the component's fixed 560; the plan here is 1200x800):
+    //   fit zoom = min(paneW/imgW, CANVAS_HEIGHT/imgH) = min(870/1200, 560/800)
+    //            = min(0.725, 0.7) = 0.7
+    //   panX = (paneW - imgW*zoom)/2 = (870 - 1200*0.7)/2 = (870-840)/2 = 15
+    //   panY = (CANVAS_HEIGHT - imgH*zoom)/2 = (560 - 800*0.7)/2 = (560-560)/2 = 0
+    // jsdom's getBoundingClientRect is unmocked here and returns all zeros, so rect.left/top = 0
+    // and screenToNorm's local x/y equal clientX/clientY directly:
+    //   nx = (clientX - panX) / (imgW*zoom) = (400 - 15) / (1200*0.7) = 385/840 = 0.4583333333333333
+    //   ny = (clientY - panY) / (imgH*zoom) = (300 - 0)  / (800*0.7)  = 300/560 = 0.5357142857142857
+    // Both a correct live-view computation AND a broken identity-view swap happen to land in
+    // [0,1] here, so only an exact value pins the actual math down.
+    expect(x).toBeCloseTo(0.4583333333333333, 5);
+    expect(y).toBeCloseTo(0.5357142857142857, 5);
     expect(refreshMock).toHaveBeenCalled();
   });
 
@@ -376,6 +387,84 @@ describe("FloorPlanCanvas (edit mode)", () => {
     const formData = vi.mocked(clearFloorDevicePlacementAction).mock.calls[callsBefore][0] as FormData;
     expect(formData.get("id")).toBe("dev-cam02");
     expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("dedupes a duplicate vertex from a native double-click close (2 clicks then a second click + dblclick at the 3rd point)", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    fireEvent.click(screen.getByTestId("tray-room-NOPLAN"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.click(svg, { clientX: 100, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 100 });
+    // A native double-click gesture at the 3rd point: the browser fires click, click, THEN
+    // dblclick — each `click` appends a draw point before `dblclick` ever commits, so without
+    // dedupe this saves a junk 4-vertex polygon whose last two vertices are byte-identical.
+    fireEvent.click(svg, { clientX: 200, clientY: 300 });
+    fireEvent.click(svg, { clientX: 200, clientY: 300 });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 200, clientY: 300 });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(setRoomPolygonAction).mock.calls[callsBefore][0] as FormData;
+    const parsed = JSON.parse(String(formData.get("polygon"))) as [number, number][];
+    expect(parsed).toHaveLength(3);
+    for (let i = 0; i < parsed.length; i++) {
+      const next = parsed[(i + 1) % parsed.length];
+      expect(parsed[i]).not.toEqual(next);
+    }
+  });
+
+  it("Esc mid-drag cancels a pin drag: the subsequent pointerup commits nothing and the pin renders back at its pre-drag position", async () => {
+    const callsBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const pin = screen.getByTestId("plan-pin-CAM02");
+    const originalTransform = pin.getAttribute("transform");
+
+    fireEvent.pointerDown(pin, { clientX: 687, clientY: 364, button: 0, pointerId: 5 });
+    fireEvent.pointerMove(svg, { clientX: 720, clientY: 390, pointerId: 5 });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 720, clientY: 390, pointerId: 5 });
+    });
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(callsBefore);
+    const pinAfter = screen.getByTestId("plan-pin-CAM02");
+    expect(pinAfter.getAttribute("transform")).toBe(originalTransform);
+  });
+
+  it("Esc mid-drag cancels a vertex drag: the subsequent pointerup commits nothing and the vertex renders back at its pre-drag position", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    fireEvent.click(screen.getByTestId("plan-room-TRI"));
+    const vertex = screen.getByTestId("vertex-TRI-0");
+    const originalCx = vertex.getAttribute("cx");
+    const originalCy = vertex.getAttribute("cy");
+    const svg = screen.getByTestId("floor-plan-canvas");
+
+    fireEvent.pointerDown(vertex, { clientX: 10, clientY: 10, button: 0, pointerId: 6 });
+    fireEvent.pointerMove(svg, { clientX: 50, clientY: 50, pointerId: 6 });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 50, clientY: 50, pointerId: 6 });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+    const vertexAfter = screen.getByTestId("vertex-TRI-0");
+    expect(vertexAfter.getAttribute("cx")).toBe(originalCx);
+    expect(vertexAfter.getAttribute("cy")).toBe(originalCy);
   });
 
   it("refuses to delete a vertex below 3 points, leaving the polygon unchanged", async () => {

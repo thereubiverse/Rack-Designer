@@ -11,6 +11,7 @@ import {
   partitionPlacement,
   insertVertexOnEdge,
   removeVertex,
+  dedupePolygon,
   type NormPoint,
   type PlanView,
 } from "./floorPlanOps";
@@ -36,6 +37,12 @@ const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute 
 // for pinch specifically, or a light flick tore through multiple zoom levels at once.
 const K_SCROLL = 0.0015;
 const K_PINCH = K_SCROLL / 3;
+
+// A native double-click gesture delivers click, click, THEN dblclick — each `click` appends a
+// draw point before `dblclick` ever commits — so a dblclick-close's raw drawPoints always carries
+// a trailing duplicate. dedupePolygon (called once, in commitDrawnRoom, for BOTH the Enter and
+// dblclick closing paths) collapses that; this is its distance threshold in normalized space.
+const POLYGON_DEDUPE_EPSILON = 1e-3;
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
@@ -492,9 +499,15 @@ export function FloorPlanCanvas({
   }
 
   async function commitDrawnRoom(roomId: string, points: NormPoint[]) {
+    // Dedupe BEFORE validating/saving, uniformly for both closing gestures (Enter and
+    // dblclick funnel through this single function). If enough vertices collapse to drop below
+    // 3, refuse the close exactly like any other <3 polygon — leave the draw in progress rather
+    // than persisting junk.
+    const deduped = dedupePolygon(points, POLYGON_DEDUPE_EPSILON);
+    if (deduped.length < 3) return;
     const fd = new FormData();
     fd.set("roomId", roomId);
-    fd.set("polygon", JSON.stringify(points));
+    fd.set("polygon", JSON.stringify(deduped));
     const res = await setRoomPolygonAction(fd);
     if (!res.ok) {
       setError(res.error ?? "Failed to save room outline");
@@ -673,6 +686,15 @@ export function FloorPlanCanvas({
         setHoverPoint(null);
         setSelectedPinId(null);
         setSelectedVertex(null);
+        // A pin or vertex drag in progress must be cancelled too, not just its selection UI: the
+        // subsequent pointerup handler commits based on `pinDragRef`/`vertexDragRef` (and
+        // `drag.moved`) alone, so leaving those set would still fire the commit with the drag's
+        // last coordinates even though the drag "looked" cancelled. Clearing the live preview
+        // state as well snaps the pin/vertex back to its pre-drag, committed position visually.
+        pinDragRef.current = null;
+        vertexDragRef.current = null;
+        setPinPreview(null);
+        setVertexPreview(null);
         return;
       }
       if (e.key === "Enter") {

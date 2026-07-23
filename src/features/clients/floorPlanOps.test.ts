@@ -3,6 +3,7 @@ import type { FloorDeviceRow } from "@/lib/supabase/types";
 import {
   isNorm, isValidPolygon, insertVertexOnEdge, removeVertex,
   polygonCentroid, partitionPlacement, screenToNorm, normToScreen,
+  dedupePolygon,
 } from "./floorPlanOps";
 
 function device(over: Partial<FloorDeviceRow>): FloorDeviceRow {
@@ -61,6 +62,36 @@ describe("partitionPlacement", () => {
   it("half-set coordinates count as unplaced (defensive; DB forbids the state)", () => {
     const { unplaced } = partitionPlacement([device({ x: 0.5, y: null })]);
     expect(unplaced).toHaveLength(1);
+  });
+});
+
+describe("dedupePolygon", () => {
+  const EPS = 1e-3;
+
+  it("collapses an exact-duplicate consecutive vertex", () => {
+    const out = dedupePolygon([[0.1, 0.1], [0.3, 0.1], [0.2, 0.2], [0.2, 0.2]], EPS);
+    expect(out).toEqual([[0.1, 0.1], [0.3, 0.1], [0.2, 0.2]]);
+  });
+
+  it("collapses a near-duplicate consecutive vertex under epsilon", () => {
+    const out = dedupePolygon([[0.1, 0.1], [0.3, 0.1], [0.220, 0.536], [0.2201, 0.5361]], EPS);
+    expect(out).toEqual([[0.1, 0.1], [0.3, 0.1], [0.220, 0.536]]);
+  });
+
+  it("leaves distinct points (farther apart than epsilon) untouched", () => {
+    const pts: [number, number][] = [[0.1, 0.1], [0.3, 0.1], [0.2, 0.9]];
+    expect(dedupePolygon(pts, EPS)).toEqual(pts);
+  });
+
+  it("drops a trailing vertex that wraps around to duplicate the first", () => {
+    const out = dedupePolygon([[0.1, 0.1], [0.3, 0.1], [0.2, 0.9], [0.1, 0.1]], EPS);
+    expect(out).toEqual([[0.1, 0.1], [0.3, 0.1], [0.2, 0.9]]);
+  });
+
+  it("can drop below 3 vertices when enough of the input collapses — the caller must then refuse the close, exactly like any <3 polygon", () => {
+    const out = dedupePolygon([[0.5, 0.5], [0.5, 0.5], [0.5001, 0.5001]], EPS);
+    expect(out.length).toBeLessThan(3);
+    expect(isValidPolygon(out)).toBe(false);
   });
 });
 
