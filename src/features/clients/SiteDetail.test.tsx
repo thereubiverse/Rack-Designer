@@ -146,10 +146,10 @@ const planUrlsBothFloors: Record<string, string> = {
 // grouping order survives the new floor filtering), 1F has one rack in its own IDF room. RK03 is
 // used to prove the other floor's rack never leaks into the active floor's view.
 const racks: SiteRackRow[] = [
-  { id: "r1", code: "RK01", heightU: 20, floorCode: "GF", roomCode: "MDF", roomType: "MDF", deviceCount: 3 },
-  { id: "r2", code: "RK02", heightU: 42, floorCode: "GF", roomCode: "MDF", roomType: "MDF", deviceCount: 0 },
-  { id: "r4", code: "RK04", heightU: 10, floorCode: "GF", roomCode: "IDF", roomType: "IDF", deviceCount: 2 },
-  { id: "r3", code: "RK03", heightU: 12, floorCode: "1F", roomCode: "IDF", roomType: "IDF", deviceCount: 1 },
+  { id: "r1", code: "RK01", heightU: 20, floorCode: "GF", roomCode: "MDF", roomType: "MDF", deviceCount: 3, x: null, y: null },
+  { id: "r2", code: "RK02", heightU: 42, floorCode: "GF", roomCode: "MDF", roomType: "MDF", deviceCount: 0, x: null, y: null },
+  { id: "r4", code: "RK04", heightU: 10, floorCode: "GF", roomCode: "IDF", roomType: "IDF", deviceCount: 2, x: null, y: null },
+  { id: "r3", code: "RK03", heightU: 12, floorCode: "1F", roomCode: "IDF", roomType: "IDF", deviceCount: 1, x: null, y: null },
 ];
 
 function renderSite(overrides: Partial<React.ComponentProps<typeof SiteDetail>> = {}) {

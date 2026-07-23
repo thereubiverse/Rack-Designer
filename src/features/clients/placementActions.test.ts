@@ -16,6 +16,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import {
   placeFloorDeviceAction,
   clearFloorDevicePlacementAction,
+  placeRackAction,
+  clearRackPlacementAction,
   setRoomPolygonAction,
   clearRoomPolygonAction,
 } from "./actions";
@@ -224,5 +226,35 @@ describe("clearRoomPolygonAction", () => {
     const update = updateCalls.find((c) => c.table === "rooms");
     expect(update?.values).toEqual({ plan_polygon: null });
     expect(update?.filters).toEqual({ id: "room-77" });
+  });
+});
+
+describe("placeRackAction / clearRackPlacementAction", () => {
+  it("places a rack at x=0, y=0 — the update carries {x: 0, y: 0} on the racks table", async () => {
+    const { db, updateCalls } = makeFakeDb();
+    vi.mocked(createServiceClient).mockReturnValue(db);
+    const res = await placeRackAction(placeForm({ id: "rack-1", x: "0", y: "0" }));
+    expect(res).toEqual({ ok: true });
+    const update = updateCalls.find((c) => c.table === "racks");
+    expect(update?.values).toEqual({ x: 0, y: 0 });
+    expect(update?.filters).toEqual({ id: "rack-1" });
+  });
+
+  it("rejects an out-of-range rack coordinate, with no update recorded", async () => {
+    const { db, updateCalls } = makeFakeDb();
+    vi.mocked(createServiceClient).mockReturnValue(db);
+    const res = await placeRackAction(placeForm({ id: "rack-1", x: "1.5", y: "0.5" }));
+    expect(res.ok).toBe(false);
+    expect(updateCalls.find((c) => c.table === "racks")).toBeUndefined();
+  });
+
+  it("clears a rack placement (nulls both x and y) without touching the rack itself", async () => {
+    const { db, updateCalls } = makeFakeDb();
+    vi.mocked(createServiceClient).mockReturnValue(db);
+    const res = await clearRackPlacementAction(clearDeviceForm("rack-9"));
+    expect(res).toEqual({ ok: true });
+    const update = updateCalls.find((c) => c.table === "racks");
+    expect(update?.values).toEqual({ x: null, y: null });
+    expect(update?.filters).toEqual({ id: "rack-9" });
   });
 });

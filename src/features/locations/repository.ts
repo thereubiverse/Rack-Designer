@@ -275,6 +275,24 @@ export async function clearFloorDevicePlacement(db: SupabaseClient, id: string):
   if (error) throw new Error(`clearFloorDevicePlacement: ${error.message}`);
 }
 
+export async function placeRack(
+  db: SupabaseClient,
+  id: string,
+  input: { x: number; y: number }
+): Promise<void> {
+  if (!isNorm(input.x) || !isNorm(input.y)) {
+    throw new Error(`placeRack: coordinates must be within the plan`);
+  }
+  const { error } = await db.from("racks").update({ x: input.x, y: input.y }).eq("id", id);
+  if (error) throw new Error(`placeRack: ${error.message}`);
+}
+
+/** Clears the placement only — the rack itself (and its devices) is untouched. */
+export async function clearRackPlacement(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("racks").update({ x: null, y: null }).eq("id", id);
+  if (error) throw new Error(`clearRackPlacement: ${error.message}`);
+}
+
 export async function setRoomPolygon(
   db: SupabaseClient,
   roomId: string,

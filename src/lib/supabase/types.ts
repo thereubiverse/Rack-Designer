@@ -72,6 +72,8 @@ export interface RackRow {
   code: string;
   name: string | null;
   height_u: number;
+  x: number | null;
+  y: number | null;
   created_at: string;
   updated_at: string;
 }

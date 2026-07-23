@@ -1,5 +1,3 @@
-import type { FloorDeviceRow } from "@/lib/supabase/types";
-
 export type NormPoint = [number, number];
 
 export interface PlanView { panX: number; panY: number; zoom: number; imgW: number; imgH: number }
@@ -73,11 +71,11 @@ export function polygonCentroid(polygon: NormPoint[]): NormPoint {
 }
 
 /** THE both-non-null rule, in one place. `!= null`, never falsy — x === 0 is a real placement. */
-export function partitionPlacement(devices: FloorDeviceRow[]): {
-  placed: FloorDeviceRow[]; unplaced: FloorDeviceRow[];
-} {
-  const placed = devices.filter((d) => d.x != null && d.y != null);
-  const unplaced = devices.filter((d) => d.x == null || d.y == null);
+export function partitionPlacement<T extends { x: number | null; y: number | null }>(
+  items: T[]
+): { placed: T[]; unplaced: T[] } {
+  const placed = items.filter((d) => d.x != null && d.y != null);
+  const unplaced = items.filter((d) => d.x == null || d.y == null);
   return { placed, unplaced };
 }
 

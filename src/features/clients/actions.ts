@@ -31,6 +31,8 @@ import {
   deleteFloorPlan,
   placeFloorDevice,
   clearFloorDevicePlacement,
+  placeRack,
+  clearRackPlacement,
   setRoomPolygon,
   clearRoomPolygon,
 } from "@/features/locations/repository";
@@ -547,6 +549,34 @@ export async function clearFloorDevicePlacementAction(formData: FormData): Promi
   const db = createServiceClient();
   try {
     await clearFloorDevicePlacement(db, id);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function placeRackAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+  const x = Number(String(formData.get("x")));
+  const y = Number(String(formData.get("y")));
+
+  const db = createServiceClient();
+  try {
+    await placeRack(db, id, { x, y });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function clearRackPlacementAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+
+  const db = createServiceClient();
+  try {
+    await clearRackPlacement(db, id);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

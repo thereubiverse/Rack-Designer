@@ -33,6 +33,8 @@ export interface SiteRackRow {
   roomCode: string;
   roomType: RoomType;
   deviceCount: number;
+  x: number | null;
+  y: number | null;
 }
 
 export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> {
@@ -124,6 +126,8 @@ interface SiteRackJoinRow {
   id: string;
   code: string;
   height_u: number;
+  x: number | null;
+  y: number | null;
   rooms: {
     code: string;
     type: RoomType;
@@ -134,7 +138,7 @@ interface SiteRackJoinRow {
 export async function listRacksForSite(db: SupabaseClient, siteId: string): Promise<SiteRackRow[]> {
   const { data, error } = await db
     .from("racks")
-    .select("id, code, height_u, rooms!inner(code, type, floors!inner(code, site_id))")
+    .select("id, code, height_u, x, y, rooms!inner(code, type, floors!inner(code, site_id))")
     .eq("rooms.floors.site_id", siteId)
     .order("code", { ascending: true });
   if (error) throw new Error(`listRacksForSite: ${error.message}`);
@@ -151,6 +155,8 @@ export async function listRacksForSite(db: SupabaseClient, siteId: string): Prom
     roomCode: r.rooms.code,
     roomType: r.rooms.type,
     deviceCount: deviceCounts.get(r.id) ?? 0,
+    x: r.x,
+    y: r.y,
   }));
 }
 
