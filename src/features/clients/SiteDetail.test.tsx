@@ -4,7 +4,7 @@ import { SiteDetail } from "./SiteDetail";
 import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
-import { createFloorAction, deleteFloorAction } from "./actions";
+import { createFloorAction, deleteFloorAction, renameFloorAction } from "./actions";
 
 let mockSearch = "";
 const replaceMock = vi.fn();
@@ -210,5 +210,42 @@ describe("SiteDetail", () => {
     expect(deleteFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
     const formData = vi.mocked(deleteFloorAction).mock.calls[callsBefore][0] as FormData;
     expect(formData.get("id")).toBe("floor-gf");
+  });
+
+  it("renaming the active NON-first floor's code updates ?floor= to the new normalised code", async () => {
+    mockSearch = "floor=1F";
+    replaceMock.mockClear();
+    const callsBefore = vi.mocked(renameFloorAction).mock.calls.length;
+    renderSite();
+
+    fireEvent.click(screen.getByTestId("rename-floor"));
+    expect(screen.getByRole("dialog", { name: "Rename floor" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Code/i), { target: { value: "mezz" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(renameFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
+    expect(replaceMock).toHaveBeenCalledWith("/clients/ACME/HQ?floor=MEZZ", { scroll: false });
+  });
+
+  it("renaming the active floor's name only, without changing its code, does not call router.replace", async () => {
+    mockSearch = "floor=1F";
+    replaceMock.mockClear();
+    const callsBefore = vi.mocked(renameFloorAction).mock.calls.length;
+    renderSite();
+
+    fireEvent.click(screen.getByTestId("rename-floor"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "First Floor Renamed" } });
+    // Code left as-is: still "1F".
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(renameFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 });

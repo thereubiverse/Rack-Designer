@@ -140,10 +140,18 @@ export function SiteDetail({
   async function handleRenameFloor(formData: FormData) {
     if (!activeFloor) return;
     setRenameFloorError(null);
+    const oldCode = activeFloor.code;
+    const newCode = normaliseCode(String(formData.get("code") ?? ""));
     formData.set("id", activeFloor.id);
     const res = await renameFloorAction(formData);
     if (!res.ok) { setRenameFloorError(res.error ?? "Failed"); return; }
     setRenameFloorOpen(false);
+    // The renamed floor is always the active one here (this form only ever edits activeFloor), so
+    // keep the ?floor= param pointed at it under its new code — otherwise a stale code matches no
+    // floor after refresh and the user gets silently bounced to floors[0].
+    if (newCode && newCode !== oldCode) {
+      router.replace(`${pathname}?floor=${encodeURIComponent(newCode)}`, { scroll: false });
+    }
     router.refresh();
   }
 
