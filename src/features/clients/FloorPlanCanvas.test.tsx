@@ -1,8 +1,24 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { FloorPlanCanvas } from "./FloorPlanCanvas";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
+import { isValidPolygon } from "./floorPlanOps";
+import {
+  placeFloorDeviceAction,
+  clearFloorDevicePlacementAction,
+  setRoomPolygonAction,
+  clearRoomPolygonAction,
+} from "./actions";
+
+const refreshMock = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock }) }));
+vi.mock("./actions", () => ({
+  placeFloorDeviceAction: vi.fn(async () => ({ ok: true })),
+  clearFloorDevicePlacementAction: vi.fn(async () => ({ ok: true })),
+  setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+  clearRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+}));
 
 // jsdom has no ResizeObserver, so FloorPlanCanvas falls back to a fixed 870px pane width for its
 // initial fit — deterministic, but NOT exercised by these tests: every assertion below checks
@@ -122,6 +138,22 @@ const DEVICES: FloorDeviceRow[] = [
     x: null,
     y: null,
   },
+  // A SECOND unplaced device — gives the tray a NON-first unplaced device to select in the
+  // placement test (TO01 alone would always be "the first" tray item).
+  {
+    id: "dev-to02",
+    site_id: "site-1",
+    floor_id: "floor-1",
+    room_id: null,
+    device_type_id: "type-to",
+    code: "TO02",
+    name: "Second spare telephone",
+    status: "planned",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    x: null,
+    y: null,
+  },
 ];
 
 const DEVICE_TYPES: DeviceTypeRow[] = [
@@ -199,5 +231,171 @@ describe("FloorPlanCanvas (view mode)", () => {
   it("shows the edit-layout toggle when editable is true", () => {
     renderCanvas(true);
     expect(screen.getByTestId("edit-layout-toggle")).toBeInTheDocument();
+  });
+});
+
+function enterEditMode() {
+  fireEvent.click(screen.getByTestId("edit-layout-toggle"));
+}
+
+describe("FloorPlanCanvas (edit mode)", () => {
+  it("places a NON-first tray device at the clicked plan position", async () => {
+    const callsBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    // TO02 is the second unplaced device in the tray — TO01 renders first.
+    fireEvent.click(screen.getByTestId("tray-device-TO02"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 400, clientY: 300 });
+    });
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(placeFloorDeviceAction).mock.calls[callsBefore][0] as FormData;
+    expect(formData.get("id")).toBe("dev-to02");
+    const x = Number(formData.get("x"));
+    const y = Number(formData.get("y"));
+    expect(Number.isFinite(x)).toBe(true);
+    expect(Number.isFinite(y)).toBe(true);
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(1);
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("commits exactly ONE move action on pointer-up after a multi-move pin drag, and leaves pan state unchanged", async () => {
+    const callsBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const transformBefore = svg.querySelector("g")!.getAttribute("transform");
+
+    // CAM02 is a NON-first placed device (CAM01 renders before it).
+    const pin = screen.getByTestId("plan-pin-CAM02");
+    fireEvent.pointerDown(pin, { clientX: 687, clientY: 364, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 700, clientY: 370, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 720, clientY: 380, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 740, clientY: 390, pointerId: 1 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 740, clientY: 390, pointerId: 1 });
+    });
+
+    // Exactly ONE action call for the whole gesture — never per pointermove.
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(placeFloorDeviceAction).mock.calls[callsBefore][0] as FormData;
+    expect(formData.get("id")).toBe("dev-cam02");
+    const x = Number(formData.get("x"));
+    const y = Number(formData.get("y"));
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(1);
+
+    // The pin's own pointerdown must stopPropagation, or this same gesture would also pan the
+    // canvas via the SVG root's onPointerDown — assert the pan/zoom transform never moved.
+    const transformAfter = svg.querySelector("g")!.getAttribute("transform");
+    expect(transformAfter).toBe(transformBefore);
+  });
+
+  it("draws a room outline: 3 clicks + Enter commits a valid polygon", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    fireEvent.click(screen.getByTestId("tray-room-NOPLAN"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.click(svg, { clientX: 100, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 100 });
+    fireEvent.click(svg, { clientX: 200, clientY: 300 });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Enter" });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(setRoomPolygonAction).mock.calls[callsBefore][0] as FormData;
+    expect(formData.get("roomId")).toBe("room-none");
+    const parsed = JSON.parse(String(formData.get("polygon")));
+    expect(isValidPolygon(parsed)).toBe(true);
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("does nothing on Enter with fewer than 3 drawn points", () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    fireEvent.click(screen.getByTestId("tray-room-NOPLAN"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.click(svg, { clientX: 100, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 100 });
+
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+  });
+
+  it("Esc cancels an in-progress room draw with no action call", () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    fireEvent.click(screen.getByTestId("tray-room-NOPLAN"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.click(svg, { clientX: 100, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 100 });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    // A stray Enter after Esc must not resurrect the cancelled draw.
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+  });
+
+  it("un-places a NON-first pin via the Delete key after selecting it", async () => {
+    const callsBefore = vi.mocked(clearFloorDevicePlacementAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    // CAM02 is a NON-first placed device (CAM01 renders before it).
+    const pin = screen.getByTestId("plan-pin-CAM02");
+    fireEvent.pointerDown(pin, { clientX: 687, clientY: 364, button: 0, pointerId: 2 });
+    fireEvent.pointerUp(svg, { clientX: 687, clientY: 364, pointerId: 2 });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Delete" });
+    });
+
+    expect(clearFloorDevicePlacementAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(clearFloorDevicePlacementAction).mock.calls[callsBefore][0] as FormData;
+    expect(formData.get("id")).toBe("dev-cam02");
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("refuses to delete a vertex below 3 points, leaving the polygon unchanged", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+
+    // TRI has exactly 3 vertices — deleting any one must be refused.
+    fireEvent.click(screen.getByTestId("plan-room-TRI"));
+    const vertex = screen.getByTestId("vertex-TRI-0");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(vertex, { clientX: 10, clientY: 10, button: 0, pointerId: 3 });
+    fireEvent.pointerUp(svg, { clientX: 10, clientY: 10, pointerId: 3 });
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Delete" });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+    const points = screen.getByTestId("plan-room-TRI").getAttribute("points")!.trim().split(/\s+/);
+    expect(points).toHaveLength(3);
   });
 });
