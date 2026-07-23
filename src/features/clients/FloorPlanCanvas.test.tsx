@@ -487,4 +487,31 @@ describe("FloorPlanCanvas (edit mode)", () => {
     const points = screen.getByTestId("plan-room-TRI").getAttribute("points")!.trim().split(/\s+/);
     expect(points).toHaveLength(3);
   });
+
+  it("lists an already-outlined room in the Outlined-rooms tray, not the not-outlined section", () => {
+    renderCanvas(true);
+    enterEditMode();
+    // MDF has a polygon → it belongs to the editable list, never the drawing list.
+    expect(screen.getByTestId("tray-edit-room-MDF")).toBeInTheDocument();
+    expect(screen.queryByTestId("tray-room-MDF")).toBeNull();
+    // NOPLAN has none → the reverse.
+    expect(screen.getByTestId("tray-room-NOPLAN")).toBeInTheDocument();
+    expect(screen.queryByTestId("tray-edit-room-NOPLAN")).toBeNull();
+  });
+
+  it("selects an outlined room for editing from the tray button — the reliable path a canvas tap can't guarantee", () => {
+    renderCanvas(true);
+    enterEditMode();
+    // Nothing selected yet: no vertex handles, no edit toolbar.
+    expect(screen.queryByTestId("vertex-TRI-0")).toBeNull();
+    expect(screen.queryByTestId("room-edit-toolbar")).toBeNull();
+
+    // A NON-first outlined room, selected by a plain button click (no pointer drift to lose).
+    fireEvent.click(screen.getByTestId("tray-edit-room-TRI"));
+
+    // Vertex handles for THAT room appear and the Clear-outline toolbar is reachable.
+    expect(screen.getByTestId("vertex-TRI-0")).toBeInTheDocument();
+    expect(screen.getByTestId("vertex-TRI-2")).toBeInTheDocument();
+    expect(screen.getByTestId("room-edit-toolbar")).toBeInTheDocument();
+  });
 });

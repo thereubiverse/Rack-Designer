@@ -575,6 +575,20 @@ export function FloorPlanCanvas({
     setSelectedRoomId(null);
   }
 
+  /** Select an already-outlined room for vertex editing. Reached from the "Outlined rooms" tray
+   *  section AND from clicking the polygon directly — the tray button is the reliable, discoverable
+   *  path, since a direct polygon click competes with the canvas pan gesture and is lost the moment
+   *  the pointer drifts a pixel. */
+  function selectRoomForEditing(id: string) {
+    setSelectedRoomId(id);
+    setPlacingDeviceId(null);
+    setDrawingRoomId(null);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSelectedPinId(null);
+    setSelectedVertex(null);
+  }
+
   // ---- Pin / vertex drag start (attached by the child shapes; both stopPropagation first) ----
   const onPinPointerDown = (e: React.PointerEvent, deviceId: string) => {
     if (e.button !== 0) return;
@@ -726,6 +740,7 @@ export function FloorPlanCanvas({
 
   const { placed, unplaced } = partitionPlacement(devices);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
+  const roomsWithPolygon = rooms.filter((r) => r.plan_polygon != null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
@@ -772,9 +787,11 @@ export function FloorPlanCanvas({
 
       {editMode && (
         <div data-testid="plan-tray" className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-          {unplaced.length === 0 && roomsWithoutPolygon.length === 0 && !placingDeviceId && !drawingRoomId && (
-            <p className="text-sm text-neutral-400">Everything is placed</p>
-          )}
+          {unplaced.length === 0 &&
+            roomsWithoutPolygon.length === 0 &&
+            roomsWithPolygon.length === 0 &&
+            !placingDeviceId &&
+            !drawingRoomId && <p className="text-sm text-neutral-400">Everything is placed</p>}
           {unplaced.length > 0 && (
             <div className="mb-3">
               <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
@@ -815,6 +832,31 @@ export function FloorPlanCanvas({
                     onClick={() => selectRoomForDrawing(r.id)}
                     className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
                       drawingRoomId === r.id
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    {r.code}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {roomsWithPolygon.length > 0 && (
+            <div className="mt-3">
+              <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                Outlined rooms
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {roomsWithPolygon.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    data-testid={`tray-edit-room-${r.code}`}
+                    aria-pressed={selectedRoomId === r.id}
+                    onClick={() => selectRoomForEditing(r.id)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                      selectedRoomId === r.id
                         ? "border-blue-600 bg-blue-50 text-blue-700"
                         : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
                     }`}
@@ -901,11 +943,7 @@ export function FloorPlanCanvas({
                 editMode={editMode}
                 selected={selectedRoomId === room.id}
                 vertexPreview={vertexPreviewForRoom(room.id)}
-                onSelectRoom={(id) => {
-                  setSelectedRoomId(id);
-                  setSelectedPinId(null);
-                  setSelectedVertex(null);
-                }}
+                onSelectRoom={selectRoomForEditing}
                 onVertexPointerDown={onVertexPointerDown}
                 onInsertVertex={onInsertVertexClick}
               />
