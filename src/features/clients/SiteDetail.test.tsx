@@ -332,4 +332,21 @@ describe("SiteDetail", () => {
     const formData = vi.mocked(deleteFloorPlanAction).mock.calls[callsBefore][0] as FormData;
     expect(formData.get("floorId")).toBe("floor-gf");
   });
+
+  it("GF's plan row exists but its signed URL came back null: shows the degraded 'plan unavailable' state, not the dropzone, and keeps the recovery path (Replace + Delete plan) reachable", async () => {
+    renderSite({ planUrls: {} });
+
+    const unavailable = screen.getByTestId("plan-unavailable");
+    expect(within(unavailable).getByText(/couldn't be loaded/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("floor-plan-canvas")).toBeNull();
+    expect(screen.queryByTestId("plan-dropzone")).toBeNull();
+
+    // Recovery path stays reachable: Replace affordance and Delete-plan button both still render.
+    expect(screen.getByTestId("plan-replace")).toBeInTheDocument();
+    const deletePlanButton = screen.getByTestId("delete-plan");
+    expect(deletePlanButton).toBeInTheDocument();
+
+    fireEvent.click(deletePlanButton);
+    expect(screen.getByText('Delete plan “GF”?')).toBeInTheDocument();
+  });
 });

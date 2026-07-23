@@ -287,6 +287,28 @@ export function SiteDetail({
                     editable
                   />
                 </div>
+              ) : activeFloorPlan ? (
+                <div
+                  data-testid="plan-unavailable"
+                  className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-amber-800">
+                      The floor plan couldn&apos;t be loaded — try reloading the page.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <PlanUploadZone floorId={activeFloor.id} hasPlan />
+                      <button
+                        type="button"
+                        data-testid="delete-plan"
+                        onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                        className="text-sm font-semibold text-neutral-400 hover:text-red-600"
+                      >
+                        Delete plan
+                      </button>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <PlanUploadZone floorId={activeFloor.id} hasPlan={false} />
               )}
