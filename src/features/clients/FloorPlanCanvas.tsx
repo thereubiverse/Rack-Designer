@@ -38,12 +38,14 @@ const FALLBACK_PANE_WIDTH = 870;
 const ZOOM_MAX = 8;
 const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute number
 
-// Wheel-zoom sensitivity. A macOS trackpad pinch arrives as a wheel event with ctrlKey set, and
-// reports much smaller per-event deltas than a real scroll wheel notch — the sites map hit this
-// exact issue (see SitesMap.tsx's PINCH_PX_PER_ZOOM_LEVEL comment) and needed a gentler divisor
-// for pinch specifically, or a light flick tore through multiple zoom levels at once.
+// Wheel-zoom sensitivity, split by gesture. A macOS trackpad pinch arrives as a wheel event with
+// ctrlKey set; its accumulated deltaY tracks the two-finger spread, so feeding it through
+// exp(-deltaY * k) at k ~= 0.01 makes the zoom follow the fingers close to 1:1 — the direct,
+// "as sensitive as a tablet" feel. K_SCROLL is deliberately far gentler: a scroll-wheel notch or
+// a two-finger drag reports large deltas, and matching pinch's k there would tear through several
+// zoom levels on one flick.
 const K_SCROLL = 0.0015;
-const K_PINCH = K_SCROLL / 1.5;
+const K_PINCH = 0.01;
 
 // A native double-click gesture delivers click, click, THEN dblclick — each `click` appends a
 // draw point before `dblclick` ever commits — so a dblclick-close's raw drawPoints always carries
