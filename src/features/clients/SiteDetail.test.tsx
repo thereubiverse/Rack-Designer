@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, act } from "@testing-library/react";
 import { SiteDetail } from "./SiteDetail";
-import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow, FloorPlanRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
-import { createFloorAction, deleteFloorAction, renameFloorAction } from "./actions";
+import { createFloorAction, deleteFloorAction, renameFloorAction, deleteFloorPlanAction } from "./actions";
 
 let mockSearch = "";
 const replaceMock = vi.fn();
@@ -31,6 +31,22 @@ vi.mock("./actions", () => ({
   createFloorDeviceAction: vi.fn(async () => ({ ok: true })),
   updateFloorDeviceAction: vi.fn(async () => ({ ok: true })),
   deleteFloorDeviceAction: vi.fn(async () => ({ ok: true })),
+  // Consumed directly by FloorPlanCanvas (rendered for real, per the plan below) and by
+  // PlanUploadZone — neither is mocked, so their action imports must resolve here too.
+  uploadFloorPlanAction: vi.fn(async () => ({ ok: true })),
+  deleteFloorPlanAction: vi.fn(async () => ({ ok: true })),
+  placeFloorDeviceAction: vi.fn(async () => ({ ok: true })),
+  clearFloorDevicePlacementAction: vi.fn(async () => ({ ok: true })),
+  setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+  clearRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+}));
+// PlanUploadZone imports planUpload.ts, which pulls in pdfjs-dist — a browser-only module that
+// throws (DOMMatrix undefined) the instant jsdom loads it. Mocked here for the same reason
+// PlanUploadZone.test.tsx mocks it: this file only proves wiring, not planUpload's own behaviour.
+vi.mock("./planUpload", () => ({
+  convertImageFile: vi.fn(),
+  convertPdfPage: vi.fn(),
+  getPdfPageCount: vi.fn(),
 }));
 
 const client: ClientRow = { id: "c1", code: "ACME", name: "Acme Corp", created_at: "2026-01-01" };
@@ -56,8 +72,10 @@ const floorGF: FloorRow = { id: "floor-gf", site_id: "s1", code: "GF", name: "Gr
 const floor1F: FloorRow = { id: "floor-1f", site_id: "s1", code: "1F", name: "First Floor", sort_order: 1, created_at: "2026-01-01" };
 const floors: FloorRow[] = [floorGF, floor1F];
 
+// room-mdf (GF) carries an outline so the plan-delete note has a non-zero, hand-computable room
+// count too — see the `devices` comment below for the matching device-pin count.
 const rooms: RoomRow[] = [
-  { id: "room-mdf", floor_id: "floor-gf", code: "MDF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01", plan_polygon: null },
+  { id: "room-mdf", floor_id: "floor-gf", code: "MDF", name: "Ground MDF", type: "MDF", created_at: "2026-01-01", plan_polygon: [[0.1, 0.1], [0.3, 0.1], [0.3, 0.3], [0.1, 0.3]] },
   { id: "room-idf", floor_id: "floor-1f", code: "IDF", name: "First Floor IDF", type: "IDF", created_at: "2026-01-01", plan_polygon: null },
 ];
 
@@ -65,11 +83,29 @@ const deviceTypes: DeviceTypeRow[] = [
   { id: "type-cam", name: "Camera", category: "floor", code: "CAM", is_standard: true, created_at: "2026-01-01" },
 ];
 
+// CAM01 and AP01 (both GF) are placed on the plan (x/y non-null) — 2 device pins, hand-computable
+// against the plan-delete note's count. CAM02 (1F, the floor with no plan) stays unplaced.
 const devices: FloorDeviceRow[] = [
-  { id: "dev-cam01", site_id: "s1", floor_id: "floor-gf", room_id: "room-mdf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
-  { id: "dev-ap01", site_id: "s1", floor_id: "floor-gf", room_id: null, device_type_id: "type-cam", code: "AP01", name: "Floor AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
+  { id: "dev-cam01", site_id: "s1", floor_id: "floor-gf", room_id: "room-mdf", device_type_id: "type-cam", code: "CAM01", name: "Lobby Cam", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: 0.2, y: 0.3 },
+  { id: "dev-ap01", site_id: "s1", floor_id: "floor-gf", room_id: null, device_type_id: "type-cam", code: "AP01", name: "Floor AP", status: "planned", created_at: "2026-01-01", updated_at: "2026-01-01", x: 0.5, y: 0.6 },
   { id: "dev-cam02", site_id: "s1", floor_id: "floor-1f", room_id: "room-idf", device_type_id: "type-cam", code: "CAM02", name: "Stair Cam", status: "installed", created_at: "2026-01-01", updated_at: "2026-01-01", x: null, y: null },
 ];
+
+// GF has a plan; 1F does not — the fixture the whole plan-tab wiring suite depends on.
+const plans: FloorPlanRow[] = [
+  {
+    id: "plan-gf",
+    floor_id: "floor-gf",
+    storage_path: "s1/floor-gf.png",
+    width_px: 1200,
+    height_px: 800,
+    original_filename: "plan.png",
+    source: "image",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  },
+];
+const planUrls: Record<string, string> = { "floor-gf": "https://signed.test/floor-gf.png" };
 
 // Racks span TWO floors: GF has two groups (MDF with 2 racks, IDF with 1 — proving first-seen
 // grouping order survives the new floor filtering), 1F has one rack in its own IDF room. RK03 is
@@ -91,6 +127,8 @@ function renderSite(overrides: Partial<React.ComponentProps<typeof SiteDetail>> 
       rooms={rooms}
       devices={devices}
       deviceTypes={deviceTypes}
+      plans={plans}
+      planUrls={planUrls}
       {...overrides}
     />
   );
@@ -247,5 +285,51 @@ describe("SiteDetail", () => {
 
     expect(renameFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("GF (has a plan): renders the real FloorPlanCanvas with the signed URL, and the Slice A panel still renders below it", () => {
+    renderSite();
+
+    const canvas = screen.getByTestId("floor-plan-canvas");
+    expect(canvas.querySelector("image")).toHaveAttribute("href", "https://signed.test/floor-gf.png");
+    expect(screen.getByTestId("plan-replace")).toBeInTheDocument(); // "Replace plan" affordance
+    expect(screen.getByTestId("delete-plan")).toBeInTheDocument();
+    expect(screen.queryByTestId("plan-dropzone")).toBeNull();
+
+    // Never-silently-vanish: the Slice A panel is still there, below the canvas.
+    const mdfSection = screen.getByTestId("room-section-MDF");
+    expect(within(mdfSection).getByText("CAM01")).toBeInTheDocument();
+  });
+
+  it("1F (no plan, a non-first tab): shows the dropzone instead of the canvas, and the Slice A panel still renders below it", () => {
+    mockSearch = "floor=1F";
+    renderSite();
+
+    expect(screen.getByTestId("plan-dropzone")).toBeInTheDocument();
+    expect(screen.queryByTestId("floor-plan-canvas")).toBeNull();
+    expect(screen.queryByTestId("delete-plan")).toBeNull();
+
+    // Never-silently-vanish: the Slice A panel is still there, below the dropzone.
+    const idfSection = screen.getByTestId("room-section-IDF");
+    expect(within(idfSection).getByText("CAM02")).toBeInTheDocument();
+  });
+
+  it("delete-plan dialog shows hand-computed note counts (2 device pins on GF: CAM01, AP01; 1 room outline: MDF) and submits deleteFloorPlanAction with GF's floor id", async () => {
+    const callsBefore = vi.mocked(deleteFloorPlanAction).mock.calls.length;
+    renderSite();
+
+    fireEvent.click(screen.getByTestId("delete-plan"));
+    expect(screen.getByText('Delete plan “GF”?')).toBeInTheDocument();
+    expect(screen.getByText("2 device pins and 1 room outline will be cleared.")).toBeInTheDocument();
+    // Nothing is destroyed by a plan delete, so the confirm button is enabled immediately.
+    expect(screen.getByTestId("delete-confirm")).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("delete-confirm"));
+    });
+
+    expect(deleteFloorPlanAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(deleteFloorPlanAction).mock.calls[callsBefore][0] as FormData;
+    expect(formData.get("floorId")).toBe("floor-gf");
   });
 });

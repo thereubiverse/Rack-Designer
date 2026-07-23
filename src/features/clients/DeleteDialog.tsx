@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { describeCascade, requiresTypedConfirm, type CascadeCounts } from "./validation";
 
-const KIND_LABEL: Record<"client" | "site" | "rack" | "floor" | "room", string> = {
+const KIND_LABEL: Record<"client" | "site" | "rack" | "floor" | "room" | "plan", string> = {
   client: "client",
   site: "site",
   rack: "rack",
   floor: "floor",
   room: "room",
+  plan: "plan",
 };
 
 /** Confirm dialog for destructive client/site/rack deletes. Spells out the cascade in plain
@@ -25,7 +26,7 @@ export function DeleteDialog({
   onCancel,
 }: {
   open: boolean;
-  kind: "client" | "site" | "rack" | "floor" | "room";
+  kind: "client" | "site" | "rack" | "floor" | "room" | "plan";
   code: string;
   counts: CascadeCounts;
   note?: string;

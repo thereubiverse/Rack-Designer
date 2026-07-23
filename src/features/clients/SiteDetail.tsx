@@ -4,15 +4,24 @@ import { useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROOM_TYPES } from "@/domain/hierarchy";
-import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow, FloorPlanRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
 import { createRackInSiteAction } from "@/features/locations/actions";
-import { deleteRackAction, createFloorAction, renameFloorAction, deleteFloorAction } from "./actions";
+import {
+  deleteRackAction,
+  createFloorAction,
+  renameFloorAction,
+  deleteFloorAction,
+  deleteFloorPlanAction,
+} from "./actions";
 import { normaliseCode, type CascadeCounts } from "./validation";
+import { partitionPlacement } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
 import { FloorTabs } from "./FloorTabs";
 import { FloorDevicesPanel } from "./FloorDevicesPanel";
+import { FloorPlanCanvas } from "./FloorPlanCanvas";
+import { PlanUploadZone } from "./PlanUploadZone";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -54,6 +63,8 @@ export function SiteDetail({
   rooms,
   devices,
   deviceTypes,
+  plans,
+  planUrls,
 }: {
   client: ClientRow;
   site: SiteRow;
@@ -62,6 +73,8 @@ export function SiteDetail({
   rooms: RoomRow[];
   devices: FloorDeviceRow[];
   deviceTypes: DeviceTypeRow[];
+  plans: FloorPlanRow[];
+  planUrls: Record<string, string>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -79,6 +92,9 @@ export function SiteDetail({
   const [deleteFloorOpen, setDeleteFloorOpen] = useState(false);
   const [deleteFloorError, setDeleteFloorError] = useState<string | null>(null);
 
+  const [deletePlanOpen, setDeletePlanOpen] = useState(false);
+  const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
+
   const rawFloorParam = searchParams.get("floor");
   const normalisedFloorParam = rawFloorParam ? normaliseCode(rawFloorParam) : null;
   const activeFloor = floors.find((f) => f.code === normalisedFloorParam) ?? floors[0];
@@ -88,6 +104,16 @@ export function SiteDetail({
   const activeFloorDevices = activeFloor ? devices.filter((d) => d.floor_id === activeFloor.id) : [];
   const activeFloorRacks = activeFloor ? racks.filter((r) => r.floorCode === activeFloor.code) : [];
   const allSiteDeviceCodes = devices.map((d) => d.code);
+
+  // planUrls is keyed by floor_id (not plan id) — see the page loader's comment.
+  const activeFloorPlan = activeFloor ? plans.find((p) => p.floor_id === activeFloor.id) : undefined;
+  const activePlanUrl = activeFloorPlan ? planUrls[activeFloorPlan.floor_id] : undefined;
+
+  // Nothing is actually destroyed by deleting a plan (devices/rooms survive, only their
+  // placement clears) — these counts feed the dialog's NOTE, never its typed-confirm gate.
+  const { placed: activeFloorPlacedDevices } = partitionPlacement(activeFloorDevices);
+  const activeFloorOutlineCount = activeFloorRooms.filter((r) => r.plan_polygon != null).length;
+  const deletePlanNote = `${activeFloorPlacedDevices.length} device ${activeFloorPlacedDevices.length === 1 ? "pin" : "pins"} and ${activeFloorOutlineCount} room ${activeFloorOutlineCount === 1 ? "outline" : "outlines"} will be cleared.`;
 
   const rackCountByRoomId: Record<string, number> = {};
   for (const room of activeFloorRooms) {
@@ -166,6 +192,17 @@ export function SiteDetail({
     router.refresh();
   }
 
+  async function handleDeletePlan() {
+    if (!activeFloor) return;
+    setDeletePlanError(null);
+    const formData = new FormData();
+    formData.set("floorId", activeFloor.id);
+    const res = await deleteFloorPlanAction(formData);
+    if (!res.ok) { setDeletePlanError(res.error ?? "Delete failed"); return; }
+    setDeletePlanOpen(false);
+    router.refresh();
+  }
+
   return (
     <div className="space-y-4">
       <nav className="text-sm text-neutral-500">
@@ -224,14 +261,45 @@ export function SiteDetail({
       ) : (
         <>
           {activeFloor && (
-            <FloorDevicesPanel
-              floor={activeFloor}
-              rooms={activeFloorRooms}
-              devices={activeFloorDevices}
-              deviceTypes={deviceTypes}
-              allSiteDeviceCodes={allSiteDeviceCodes}
-              rackCountByRoomId={rackCountByRoomId}
-            />
+            <>
+              {activeFloorPlan && activePlanUrl ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-neutral-700">Floor plan</h3>
+                    <div className="flex items-center gap-2">
+                      <PlanUploadZone floorId={activeFloor.id} hasPlan />
+                      <button
+                        type="button"
+                        data-testid="delete-plan"
+                        onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                        className="text-sm font-semibold text-neutral-400 hover:text-red-600"
+                      >
+                        Delete plan
+                      </button>
+                    </div>
+                  </div>
+                  <FloorPlanCanvas
+                    plan={activeFloorPlan}
+                    planUrl={activePlanUrl}
+                    rooms={activeFloorRooms}
+                    devices={activeFloorDevices}
+                    deviceTypes={deviceTypes}
+                    editable
+                  />
+                </div>
+              ) : (
+                <PlanUploadZone floorId={activeFloor.id} hasPlan={false} />
+              )}
+
+              <FloorDevicesPanel
+                floor={activeFloor}
+                rooms={activeFloorRooms}
+                devices={activeFloorDevices}
+                deviceTypes={deviceTypes}
+                allSiteDeviceCodes={allSiteDeviceCodes}
+                rackCountByRoomId={rackCountByRoomId}
+              />
+            </>
           )}
 
           {groups.length === 0 && (
@@ -403,6 +471,27 @@ export function SiteDetail({
             <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
               <p data-testid="delete-floor-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
                 {deleteFloorError}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {deletePlanOpen && activeFloor && (
+        <>
+          <DeleteDialog
+            open
+            kind="plan"
+            code={activeFloor.code}
+            counts={{}}
+            note={deletePlanNote}
+            onConfirm={handleDeletePlan}
+            onCancel={() => { setDeletePlanError(null); setDeletePlanOpen(false); }}
+          />
+          {deletePlanError && (
+            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
+              <p data-testid="delete-plan-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
+                {deletePlanError}
               </p>
             </div>
           )}

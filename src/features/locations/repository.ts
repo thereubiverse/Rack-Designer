@@ -186,6 +186,17 @@ export async function deleteFloorDevice(db: SupabaseClient, id: string): Promise
   if (error) throw new Error(`deleteFloorDevice: ${error.message}`);
 }
 
+/** Site-wide, so the page loader can fetch every floor's plan (if any) in one round trip
+ *  alongside racks/rooms/devices — same floors-lookup-then-`.in` shape as listRoomsForSite. */
+export async function listFloorPlansForSite(db: SupabaseClient, siteId: string): Promise<FloorPlanRow[]> {
+  const floors = await listFloorsForSite(db, siteId);
+  if (floors.length === 0) return [];
+  const { data, error } = await db.from("floor_plans").select("*")
+    .in("floor_id", floors.map((f) => f.id));
+  if (error) throw new Error(`listFloorPlansForSite: ${error.message}`);
+  return (data ?? []) as FloorPlanRow[];
+}
+
 export async function getFloorPlan(db: SupabaseClient, floorId: string): Promise<FloorPlanRow | null> {
   const { data, error } = await db.from("floor_plans").select("*").eq("floor_id", floorId).maybeSingle();
   if (error) throw new Error(`getFloorPlan: ${error.message}`);

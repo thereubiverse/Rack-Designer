@@ -68,4 +68,20 @@ describe("DeleteDialog", () => {
     );
     expect(screen.getByText("2 devices will move to floor level")).toBeInTheDocument();
   });
+
+  it('kind="plan": heading uses the floor code, the note explains what gets cleared, and — since deleting a plan destroys nothing (devices/rooms survive) — the confirm button is enabled immediately with no typed-code gate', () => {
+    render(
+      <DeleteDialog
+        {...base}
+        kind="plan"
+        code="GF"
+        counts={{}}
+        note="3 device pins and 2 room outlines will be cleared."
+      />
+    );
+    expect(screen.getByText("Delete plan “GF”?")).toBeInTheDocument();
+    expect(screen.getByText("3 device pins and 2 room outlines will be cleared.")).toBeInTheDocument();
+    expect(screen.queryByTestId("delete-code-input")).toBeNull();
+    expect(screen.getByTestId("delete-confirm")).toBeEnabled();
+  });
 });
