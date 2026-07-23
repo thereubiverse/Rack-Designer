@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, forwardRef, useImperativeHandle } from "react";
 import { useRouter } from "next/navigation";
 import { ROOM_TYPES } from "@/domain/hierarchy";
 import type { FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
@@ -36,21 +36,27 @@ const ROOM_TYPE_CHIP: Record<string, string> = {
  *  since device code suggestion must never collide with a code used on a different floor of the
  *  same site. `rackCountByRoomId` lets the room-delete dialog spell out its cascade without this
  *  component fetching anything itself. */
-export function FloorDevicesPanel({
-  floor,
-  rooms,
-  devices,
-  deviceTypes,
-  allSiteDeviceCodes,
-  rackCountByRoomId,
-}: {
+/** Imperative openers so a parent (e.g. the plan toolbar) can pop the add-room / add-device modals
+ *  without duplicating their state or device-code-suggestion logic, which stay owned here. */
+export interface FloorDevicesPanelHandle {
+  openAddRoom: () => void;
+  openAddDevice: () => void;
+}
+
+interface FloorDevicesPanelProps {
   floor: FloorRow;
   rooms: RoomRow[];
   devices: FloorDeviceRow[];
   deviceTypes: DeviceTypeRow[];
   allSiteDeviceCodes: string[];
   rackCountByRoomId: Record<string, number>;
-}) {
+}
+
+export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevicesPanelProps>(
+  function FloorDevicesPanel(
+    { floor, rooms, devices, deviceTypes, allSiteDeviceCodes, rackCountByRoomId },
+    ref
+  ) {
   const router = useRouter();
 
   const { sections, floorLevel } = groupDevicesByRoom(rooms, devices);
@@ -123,6 +129,16 @@ export function FloorDevicesPanel({
     setAddCodeTouched(false);
     setAddDeviceOpen(true);
   }
+
+  // No deps array: recreated every render so the openers always close over the current
+  // deviceTypes / allSiteDeviceCodes (needed by openAddDevice's code suggestion).
+  useImperativeHandle(ref, () => ({
+    openAddRoom: () => {
+      setAddRoomError(null);
+      setAddRoomOpen(true);
+    },
+    openAddDevice,
+  }));
 
   function handleAddTypeChange(id: string) {
     setAddTypeId(id);
@@ -547,4 +563,4 @@ export function FloorDevicesPanel({
       )}
     </div>
   );
-}
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ROOM_TYPES } from "@/domain/hierarchy";
@@ -20,8 +20,9 @@ import { partitionPlacement } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
 import { IconButton } from "./IconButton";
 import { FloorTabs } from "./FloorTabs";
-import { FloorDevicesPanel } from "./FloorDevicesPanel";
+import { FloorDevicesPanel, type FloorDevicesPanelHandle } from "./FloorDevicesPanel";
 import { FloorPlanCanvas } from "./FloorPlanCanvas";
+import { PlanBottomSheet } from "./PlanBottomSheet";
 import { PlanUploadZone } from "./PlanUploadZone";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
@@ -80,6 +81,10 @@ export function SiteDetail({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
+  // Lets the plan toolbar's Add-room / Add-device buttons drive the modals that FloorDevicesPanel
+  // owns, without lifting that modal state (and device-code suggestion) out of the panel.
+  const panelRef = useRef<FloorDevicesPanelHandle>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -257,58 +262,10 @@ export function SiteDetail({
         </div>
       ) : (
         <>
-          {activeFloor && (
-            <>
-              {activeFloorPlan && activePlanUrl ? (
-                <FloorPlanCanvas
-                  key={activeFloor.id}
-                  plan={activeFloorPlan}
-                  planUrl={activePlanUrl}
-                  rooms={activeFloorRooms}
-                  devices={activeFloorDevices}
-                  racks={activeFloorRacks}
-                  deviceTypes={deviceTypes}
-                  editable
-                  planTools={
-                    <>
-                      <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
-                      <IconButton
-                        data-testid="delete-plan"
-                        icon="tabler:trash"
-                        tip="Delete plan"
-                        tipSide="right"
-                        variant="floatingDanger"
-                        onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                      />
-                    </>
-                  }
-                />
-              ) : activeFloorPlan ? (
-                <div
-                  data-testid="plan-unavailable"
-                  className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-amber-800">
-                      The floor plan couldn&apos;t be loaded — try reloading the page.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
-                      <IconButton
-                        data-testid="delete-plan"
-                        icon="tabler:trash"
-                        tip="Delete plan"
-                        variant="floatingDanger"
-                        onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <PlanUploadZone floorId={activeFloor.id} hasPlan={false} />
-              )}
-
+          {activeFloor && (() => {
+            const roomsDevicesContent = (
               <FloorDevicesPanel
+                ref={panelRef}
                 floor={activeFloor}
                 rooms={activeFloorRooms}
                 devices={activeFloorDevices}
@@ -316,57 +273,151 @@ export function SiteDetail({
                 allSiteDeviceCodes={allSiteDeviceCodes}
                 rackCountByRoomId={rackCountByRoomId}
               />
-            </>
-          )}
+            );
 
-          {groups.length === 0 && (
-            <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-14 text-center text-sm text-neutral-400 shadow-sm">
-              No racks yet
-            </div>
-          )}
-
-          {groups.map((g) => (
-            <section key={`${g.floorCode}-${g.roomCode}`} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-              <h3
-                data-testid={`rack-group-${g.floorCode}-${g.roomCode}`}
-                className="border-b border-neutral-200 bg-neutral-50 px-5 py-2.5 text-sm font-semibold text-neutral-700"
-              >
-                {g.floorCode} · {g.roomCode}
-              </h3>
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-neutral-100">
-                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Rack</th>
-                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Height</th>
-                    <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</th>
-                    <th className="px-5 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.racks.map((r) => (
-                    <tr key={r.id} className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50">
-                      <td className="px-5 py-3 font-medium">
-                        <Link href={`/racks/${r.id}`} className="text-blue-700 hover:underline">{r.code}</Link>
-                      </td>
-                      <td className="px-5 py-3 text-neutral-600">{r.heightU} U</td>
-                      <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
-                      <td className="px-5 py-3">
-                        <div className="flex justify-end">
-                          <IconButton
-                            data-testid={`delete-rack-${r.id}`}
-                            icon="tabler:trash"
-                            tip="Delete rack"
-                            variant="danger"
-                            onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
-                          />
-                        </div>
-                      </td>
-                    </tr>
+            const racksContent =
+              groups.length === 0 ? (
+                <div className="rounded-2xl border border-neutral-200 bg-white px-5 py-14 text-center text-sm text-neutral-400 shadow-sm">
+                  No racks yet
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {groups.map((g) => (
+                    <section key={`${g.floorCode}-${g.roomCode}`} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                      <h3
+                        data-testid={`rack-group-${g.floorCode}-${g.roomCode}`}
+                        className="border-b border-neutral-200 bg-neutral-50 px-5 py-2.5 text-sm font-semibold text-neutral-700"
+                      >
+                        {g.floorCode} · {g.roomCode}
+                      </h3>
+                      <table className="w-full text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-neutral-100">
+                            <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Rack</th>
+                            <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Height</th>
+                            <th className="px-5 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Devices</th>
+                            <th className="px-5 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {g.racks.map((r) => (
+                            <tr key={r.id} className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50">
+                              <td className="px-5 py-3 font-medium">
+                                <Link href={`/racks/${r.id}`} className="text-blue-700 hover:underline">{r.code}</Link>
+                              </td>
+                              <td className="px-5 py-3 text-neutral-600">{r.heightU} U</td>
+                              <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
+                              <td className="px-5 py-3">
+                                <div className="flex justify-end">
+                                  <IconButton
+                                    data-testid={`delete-rack-${r.id}`}
+                                    icon="tabler:trash"
+                                    tip="Delete rack"
+                                    variant="danger"
+                                    onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
+                                  />
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </section>
                   ))}
-                </tbody>
-              </table>
-            </section>
-          ))}
+                </div>
+              );
+
+            // Plan-level controls injected into the canvas's top-left toolbar. Add-room / Add-device
+            // drive the FloorDevicesPanel modals through its imperative handle.
+            const planTools = (
+              <>
+                <IconButton
+                  data-testid="plan-add-room"
+                  icon="tabler:square-plus"
+                  tip="Add room"
+                  tipSide="right"
+                  variant="floating"
+                  onClick={() => panelRef.current?.openAddRoom()}
+                />
+                <IconButton
+                  data-testid="plan-add-device"
+                  icon="tabler:circle-plus"
+                  tip="Add device"
+                  tipSide="right"
+                  variant="floating"
+                  onClick={() => panelRef.current?.openAddDevice()}
+                />
+                <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
+                <IconButton
+                  data-testid="delete-plan"
+                  icon="tabler:trash"
+                  tip="Delete plan"
+                  tipSide="right"
+                  variant="floatingDanger"
+                  onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                />
+              </>
+            );
+
+            // Has a plan: the plan is the focus, with a slide-up sheet (Rooms & Devices / Racks)
+            // overlaying its lower edge.
+            if (activeFloorPlan && activePlanUrl) {
+              return (
+                <div className="relative overflow-hidden rounded-2xl">
+                  <FloorPlanCanvas
+                    key={activeFloor.id}
+                    plan={activeFloorPlan}
+                    planUrl={activePlanUrl}
+                    rooms={activeFloorRooms}
+                    devices={activeFloorDevices}
+                    racks={activeFloorRacks}
+                    deviceTypes={deviceTypes}
+                    editable
+                    planTools={planTools}
+                  />
+                  <PlanBottomSheet
+                    tabs={[
+                      { id: "rooms", label: "Rooms & Devices", content: roomsDevicesContent },
+                      { id: "racks", label: "Racks", content: racksContent },
+                    ]}
+                  />
+                </div>
+              );
+            }
+
+            // No usable plan (failed to load, or none uploaded yet): fall back to the stacked
+            // layout — there's no plan to overlay a sheet onto.
+            return (
+              <div className="space-y-4">
+                {activeFloorPlan ? (
+                  <div
+                    data-testid="plan-unavailable"
+                    className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-amber-800">
+                        The floor plan couldn&apos;t be loaded — try reloading the page.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
+                        <IconButton
+                          data-testid="delete-plan"
+                          icon="tabler:trash"
+                          tip="Delete plan"
+                          variant="floatingDanger"
+                          onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <PlanUploadZone floorId={activeFloor.id} hasPlan={false} />
+                )}
+                {roomsDevicesContent}
+                {racksContent}
+              </div>
+            );
+          })()}
         </>
       )}
 

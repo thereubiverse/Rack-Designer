@@ -475,6 +475,15 @@ export function FloorPlanCanvas({
     });
   }, [clampZoom]);
 
+  // Reset the view to fit the whole plan in the pane and centre it — the same math the fit-on-mount
+  // effect runs, but on demand. Uses the last-measured pane width so it tracks the current layout.
+  const fitToArea = useCallback(() => {
+    const w = paneW;
+    const z = Math.min(w / imgW, CANVAS_HEIGHT / imgH);
+    fitZoomRef.current = z;
+    setView({ zoom: z, panX: (w - imgW * z) / 2, panY: (CANVAS_HEIGHT - imgH * z) / 2 });
+  }, [paneW, imgW, imgH]);
+
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
   // scrolling underneath the plan while the user zooms it.
@@ -1231,7 +1240,7 @@ export function FloorPlanCanvas({
             works between the buttons; each control re-enables them. Tooltips open to the right so
             the overflow-hidden pane doesn't clip them. */}
         {editable && (
-          <div className="pointer-events-none absolute left-3 top-3 z-20 flex flex-col items-start gap-1.5">
+          <div className="pointer-events-none absolute left-3 top-3 z-30 flex flex-col items-start gap-1.5">
             <span className="pointer-events-auto">
               <IconButton
                 data-testid="edit-layout-toggle"
@@ -1243,14 +1252,26 @@ export function FloorPlanCanvas({
                 onClick={() => setEditMode((m) => !m)}
               />
             </span>
-            {planTools && <span className="pointer-events-auto">{planTools}</span>}
+            <span className="pointer-events-auto">
+              <IconButton
+                data-testid="fit-to-area"
+                icon="tabler:arrows-maximize"
+                tip="Fit to area"
+                tipSide="right"
+                variant="floating"
+                onClick={fitToArea}
+              />
+            </span>
+            {planTools && (
+              <span className="pointer-events-auto flex flex-col items-start gap-1.5">{planTools}</span>
+            )}
           </div>
         )}
 
         {/* Transient status: an error, or the click-to-place / click-to-draw instructions. Floated
             top-center so it reads as part of the plan rather than adding a row of chrome above it. */}
         {(error || placingDeviceId || placingRackId || drawingRoomId) && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
+          <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2">
             {error ? (
               <p
                 data-testid="canvas-error"
@@ -1346,7 +1367,7 @@ export function FloorPlanCanvas({
             );
           })()
         )}
-        <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
+        <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col gap-1.5">
           <span className="pointer-events-auto">
             <IconButton
               data-testid="plan-zoom-in"
