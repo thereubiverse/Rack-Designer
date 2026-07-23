@@ -6,6 +6,7 @@ import type {
   FloorRow,
   RoomRow,
   RackRow,
+  FloorDeviceRow,
 } from "@/lib/supabase/types";
 
 export async function createSite(
@@ -116,4 +117,69 @@ export async function renameRoom(db: SupabaseClient, id: string, input: { code: 
 export async function deleteRoom(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("rooms").delete().eq("id", id);
   if (error) throw new Error(`deleteRoom: ${error.message}`);
+}
+
+export async function listFloorDevicesForSite(db: SupabaseClient, siteId: string): Promise<FloorDeviceRow[]> {
+  const { data, error } = await db.from("floor_devices").select("*")
+    .eq("site_id", siteId).order("code", { ascending: true });
+  if (error) throw new Error(`listFloorDevicesForSite: ${error.message}`);
+  return (data ?? []) as FloorDeviceRow[];
+}
+
+/** site_id is NEVER taken from the caller — it is derived from the floor row, so the site-scoped
+ *  code uniqueness cannot be subverted and a device cannot be created against the wrong site.
+ *  Only category='floor' types are accepted: rack-mounted gear lives in rack_devices. */
+export async function createFloorDevice(
+  db: SupabaseClient,
+  input: { floorId: string; roomId?: string | null; deviceTypeId: string; code: string; name?: string; status: "planned" | "installed" }
+): Promise<FloorDeviceRow> {
+  const { data: floor, error: floorErr } = await db.from("floors").select("id, site_id").eq("id", input.floorId).single();
+  if (floorErr || !floor) throw new Error(`createFloorDevice: floor not found`);
+  const { data: type, error: typeErr } = await db.from("device_types").select("id, category").eq("id", input.deviceTypeId).single();
+  if (typeErr || !type) throw new Error(`createFloorDevice: device type not found`);
+  if ((type as { category: string }).category !== "floor") throw new Error(`createFloorDevice: only floor device types can be placed on a floor`);
+  const { data, error } = await db.from("floor_devices").insert({
+    site_id: (floor as { site_id: string }).site_id,
+    floor_id: input.floorId,
+    room_id: input.roomId ?? null,
+    device_type_id: input.deviceTypeId,
+    code: normaliseCode(input.code),
+    name: input.name ?? "",
+    status: input.status,
+  }).select("*").single();
+  if (error) throw new Error(`createFloorDevice: ${error.message}`);
+  return data as FloorDeviceRow;
+}
+
+/** Moving to another floor re-derives site_id from the NEW floor (still same-site in the UI, but
+ *  the invariant must hold regardless of what the caller passes). */
+export async function updateFloorDevice(
+  db: SupabaseClient,
+  id: string,
+  patch: { floorId?: string; roomId?: string | null; deviceTypeId?: string; code?: string; name?: string; status?: "planned" | "installed" }
+): Promise<void> {
+  const applied: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.floorId !== undefined) {
+    const { data: floor, error } = await db.from("floors").select("id, site_id").eq("id", patch.floorId).single();
+    if (error || !floor) throw new Error(`updateFloorDevice: floor not found`);
+    applied.floor_id = patch.floorId;
+    applied.site_id = (floor as { site_id: string }).site_id;
+  }
+  if (patch.deviceTypeId !== undefined) {
+    const { data: type, error } = await db.from("device_types").select("id, category").eq("id", patch.deviceTypeId).single();
+    if (error || !type) throw new Error(`updateFloorDevice: device type not found`);
+    if ((type as { category: string }).category !== "floor") throw new Error(`updateFloorDevice: only floor device types can be placed on a floor`);
+    applied.device_type_id = patch.deviceTypeId;
+  }
+  if (patch.roomId !== undefined) applied.room_id = patch.roomId;
+  if (patch.code !== undefined) applied.code = normaliseCode(patch.code);
+  if (patch.name !== undefined) applied.name = patch.name;
+  if (patch.status !== undefined) applied.status = patch.status;
+  const { error } = await db.from("floor_devices").update(applied).eq("id", id);
+  if (error) throw new Error(`updateFloorDevice: ${error.message}`);
+}
+
+export async function deleteFloorDevice(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("floor_devices").delete().eq("id", id);
+  if (error) throw new Error(`deleteFloorDevice: ${error.message}`);
 }

@@ -23,7 +23,13 @@ import {
   deleteFloor,
   renameRoom,
   deleteRoom,
+  createFloorDevice,
+  updateFloorDevice,
+  deleteFloorDevice,
 } from "@/features/locations/repository";
+
+const FLOOR_DEVICE_STATUSES = ["planned", "installed"] as const;
+type FloorDeviceStatus = (typeof FLOOR_DEVICE_STATUSES)[number];
 
 function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "device"): string {
   const msg = e instanceof Error ? e.message : "Unknown error";
@@ -333,6 +339,74 @@ export async function deleteRoomAction(formData: FormData): Promise<{ ok: boolea
     await deleteRoom(db, id);
   } catch (e) {
     return { ok: false, error: friendly(e, "room") };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function createFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const floorId = String(formData.get("floorId") ?? "");
+  const roomIdRaw = String(formData.get("roomId") ?? "");
+  const roomId = roomIdRaw === "" ? null : roomIdRaw;
+  const deviceTypeId = String(formData.get("deviceTypeId") ?? "");
+  const code = String(formData.get("code") ?? "");
+  const name = String(formData.get("name") ?? "");
+  const rawStatus = String(formData.get("status") ?? "planned") || "planned";
+
+  const codeError = validateCode(code, "device");
+  if (codeError) return { ok: false, error: codeError };
+
+  if (!FLOOR_DEVICE_STATUSES.includes(rawStatus as FloorDeviceStatus)) {
+    return { ok: false, error: "Invalid device status" };
+  }
+  const status = rawStatus as FloorDeviceStatus;
+
+  const db = createServiceClient();
+  try {
+    await createFloorDevice(db, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
+  } catch (e) {
+    return { ok: false, error: friendly(e, "device") };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function updateFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+  const floorId = String(formData.get("floorId") ?? "");
+  const roomIdRaw = String(formData.get("roomId") ?? "");
+  const roomId = roomIdRaw === "" ? null : roomIdRaw;
+  const deviceTypeId = String(formData.get("deviceTypeId") ?? "");
+  const code = String(formData.get("code") ?? "");
+  const name = String(formData.get("name") ?? "");
+  const rawStatus = String(formData.get("status") ?? "planned") || "planned";
+
+  const codeError = validateCode(code, "device");
+  if (codeError) return { ok: false, error: codeError };
+
+  if (!FLOOR_DEVICE_STATUSES.includes(rawStatus as FloorDeviceStatus)) {
+    return { ok: false, error: "Invalid device status" };
+  }
+  const status = rawStatus as FloorDeviceStatus;
+
+  const db = createServiceClient();
+  try {
+    await updateFloorDevice(db, id, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
+  } catch (e) {
+    return { ok: false, error: friendly(e, "device") };
+  }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "");
+
+  const db = createServiceClient();
+  try {
+    await deleteFloorDevice(db, id);
+  } catch (e) {
+    return { ok: false, error: friendly(e, "device") };
   }
   revalidatePath("/clients");
   return { ok: true };
