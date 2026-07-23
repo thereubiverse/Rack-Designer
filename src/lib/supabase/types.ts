@@ -38,6 +38,19 @@ export interface RoomRow {
   created_at: string;
 }
 
+export interface FloorDeviceRow {
+  id: string;
+  site_id: string;
+  floor_id: string;
+  room_id: string | null;
+  device_type_id: string;
+  code: string;
+  name: string;
+  status: "planned" | "installed";
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RackRow {
   id: string;
   room_id: string;
