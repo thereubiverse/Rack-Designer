@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { describeCascade, requiresTypedConfirm, type CascadeCounts } from "./validation";
 
-const KIND_LABEL: Record<"client" | "site" | "rack", string> = {
+const KIND_LABEL: Record<"client" | "site" | "rack" | "floor" | "room", string> = {
   client: "client",
   site: "site",
   rack: "rack",
+  floor: "floor",
+  room: "room",
 };
 
 /** Confirm dialog for destructive client/site/rack deletes. Spells out the cascade in plain
@@ -18,13 +20,15 @@ export function DeleteDialog({
   kind,
   code,
   counts,
+  note,
   onConfirm,
   onCancel,
 }: {
   open: boolean;
-  kind: "client" | "site" | "rack";
+  kind: "client" | "site" | "rack" | "floor" | "room";
   code: string;
   counts: CascadeCounts;
+  note?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -42,6 +46,12 @@ export function DeleteDialog({
         <p data-testid="delete-cascade" className="mt-2 text-sm text-neutral-600">
           This will permanently delete {describeCascade(counts)}.
         </p>
+
+        {note && (
+          <p data-testid="delete-note" className="mt-2 text-sm text-neutral-500">
+            {note}
+          </p>
+        )}
 
         {gated && (
           <div className="mt-4">

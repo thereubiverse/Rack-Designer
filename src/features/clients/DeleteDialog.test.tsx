@@ -35,4 +35,37 @@ describe("DeleteDialog", () => {
     fireEvent.click(screen.getByTestId("delete-confirm"));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
+
+  it('renders the heading for kind="floor"', () => {
+    render(<DeleteDialog {...base} kind="floor" code="GF" counts={{}} />);
+    expect(screen.getByText("Delete floor “GF”?")).toBeInTheDocument();
+  });
+
+  it("renders an optional note as its own muted line after the cascade sentence", () => {
+    render(
+      <DeleteDialog
+        {...base}
+        kind="room"
+        code="R1"
+        counts={{ devices: 2 }}
+        note="2 devices will move to floor level"
+      />
+    );
+    const note = screen.getByText("2 devices will move to floor level");
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveClass("text-sm", "text-neutral-500");
+  });
+
+  it("still shows the note when counts is empty (a room with only devices explains the move even though nothing is permanently deleted)", () => {
+    render(
+      <DeleteDialog
+        {...base}
+        kind="room"
+        code="R1"
+        counts={{}}
+        note="2 devices will move to floor level"
+      />
+    );
+    expect(screen.getByText("2 devices will move to floor level")).toBeInTheDocument();
+  });
 });
