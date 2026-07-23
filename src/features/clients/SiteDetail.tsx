@@ -18,6 +18,7 @@ import {
 import { normaliseCode, type CascadeCounts } from "./validation";
 import { partitionPlacement } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
+import { IconButton } from "./IconButton";
 import { FloorTabs } from "./FloorTabs";
 import { FloorDevicesPanel } from "./FloorDevicesPanel";
 import { FloorPlanCanvas } from "./FloorPlanCanvas";
@@ -215,14 +216,13 @@ export function SiteDetail({
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold">{site.name}</h2>
-        <button
-          type="button"
+        <IconButton
           data-testid="table-create"
+          icon="tabler:plus"
+          tip="Add rack"
+          variant="primary"
           onClick={() => setCreateOpen(true)}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
-        >
-          + Add rack
-        </button>
+        />
       </div>
 
       <div className="flex items-center justify-between">
@@ -233,23 +233,20 @@ export function SiteDetail({
           onAdd={() => { setAddFloorError(null); setAddFloorOpen(true); }}
         />
         {activeFloor && (
-          <div className="flex items-center gap-2 pb-2">
-            <button
-              type="button"
+          <div className="flex items-center gap-1 pb-2">
+            <IconButton
               data-testid="rename-floor"
+              icon="tabler:pencil"
+              tip="Rename floor"
               onClick={() => { setRenameFloorError(null); setRenameFloorOpen(true); }}
-              className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
-            >
-              Rename floor
-            </button>
-            <button
-              type="button"
+            />
+            <IconButton
               data-testid="delete-floor"
+              icon="tabler:trash"
+              tip="Delete floor"
+              variant="danger"
               onClick={() => { setDeleteFloorError(null); setDeleteFloorOpen(true); }}
-              className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-            >
-              Delete floor
-            </button>
+            />
           </div>
         )}
       </div>
@@ -263,32 +260,29 @@ export function SiteDetail({
           {activeFloor && (
             <>
               {activeFloorPlan && activePlanUrl ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-neutral-700">Floor plan</h3>
-                    <div className="flex items-center gap-2">
-                      <PlanUploadZone floorId={activeFloor.id} hasPlan />
-                      <button
-                        type="button"
+                <FloorPlanCanvas
+                  key={activeFloor.id}
+                  plan={activeFloorPlan}
+                  planUrl={activePlanUrl}
+                  rooms={activeFloorRooms}
+                  devices={activeFloorDevices}
+                  racks={activeFloorRacks}
+                  deviceTypes={deviceTypes}
+                  editable
+                  planTools={
+                    <>
+                      <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
+                      <IconButton
                         data-testid="delete-plan"
+                        icon="tabler:trash"
+                        tip="Delete plan"
+                        tipSide="right"
+                        variant="floatingDanger"
                         onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                        className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                      >
-                        Delete plan
-                      </button>
-                    </div>
-                  </div>
-                  <FloorPlanCanvas
-                    key={activeFloor.id}
-                    plan={activeFloorPlan}
-                    planUrl={activePlanUrl}
-                    rooms={activeFloorRooms}
-                    devices={activeFloorDevices}
-                    racks={activeFloorRacks}
-                    deviceTypes={deviceTypes}
-                    editable
-                  />
-                </div>
+                      />
+                    </>
+                  }
+                />
               ) : activeFloorPlan ? (
                 <div
                   data-testid="plan-unavailable"
@@ -299,15 +293,14 @@ export function SiteDetail({
                       The floor plan couldn&apos;t be loaded — try reloading the page.
                     </p>
                     <div className="flex items-center gap-2">
-                      <PlanUploadZone floorId={activeFloor.id} hasPlan />
-                      <button
-                        type="button"
+                      <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
+                      <IconButton
                         data-testid="delete-plan"
+                        icon="tabler:trash"
+                        tip="Delete plan"
+                        variant="floatingDanger"
                         onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                        className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                      >
-                        Delete plan
-                      </button>
+                      />
                     </div>
                   </div>
                 </div>
@@ -357,15 +350,16 @@ export function SiteDetail({
                       </td>
                       <td className="px-5 py-3 text-neutral-600">{r.heightU} U</td>
                       <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
-                      <td className="px-5 py-3 text-right">
-                        <button
-                          type="button"
-                          data-testid={`delete-rack-${r.id}`}
-                          onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
-                          className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                        >
-                          Delete
-                        </button>
+                      <td className="px-5 py-3">
+                        <div className="flex justify-end">
+                          <IconButton
+                            data-testid={`delete-rack-${r.id}`}
+                            icon="tabler:trash"
+                            tip="Delete rack"
+                            variant="danger"
+                            onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
+                          />
+                        </div>
                       </td>
                     </tr>
                   ))}

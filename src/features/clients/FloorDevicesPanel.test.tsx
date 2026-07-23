@@ -197,10 +197,13 @@ describe("FloorDevicesPanel", () => {
       renderPanel();
       fireEvent.click(screen.getByTestId("add-device"));
 
-      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "New Camera" } });
+      // Scope field lookups to the dialog: the icon action buttons carry accessible names like
+      // "Rename room" / "Add room" that a loose document-wide /Name/i or /Room/i now also matches.
+      const dialog = within(screen.getByRole("dialog", { name: "Add device" }));
+      fireEvent.change(dialog.getByLabelText(/Name/i), { target: { value: "New Camera" } });
       // Rooms render in given-array order [GF, 2F, CLOSET]; CLOSET is the NON-first room option.
-      fireEvent.change(screen.getByLabelText(/Room/i), { target: { value: "room-closet" } });
-      fireEvent.change(screen.getByLabelText(/Status/i), { target: { value: "installed" } });
+      fireEvent.change(dialog.getByLabelText(/Room/i), { target: { value: "room-closet" } });
+      fireEvent.change(dialog.getByLabelText(/Status/i), { target: { value: "installed" } });
 
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -245,14 +248,14 @@ describe("FloorDevicesPanel", () => {
       // CAM02 is a non-first device overall (CAM01/CAM06 render before it).
       fireEvent.click(screen.getByTestId("device-edit-CAM02"));
 
-      expect(screen.getByRole("dialog", { name: "Edit device" })).toBeInTheDocument();
-      expect((screen.getByLabelText(/Code/i) as HTMLInputElement).value).toBe("CAM02");
-      expect((screen.getByLabelText(/Name/i) as HTMLInputElement).value).toBe("Stair Cam");
-      expect((screen.getByLabelText(/Room/i) as HTMLSelectElement).value).toBe("room-2f");
-      expect((screen.getByLabelText(/Status/i) as HTMLSelectElement).value).toBe("installed");
-      expect((screen.getByLabelText(/Type/i) as HTMLSelectElement).value).toBe("type-cam");
+      const dialog = within(screen.getByRole("dialog", { name: "Edit device" }));
+      expect((dialog.getByLabelText(/Code/i) as HTMLInputElement).value).toBe("CAM02");
+      expect((dialog.getByLabelText(/Name/i) as HTMLInputElement).value).toBe("Stair Cam");
+      expect((dialog.getByLabelText(/Room/i) as HTMLSelectElement).value).toBe("room-2f");
+      expect((dialog.getByLabelText(/Status/i) as HTMLSelectElement).value).toBe("installed");
+      expect((dialog.getByLabelText(/Type/i) as HTMLSelectElement).value).toBe("type-cam");
 
-      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "Stairwell Camera" } });
+      fireEvent.change(dialog.getByLabelText(/Name/i), { target: { value: "Stairwell Camera" } });
 
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -331,11 +334,11 @@ describe("FloorDevicesPanel", () => {
       const callsBefore = vi.mocked(createRoomAction).mock.calls.length;
       renderPanel();
       fireEvent.click(screen.getByTestId("add-room"));
-      expect(screen.getByRole("dialog", { name: "Add room" })).toBeInTheDocument();
+      const dialog = within(screen.getByRole("dialog", { name: "Add room" }));
 
-      fireEvent.change(screen.getByLabelText(/Code/i), { target: { value: "MEZZ" } });
-      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "Mezzanine" } });
-      fireEvent.change(screen.getByLabelText(/Type/i), { target: { value: "IDF" } });
+      fireEvent.change(dialog.getByLabelText(/Code/i), { target: { value: "MEZZ" } });
+      fireEvent.change(dialog.getByLabelText(/Name/i), { target: { value: "Mezzanine" } });
+      fireEvent.change(dialog.getByLabelText(/Type/i), { target: { value: "IDF" } });
 
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Create" }));

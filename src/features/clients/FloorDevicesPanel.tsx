@@ -15,6 +15,7 @@ import {
   deleteFloorDeviceAction,
 } from "./actions";
 import { DeleteDialog } from "./DeleteDialog";
+import { IconButton } from "./IconButton";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -196,26 +197,23 @@ export function FloorDevicesPanel({
           </span>
         </td>
         <td className="px-4 py-2 text-right">
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
+          <div className="flex items-center justify-end gap-1">
+            <IconButton
               data-testid={`device-edit-${device.code}`}
+              icon="tabler:pencil"
+              tip="Edit device"
               onClick={() => {
                 setEditDeviceError(null);
                 setEditDeviceTarget(device);
               }}
-              className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
+            />
+            <IconButton
               data-testid={`device-delete-${device.code}`}
+              icon="tabler:trash"
+              tip="Delete device"
+              variant="danger"
               onClick={() => handleDeleteDevice(device.id)}
-              className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-            >
-              Delete
-            </button>
+            />
           </div>
         </td>
       </tr>
@@ -243,26 +241,23 @@ export function FloorDevicesPanel({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-neutral-900">Rooms &amp; devices</h2>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
+        <div className="flex items-center gap-1">
+          <IconButton
             data-testid="add-room"
+            icon="tabler:door"
+            tip="Add room"
             onClick={() => {
               setAddRoomError(null);
               setAddRoomOpen(true);
             }}
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-neutral-200 px-4 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
-          >
-            + Add room
-          </button>
-          <button
-            type="button"
+          />
+          <IconButton
             data-testid="add-device"
+            icon="tabler:plus"
+            tip="Add device"
+            variant="primary"
             onClick={openAddDevice}
-            className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-[#376ad9]"
-          >
-            + Add device
-          </button>
+          />
         </div>
       </div>
 
@@ -285,29 +280,26 @@ export function FloorDevicesPanel({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
+            <div className="flex items-center gap-1">
+              <IconButton
                 data-testid={`room-rename-${room.code}`}
+                icon="tabler:pencil"
+                tip="Rename room"
                 onClick={() => {
                   setRenameRoomError(null);
                   setRenameRoomTarget(room);
                 }}
-                className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
-              >
-                Rename
-              </button>
-              <button
-                type="button"
+              />
+              <IconButton
                 data-testid={`room-delete-${room.code}`}
+                icon="tabler:trash"
+                tip="Delete room"
+                variant="danger"
                 onClick={() => {
                   setDeleteRoomError(null);
                   setDeleteRoomTarget(room);
                 }}
-                className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-              >
-                Delete
-              </button>
+              />
             </div>
           </div>
           {roomDevices.length === 0 ? (

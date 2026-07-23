@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
+import { IconButton } from "./IconButton";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
@@ -396,6 +397,7 @@ export function FloorPlanCanvas({
   racks,
   deviceTypes,
   editable,
+  planTools,
 }: {
   plan: FloorPlanRow;
   planUrl: string;
@@ -404,6 +406,11 @@ export function FloorPlanCanvas({
   racks: SiteRackRow[];
   deviceTypes: DeviceTypeRow[];
   editable: boolean;
+  /** Plan-level controls (Replace / Delete plan) rendered into the pane's top-left toolbar,
+   *  beneath the Edit-layout toggle. Supplied by SiteDetail because it owns the upload pipeline and
+   *  the delete-confirm dialog; kept out of the canvas so the same controls stay reachable in the
+   *  plan-unavailable recovery state where no canvas renders. */
+  planTools?: ReactNode;
 }) {
   const imgW = plan.width_px;
   const imgH = plan.height_px;
@@ -1006,42 +1013,6 @@ export function FloorPlanCanvas({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-h-[1.25rem] flex-1">
-          {error && (
-            <p
-              data-testid="canvas-error"
-              className="inline-flex rounded-lg bg-red-50 px-3 py-1 text-sm font-medium text-red-700"
-            >
-              {error}
-            </p>
-          )}
-          {!error && placingDeviceId && (
-            <p className="text-sm text-neutral-500">Click on the plan to place the device. Esc to cancel.</p>
-          )}
-          {!error && placingRackId && (
-            <p className="text-sm text-neutral-500">Click on the plan to place the rack. Esc to cancel.</p>
-          )}
-          {!error && drawingRoomId && (
-            <p className="text-sm text-neutral-500">
-              Click to add points
-              {drawPoints.length >= 3 ? " — Enter or double-click to finish" : ` (${drawPoints.length}/3 minimum)`}.
-              Esc to cancel.
-            </p>
-          )}
-        </div>
-        {editable && (
-          <button
-            type="button"
-            data-testid="edit-layout-toggle"
-            onClick={() => setEditMode((m) => !m)}
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-neutral-200 px-4 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
-          >
-            {editMode ? "Done" : "Edit layout"}
-          </button>
-        )}
-      </div>
-
       {editMode && (
         <div data-testid="plan-tray" className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
           {unplaced.length === 0 &&
@@ -1136,13 +1107,12 @@ export function FloorPlanCanvas({
           <span className="font-semibold text-neutral-900">
             {selectedPin.code} <span className="font-normal text-neutral-500">{selectedPin.name}</span>
           </span>
-          <button
-            type="button"
+          <IconButton
+            icon="tabler:trash"
+            tip="Remove from plan"
+            variant="danger"
             onClick={() => void commitUnplace(selectedPin.id)}
-            className="text-sm font-semibold text-red-600 hover:text-red-700"
-          >
-            Remove from plan
-          </button>
+          />
         </div>
       )}
 
@@ -1255,6 +1225,51 @@ export function FloorPlanCanvas({
             )}
           </g>
         </svg>
+
+        {/* Embedded plan toolbar: Edit-layout toggle plus the plan-level tools (Replace / Delete),
+            stacked top-left over the plan. The container ignores pointer events so panning still
+            works between the buttons; each control re-enables them. Tooltips open to the right so
+            the overflow-hidden pane doesn't clip them. */}
+        {editable && (
+          <div className="pointer-events-none absolute left-3 top-3 z-20 flex flex-col items-start gap-1.5">
+            <span className="pointer-events-auto">
+              <IconButton
+                data-testid="edit-layout-toggle"
+                icon={editMode ? "tabler:check" : "tabler:pencil"}
+                tip={editMode ? "Done editing" : "Edit layout"}
+                tipSide="right"
+                variant={editMode ? "floatingActive" : "floating"}
+                aria-pressed={editMode}
+                onClick={() => setEditMode((m) => !m)}
+              />
+            </span>
+            {planTools && <span className="pointer-events-auto">{planTools}</span>}
+          </div>
+        )}
+
+        {/* Transient status: an error, or the click-to-place / click-to-draw instructions. Floated
+            top-center so it reads as part of the plan rather than adding a row of chrome above it. */}
+        {(error || placingDeviceId || placingRackId || drawingRoomId) && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
+            {error ? (
+              <p
+                data-testid="canvas-error"
+                className="rounded-lg bg-red-50 px-3 py-1 text-sm font-medium text-red-700 shadow-sm"
+              >
+                {error}
+              </p>
+            ) : (
+              <p className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm">
+                {placingDeviceId && "Click on the plan to place the device. Esc to cancel."}
+                {placingRackId && "Click on the plan to place the rack. Esc to cancel."}
+                {drawingRoomId &&
+                  `Click to add points${
+                    drawPoints.length >= 3 ? " — Enter or double-click to finish" : ` (${drawPoints.length}/3 minimum)`
+                  }. Esc to cancel.`}
+              </p>
+            )}
+          </div>
+        )}
         {/* Edit/Delete popover, anchored over the selected room's centroid. Edit promotes the room
             to vertex editing (handles); Delete clears the OUTLINE only (the room survives). Both
             are plain buttons — a click here can't be lost to the pan gesture the way a canvas tap
@@ -1332,22 +1347,26 @@ export function FloorPlanCanvas({
           })()
         )}
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-col gap-1.5">
-          <button
-            type="button"
-            data-testid="plan-zoom-in"
-            onClick={() => zoomAt(1.25, paneW / 2, CANVAS_HEIGHT / 2)}
-            className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-lg bg-white text-base font-semibold text-neutral-600 shadow-[0_1px_3px_rgba(0,0,0,0.15),0_1px_2px_rgba(0,0,0,0.08)] hover:bg-neutral-50"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            data-testid="plan-zoom-out"
-            onClick={() => zoomAt(0.8, paneW / 2, CANVAS_HEIGHT / 2)}
-            className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-lg bg-white text-base font-semibold text-neutral-600 shadow-[0_1px_3px_rgba(0,0,0,0.15),0_1px_2px_rgba(0,0,0,0.08)] hover:bg-neutral-50"
-          >
-            −
-          </button>
+          <span className="pointer-events-auto">
+            <IconButton
+              data-testid="plan-zoom-in"
+              icon="tabler:plus"
+              tip="Zoom in"
+              tipSide="left"
+              variant="floating"
+              onClick={() => zoomAt(1.25, paneW / 2, CANVAS_HEIGHT / 2)}
+            />
+          </span>
+          <span className="pointer-events-auto">
+            <IconButton
+              data-testid="plan-zoom-out"
+              icon="tabler:minus"
+              tip="Zoom out"
+              tipSide="left"
+              variant="floating"
+              onClick={() => zoomAt(0.8, paneW / 2, CANVAS_HEIGHT / 2)}
+            />
+          </span>
         </div>
       </div>
     </div>

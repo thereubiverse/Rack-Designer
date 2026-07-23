@@ -2,8 +2,10 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Icon } from "@iconify/react";
 import { uploadFloorPlanAction } from "./actions";
 import { convertImageFile, convertPdfPage, getPdfPageCount } from "./planUpload";
+import { Tip } from "./IconButton";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf";
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -19,7 +21,18 @@ function isPdfFile(file: File): boolean {
  *  Both share the same pipeline: pick a file -> (image: downscale+re-encode | PDF: pick a page,
  *  then rasterise it) -> upload the resulting PNG blob via `uploadFloorPlanAction`. The 15MB
  *  check runs on the raw selected file, BEFORE any (potentially slow) client-side conversion. */
-export function PlanUploadZone({ floorId, hasPlan }: { floorId: string; hasPlan: boolean }) {
+export function PlanUploadZone({
+  floorId,
+  hasPlan,
+  variant = "full",
+}: {
+  floorId: string;
+  hasPlan: boolean;
+  /** "full" is the standalone dropzone / text "Replace plan" affordance. "icon" is the compact
+   *  floating icon used inside the plan pane's embedded toolbar; its page-picker and messages pop
+   *  out in a small card beside the icon so they're still visible from the corner. */
+  variant?: "full" | "icon";
+}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -190,6 +203,30 @@ export function PlanUploadZone({ floorId, hasPlan }: { floorId: string; hasPlan:
         </div>
         {pagePicker}
         {messages}
+      </div>
+    );
+  }
+
+  if (variant === "icon") {
+    const hasOverlay = Boolean(pendingPdf || tooBig || error || notice);
+    return (
+      <div className="relative">
+        <Tip label="Replace plan" side="right">
+          <label
+            data-testid="plan-replace"
+            aria-label="Replace plan"
+            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg bg-white text-neutral-600 shadow-[0_1px_3px_rgba(0,0,0,0.15),0_1px_2px_rgba(0,0,0,0.08)] hover:bg-neutral-50"
+          >
+            <Icon icon="tabler:photo-up" width={18} height={18} />
+            {fileInput}
+          </label>
+        </Tip>
+        {hasOverlay && (
+          <div className="absolute left-full top-0 z-40 ml-2 w-60 space-y-2 rounded-lg border border-neutral-200 bg-white p-3 shadow-lg">
+            {pagePicker}
+            {messages}
+          </div>
+        )}
       </div>
     );
   }

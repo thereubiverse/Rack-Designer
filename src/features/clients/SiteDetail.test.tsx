@@ -249,10 +249,11 @@ describe("SiteDetail", () => {
     const callsBefore = vi.mocked(createFloorAction).mock.calls.length;
     renderSite();
     fireEvent.click(screen.getByTestId("add-floor"));
-    expect(screen.getByRole("dialog", { name: "Add floor" })).toBeInTheDocument();
+    // Scope to the dialog: the "Rename floor" icon button's accessible name matches a loose /Name/i.
+    const dialog = within(screen.getByRole("dialog", { name: "Add floor" }));
 
-    fireEvent.change(screen.getByLabelText(/Code/i), { target: { value: "MEZZ" } });
-    fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "Mezzanine" } });
+    fireEvent.change(dialog.getByLabelText(/Code/i), { target: { value: "MEZZ" } });
+    fireEvent.change(dialog.getByLabelText(/Name/i), { target: { value: "Mezzanine" } });
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
