@@ -3,19 +3,25 @@ import { render, screen, fireEvent, act } from "@testing-library/react";
 import { FloorPlanCanvas } from "./FloorPlanCanvas";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
+import type { SiteRackRow } from "./repository";
 import { isValidPolygon } from "./floorPlanOps";
 import {
   placeFloorDeviceAction,
   clearFloorDevicePlacementAction,
+  placeRackAction,
+  clearRackPlacementAction,
   setRoomPolygonAction,
   clearRoomPolygonAction,
 } from "./actions";
 
 const refreshMock = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock }) }));
+const pushMock = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock, push: pushMock }) }));
 vi.mock("./actions", () => ({
   placeFloorDeviceAction: vi.fn(async () => ({ ok: true })),
   clearFloorDevicePlacementAction: vi.fn(async () => ({ ok: true })),
+  placeRackAction: vi.fn(async () => ({ ok: true })),
+  clearRackPlacementAction: vi.fn(async () => ({ ok: true })),
   setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
   clearRoomPolygonAction: vi.fn(async () => ({ ok: true })),
 }));
@@ -162,6 +168,19 @@ const DEVICE_TYPES: DeviceTypeRow[] = [
   { id: "type-to", name: "Telephone", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "TO", is_standard: true },
 ];
 
+function rack(over: Partial<SiteRackRow>): SiteRackRow {
+  return {
+    id: "rk", code: "RK00", heightU: 42, floorCode: "GF", roomCode: "MDF", roomType: "MDF",
+    deviceCount: 0, x: null, y: null, ...over,
+  };
+}
+
+const RACKS: SiteRackRow[] = [
+  rack({ id: "rack-placed", code: "RK01", x: 0.4, y: 0.6 }), // placed → renders a marker
+  rack({ id: "rack-un1", code: "RK02" }), // unplaced → tray
+  rack({ id: "rack-un2", code: "RK03" }), // a NON-first unplaced rack to select in the tray
+];
+
 function renderCanvas(editable = false) {
   return render(
     <FloorPlanCanvas
@@ -169,6 +188,7 @@ function renderCanvas(editable = false) {
       planUrl={PLAN_URL}
       rooms={ROOMS}
       devices={DEVICES}
+      racks={RACKS}
       deviceTypes={DEVICE_TYPES}
       editable={editable}
     />
@@ -605,5 +625,76 @@ describe("FloorPlanCanvas (edit mode)", () => {
       String((vi.mocked(setRoomPolygonAction).mock.calls.at(-1)![0] as FormData).get("polygon"))
     );
     expect(afterUndo).toHaveLength(3);
+  });
+
+  it("renders a marker for a placed rack and lists unplaced racks in the tray (never 'everything is placed')", () => {
+    renderCanvas(true);
+    enterEditMode();
+    expect(screen.getByTestId("plan-rack-RK01")).toBeInTheDocument(); // placed → marker
+    expect(screen.queryByTestId("plan-rack-RK02")).toBeNull(); // unplaced → no marker
+    expect(screen.getByTestId("tray-rack-RK02")).toBeInTheDocument(); // unplaced → tray prompt
+    expect(screen.getByTestId("tray-rack-RK03")).toBeInTheDocument();
+    // With unplaced racks present, the tray must NOT claim everything is placed.
+    expect(screen.queryByText("Everything is placed")).toBeNull();
+  });
+
+  it("places a NON-first tray rack at the clicked plan position", async () => {
+    const before = vi.mocked(placeRackAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    fireEvent.click(screen.getByTestId("tray-rack-RK03")); // non-first unplaced rack
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 200, clientY: 150 });
+    });
+    expect(placeRackAction).toHaveBeenCalledTimes(before + 1);
+    const fd = vi.mocked(placeRackAction).mock.calls.at(-1)![0] as FormData;
+    expect(fd.get("id")).toBe("rack-un2");
+    const x = Number(fd.get("x")), y = Number(fd.get("y"));
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(1);
+  });
+
+  it("tapping a placed rack shows its edit/delete popover", () => {
+    renderCanvas(true);
+    enterEditMode();
+    expect(screen.queryByTestId("rack-actions-popover")).toBeNull();
+    const marker = screen.getByTestId("plan-rack-RK01");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(marker, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 120, clientY: 120, pointerId: 1 });
+    expect(screen.getByTestId("rack-actions-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("rack-action-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("rack-action-delete")).toBeInTheDocument();
+  });
+
+  it("the rack Edit icon opens the rack in the rack designer (/racks/<id>)", () => {
+    renderCanvas(true);
+    enterEditMode();
+    const marker = screen.getByTestId("plan-rack-RK01");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(marker, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 120, clientY: 120, pointerId: 1 });
+    fireEvent.click(screen.getByTestId("rack-action-edit"));
+    expect(pushMock).toHaveBeenCalledWith("/racks/rack-placed");
+  });
+
+  it("the rack Delete icon clears the PLACEMENT (not the rack) via clearRackPlacementAction with that id", async () => {
+    const before = vi.mocked(clearRackPlacementAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    const marker = screen.getByTestId("plan-rack-RK01");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(marker, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 120, clientY: 120, pointerId: 1 });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("rack-action-delete"));
+    });
+    expect(clearRackPlacementAction).toHaveBeenCalledTimes(before + 1);
+    const fd = vi.mocked(clearRackPlacementAction).mock.calls.at(-1)![0] as FormData;
+    expect(fd.get("id")).toBe("rack-placed");
+    expect(screen.queryByTestId("rack-actions-popover")).toBeNull();
   });
 });

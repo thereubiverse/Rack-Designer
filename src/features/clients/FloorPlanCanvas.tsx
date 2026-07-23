@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
+import type { SiteRackRow } from "./repository";
 import {
   normToScreen,
   screenToNorm,
@@ -19,6 +20,8 @@ import {
 import {
   placeFloorDeviceAction,
   clearFloorDevicePlacementAction,
+  placeRackAction,
+  clearRackPlacementAction,
   setRoomPolygonAction,
   clearRoomPolygonAction,
 } from "./actions";
@@ -270,6 +273,56 @@ function DevicePin({
   );
 }
 
+/** A placed rack: a square marker (distinct from the round device pins) carrying the rack code.
+ *  Selection is decided by the SVG root's tap detection via `data-rack-id` — the same drift-proof
+ *  path rooms use — so this renders no pointer handlers of its own. */
+function RackMarker({
+  rack,
+  imgW,
+  imgH,
+  zoom,
+  editMode,
+  selected,
+}: {
+  rack: SiteRackRow;
+  imgW: number;
+  imgH: number;
+  zoom: number;
+  editMode?: boolean;
+  selected?: boolean;
+}) {
+  const anchor = normToScreen([rack.x as number, rack.y as number], identityView(imgW, imgH));
+  return (
+    <g
+      data-testid={`plan-rack-${rack.code}`}
+      data-rack-id={rack.id}
+      transform={`translate(${anchor.x} ${anchor.y})`}
+      style={editMode ? { cursor: "pointer" } : undefined}
+    >
+      <g transform={`scale(${1 / zoom})`}>
+        <title>Rack {rack.code}</title>
+        {selected && (
+          <rect x={-11} y={-11} width={22} height={22} rx={5} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
+        )}
+        <rect x={-8} y={-8} width={16} height={16} rx={3} fill="#0f172a" stroke="#ffffff" strokeWidth={2} />
+        <text
+          x={0}
+          y={-14}
+          textAnchor="middle"
+          fontSize={11}
+          fontWeight={600}
+          fill="#171717"
+          stroke="#ffffff"
+          strokeWidth={3}
+          paintOrder="stroke"
+        >
+          {rack.code}
+        </text>
+      </g>
+    </g>
+  );
+}
+
 /** The SVG surface for a floor plan: the plan image, room polygons, and device pins, with
  *  pan/zoom. This task (view mode) renders everything read-only, plus the `editable` toggle
  *  shell that Task 7 hangs its edit-mode gestures/tray off of — flipping `editMode` here does
@@ -311,6 +364,7 @@ export function FloorPlanCanvas({
   planUrl,
   rooms,
   devices,
+  racks,
   deviceTypes,
   editable,
 }: {
@@ -318,6 +372,7 @@ export function FloorPlanCanvas({
   planUrl: string;
   rooms: RoomRow[];
   devices: FloorDeviceRow[];
+  racks: SiteRackRow[];
   deviceTypes: DeviceTypeRow[];
   editable: boolean;
 }) {
@@ -408,6 +463,7 @@ export function FloorPlanCanvas({
 
   // ---- Tray selection / active gesture mode (mutually exclusive) ----
   const [placingDeviceId, setPlacingDeviceId] = useState<string | null>(null);
+  const [placingRackId, setPlacingRackId] = useState<string | null>(null);
   const [drawingRoomId, setDrawingRoomId] = useState<string | null>(null);
   const [drawPoints, setDrawPoints] = useState<NormPoint[]>([]);
   const [hoverPoint, setHoverPoint] = useState<NormPoint | null>(null);
@@ -419,6 +475,7 @@ export function FloorPlanCanvas({
   // fumbled into an accidental vertex drag.
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
+  const [selectedRackId, setSelectedRackId] = useState<string | null>(null);
   const [selectedVertex, setSelectedVertex] = useState<{ roomId: string; index: number } | null>(null);
 
   // ---- Live drag previews (visual only — the action commits ONCE, on pointer-up) ----
@@ -429,7 +486,7 @@ export function FloorPlanCanvas({
 
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
   // even if the cursor leaves the SVG mid-gesture.
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null; rackId: string | null } | null>(null);
   // Undo stack for the room CURRENTLY being vertex-edited: each committed change (move / insert /
   // delete) first pushes the polygon as it was, so a right-click can step back through them. Reset
   // whenever the edited room changes (see the effect below). Tracing uses drawPoints directly.
@@ -590,11 +647,14 @@ export function FloorPlanCanvas({
   // ---- Tray selection ----
   function selectDeviceForPlacement(id: string) {
     setPlacingDeviceId(id);
+    setPlacingRackId(null);
     setDrawingRoomId(null);
     setDrawPoints([]);
     setHoverPoint(null);
     setSelectedPinId(null);
+    setSelectedRackId(null);
     setSelectedVertex(null);
+    clearRoomSelection();
   }
 
   function selectRoomForDrawing(id: string) {
@@ -602,7 +662,9 @@ export function FloorPlanCanvas({
     setDrawPoints([]);
     setHoverPoint(null);
     setPlacingDeviceId(null);
+    setPlacingRackId(null);
     setSelectedPinId(null);
+    setSelectedRackId(null);
     setSelectedVertex(null);
     setSelectedRoomId(null);
   }
@@ -613,10 +675,12 @@ export function FloorPlanCanvas({
     if (id !== selectedRoomId) setEditingRoomId(null);
     setSelectedRoomId(id);
     setPlacingDeviceId(null);
+    setPlacingRackId(null);
     setDrawingRoomId(null);
     setDrawPoints([]);
     setHoverPoint(null);
     setSelectedPinId(null);
+    setSelectedRackId(null);
     setSelectedVertex(null);
   }
 
@@ -632,10 +696,65 @@ export function FloorPlanCanvas({
     await commitClearRoomPolygon(roomId);
   }
 
+  async function commitPlaceRack(id: string, point: NormPoint) {
+    const fd = new FormData();
+    fd.set("id", id);
+    fd.set("x", String(point[0]));
+    fd.set("y", String(point[1]));
+    const res = await placeRackAction(fd);
+    if (!res.ok) {
+      setError(res.error ?? "Failed to place rack");
+      return;
+    }
+    setError(null);
+    router.refresh();
+  }
+
+  /** Deletes the PLACEMENT only — the rack (and its devices) stays in the lists below. */
+  async function deleteRackPlacement(rackId: string) {
+    setSelectedRackId(null);
+    const fd = new FormData();
+    fd.set("id", rackId);
+    const res = await clearRackPlacementAction(fd);
+    if (!res.ok) {
+      setError(res.error ?? "Failed to remove rack from plan");
+      return;
+    }
+    setError(null);
+    router.refresh();
+  }
+
+  function selectRackForPlacement(id: string) {
+    setPlacingRackId(id);
+    setPlacingDeviceId(null);
+    setDrawingRoomId(null);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSelectedPinId(null);
+    setSelectedVertex(null);
+    clearRoomSelection();
+    setSelectedRackId(null);
+  }
+
+  /** Tapping a placed rack marker selects it → shows the edit/delete popover. */
+  function selectRack(id: string) {
+    setSelectedRackId(id);
+    setPlacingDeviceId(null);
+    setPlacingRackId(null);
+    setDrawingRoomId(null);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSelectedPinId(null);
+    setSelectedVertex(null);
+    clearRoomSelection();
+  }
+
   // ---- Pin / vertex drag start (attached by the child shapes; both stopPropagation first) ----
   const onPinPointerDown = (e: React.PointerEvent, deviceId: string) => {
     if (e.button !== 0) return;
     setSelectedPinId(deviceId);
+    setSelectedRackId(null);
+    clearRoomSelection();
     setSelectedVertex(null);
     pinDragRef.current = { deviceId, moved: false, clientX: e.clientX, clientY: e.clientY };
   };
@@ -652,13 +771,16 @@ export function FloorPlanCanvas({
     e.currentTarget.setPointerCapture?.(e.pointerId);
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
-    const roomEl = (e.target as Element).closest?.("[data-room-id]");
+    const target = e.target as Element;
+    const roomEl = target.closest?.("[data-room-id]");
+    const rackEl = target.closest?.("[data-rack-id]");
     dragRef.current = {
       x: e.clientX,
       y: e.clientY,
       panX: view.panX,
       panY: view.panY,
       roomId: roomEl?.getAttribute("data-room-id") ?? null,
+      rackId: rackEl?.getAttribute("data-rack-id") ?? null,
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -720,11 +842,16 @@ export function FloorPlanCanvas({
     // event is unreliable here because any sub-threshold pan still fires pointermove. So selection
     // is decided from the pointer travel, not from `click`, which is exactly what made a real
     // click on a room fail before (the smallest drift suppressed it).
-    if (d && editMode && !placingDeviceId && !drawingRoomId) {
+    if (d && editMode && !placingDeviceId && !placingRackId && !drawingRoomId) {
       const travel = Math.hypot(e.clientX - d.x, e.clientY - d.y);
       if (travel < TAP_THRESHOLD_PX) {
-        if (d.roomId) selectRoom(d.roomId);
-        else clearRoomSelection();
+        // A rack marker sits above the room polygons, so a tap on one takes precedence.
+        if (d.rackId) selectRack(d.rackId);
+        else if (d.roomId) selectRoom(d.roomId);
+        else {
+          clearRoomSelection();
+          setSelectedRackId(null);
+        }
       }
     }
   };
@@ -738,6 +865,14 @@ export function FloorPlanCanvas({
       const id = placingDeviceId;
       setPlacingDeviceId(null);
       void commitPlaceDevice(id, n);
+      return;
+    }
+    if (placingRackId) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      const id = placingRackId;
+      setPlacingRackId(null);
+      void commitPlaceRack(id, n);
       return;
     }
     if (drawingRoomId) {
@@ -762,10 +897,12 @@ export function FloorPlanCanvas({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setPlacingDeviceId(null);
+        setPlacingRackId(null);
         setDrawingRoomId(null);
         setDrawPoints([]);
         setHoverPoint(null);
         setSelectedPinId(null);
+        setSelectedRackId(null);
         setSelectedRoomId(null);
         setEditingRoomId(null);
         setSelectedVertex(null);
@@ -805,6 +942,7 @@ export function FloorPlanCanvas({
   }, [editMode, drawingRoomId, drawPoints, selectedPinId, selectedVertex, rooms]);
 
   const { placed, unplaced } = partitionPlacement(devices);
+  const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const vertexPreviewForRoom = (roomId: string) =>
@@ -814,6 +952,7 @@ export function FloorPlanCanvas({
 
   const selectedPin = selectedPinId ? devices.find((d) => d.id === selectedPinId) ?? null : null;
   const selectedRoom = selectedRoomId ? rooms.find((r) => r.id === selectedRoomId) ?? null : null;
+  const selectedRack = selectedRackId ? racks.find((r) => r.id === selectedRackId) ?? null : null;
 
   return (
     <div className="space-y-2">
@@ -829,6 +968,9 @@ export function FloorPlanCanvas({
           )}
           {!error && placingDeviceId && (
             <p className="text-sm text-neutral-500">Click on the plan to place the device. Esc to cancel.</p>
+          )}
+          {!error && placingRackId && (
+            <p className="text-sm text-neutral-500">Click on the plan to place the rack. Esc to cancel.</p>
           )}
           {!error && drawingRoomId && (
             <p className="text-sm text-neutral-500">
@@ -852,8 +994,36 @@ export function FloorPlanCanvas({
 
       {editMode && (
         <div data-testid="plan-tray" className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-          {unplaced.length === 0 && roomsWithoutPolygon.length === 0 && !placingDeviceId && !drawingRoomId && (
-            <p className="text-sm text-neutral-400">Everything is placed</p>
+          {unplaced.length === 0 &&
+            unplacedRacks.length === 0 &&
+            roomsWithoutPolygon.length === 0 &&
+            !placingDeviceId &&
+            !placingRackId &&
+            !drawingRoomId && <p className="text-sm text-neutral-400">Everything is placed</p>}
+          {unplacedRacks.length > 0 && (
+            <div className="mb-3">
+              <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                Racks not on the plan
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {unplacedRacks.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    data-testid={`tray-rack-${r.code}`}
+                    aria-pressed={placingRackId === r.id}
+                    onClick={() => selectRackForPlacement(r.id)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                      placingRackId === r.id
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"
+                    }`}
+                  >
+                    {r.code}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           {unplaced.length > 0 && (
             <div className="mb-3">
@@ -939,7 +1109,7 @@ export function FloorPlanCanvas({
           style={{
             display: "block",
             touchAction: "none",
-            cursor: placingDeviceId || drawingRoomId ? "crosshair" : undefined,
+            cursor: placingDeviceId || placingRackId || drawingRoomId ? "crosshair" : undefined,
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -985,6 +1155,17 @@ export function FloorPlanCanvas({
                 selected={selectedPinId === device.id}
                 dragPoint={pinPreview && pinPreview.deviceId === device.id ? pinPreview.point : null}
                 onPointerDownPin={onPinPointerDown}
+              />
+            ))}
+            {placedRacks.map((rack) => (
+              <RackMarker
+                key={rack.id}
+                rack={rack}
+                imgW={imgW}
+                imgH={imgH}
+                zoom={view.zoom}
+                editMode={editMode}
+                selected={selectedRackId === rack.id}
               />
             ))}
             {drawingRoomId && (
@@ -1055,6 +1236,41 @@ export function FloorPlanCanvas({
                   data-testid="room-action-delete"
                   title="Delete outline"
                   onClick={() => void deleteSelectedRoomOutline(selectedRoom.id)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50"
+                >
+                  <Icon icon="tabler:trash" width={17} height={17} />
+                </button>
+              </div>
+            );
+          })()
+        )}
+        {/* Rack popover, anchored over the selected rack. Edit opens the rack in the rack designer;
+            Delete removes the PLACEMENT only (the rack stays in the lists below). */}
+        {editMode && selectedRack && selectedRack.x != null && selectedRack.y != null && (
+          (() => {
+            const c = normToScreen([selectedRack.x, selectedRack.y], identityView(imgW, imgH));
+            const left = view.panX + c.x * view.zoom;
+            const top = view.panY + c.y * view.zoom;
+            return (
+              <div
+                data-testid="rack-actions-popover"
+                className="pointer-events-auto absolute z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 shadow-md"
+                style={{ left, top: top - 26 }}
+              >
+                <button
+                  type="button"
+                  data-testid="rack-action-edit"
+                  title="Open in rack designer"
+                  onClick={() => router.push(`/racks/${selectedRack.id}`)}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-100"
+                >
+                  <Icon icon="tabler:pencil" width={17} height={17} />
+                </button>
+                <button
+                  type="button"
+                  data-testid="rack-action-delete"
+                  title="Remove from plan"
+                  onClick={() => void deleteRackPlacement(selectedRack.id)}
                   className="flex h-8 w-8 items-center justify-center rounded-md text-red-600 hover:bg-red-50"
                 >
                   <Icon icon="tabler:trash" width={17} height={17} />

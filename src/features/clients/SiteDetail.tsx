@@ -284,6 +284,7 @@ export function SiteDetail({
                     planUrl={activePlanUrl}
                     rooms={activeFloorRooms}
                     devices={activeFloorDevices}
+                    racks={activeFloorRacks}
                     deviceTypes={deviceTypes}
                     editable
                   />
