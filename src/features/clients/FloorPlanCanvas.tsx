@@ -120,7 +120,7 @@ function RoomPolygon({
   const centroid = normToScreen(polygonCentroid(polygon), view);
 
   return (
-    <g>
+    <g className="plan-room-group">
       {/* No onClick/stopPropagation here: the press bubbles to the SVG root, which decides
           tap-vs-pan from pointer travel and reads this room via data-room-id. A click handler
           was the old, drift-fragile path. */}
@@ -133,13 +133,24 @@ function RoomPolygon({
         strokeWidth={selected ? 3 : 2}
         style={editMode ? { cursor: "pointer" } : undefined}
       />
-      {/* Counter-scaled label chip — see the pin comment below for why translate/scale are split
-          across two nested groups instead of one combined transform. */}
-      <g transform={`translate(${centroid.x} ${centroid.y})`}>
+      {/* Label: hidden until the room is hovered (globals.css `.plan-room-group:hover`), so a
+          plan crowded with rooms isn't a wall of chips. Halo text (no fixed box) so a long name
+          can't clip. `pointer-events: none` keeps it out of the tap/hit path. */}
+      <g className="plan-room-label" transform={`translate(${centroid.x} ${centroid.y})`}>
         <g transform={`scale(${1 / zoom})`}>
-          <rect x={-22} y={-11} width={44} height={22} rx={6} fill={ROOM_STROKE} />
-          <text x={0} y={4} textAnchor="middle" fontSize={11} fontWeight={700} fill="#ffffff">
-            {room.code}
+          <text
+            data-testid={`plan-room-label-${room.code}`}
+            x={0}
+            y={4}
+            textAnchor="middle"
+            fontSize={12}
+            fontWeight={700}
+            fill="#171717"
+            stroke="#ffffff"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {room.name || room.code}
           </text>
         </g>
       </g>

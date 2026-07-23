@@ -186,6 +186,18 @@ fieldset:disabled [data-testid$="-trigger"] {
   transform: translateZ(0);
 }
 
+/* Floor-plan room labels: hidden until the room is hovered, so a plan full of outlined rooms
+   isn't a permanent wall of name chips. The label is a sibling of the room polygon inside the
+   same group; hovering the polygon fill puts the group in :hover, revealing the label. */
+.plan-room-label {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.plan-room-group:hover .plan-room-label {
+  opacity: 1;
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

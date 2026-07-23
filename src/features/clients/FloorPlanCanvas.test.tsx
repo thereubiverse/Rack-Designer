@@ -212,6 +212,15 @@ describe("FloorPlanCanvas (view mode)", () => {
     expect(points).toHaveLength(4);
   });
 
+  it("labels a traced room with its NAME, hover-gated by the room-group class (not always shown)", () => {
+    renderCanvas();
+    const label = screen.getByTestId("plan-room-label-MDF");
+    // Shows the name ("Main closet"), not the code ("MDF").
+    expect(label.textContent).toBe("Main closet");
+    // Visibility is CSS-driven off the ancestor group's :hover — the class must be present.
+    expect(label.closest(".plan-room-group")).not.toBeNull();
+  });
+
   it("renders a 3-point room polygon with the right point count", () => {
     renderCanvas();
     const polygon = screen.getByTestId("plan-room-TRI");
