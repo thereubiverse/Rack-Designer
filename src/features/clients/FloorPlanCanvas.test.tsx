@@ -666,17 +666,50 @@ describe("FloorPlanCanvas (edit mode)", () => {
     expect(y).toBeLessThanOrEqual(1);
   });
 
-  it("tapping a placed rack shows its edit/delete popover", () => {
+  it("a still press on a placed rack selects it (popover) and commits no move", async () => {
+    const before = vi.mocked(placeRackAction).mock.calls.length;
     renderCanvas(true);
     enterEditMode();
     expect(screen.queryByTestId("rack-actions-popover")).toBeNull();
     const marker = screen.getByTestId("plan-rack-RK01");
     const svg = screen.getByTestId("floor-plan-canvas");
     fireEvent.pointerDown(marker, { clientX: 120, clientY: 120, button: 0, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 120, clientY: 120, pointerId: 1 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 120, clientY: 120, pointerId: 1 });
+    });
     expect(screen.getByTestId("rack-actions-popover")).toBeInTheDocument();
     expect(screen.getByTestId("rack-action-edit")).toBeInTheDocument();
     expect(screen.getByTestId("rack-action-delete")).toBeInTheDocument();
+    // A still press is a select, never a move.
+    expect(placeRackAction).toHaveBeenCalledTimes(before);
+  });
+
+  it("dragging a placed rack commits exactly ONE move (placeRackAction) and leaves pan unchanged", async () => {
+    const before = vi.mocked(placeRackAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const transformBefore = svg.querySelector("g")!.getAttribute("transform");
+
+    const marker = screen.getByTestId("plan-rack-RK01");
+    fireEvent.pointerDown(marker, { clientX: 300, clientY: 300, button: 0, pointerId: 2 });
+    fireEvent.pointerMove(svg, { clientX: 320, clientY: 310, pointerId: 2 });
+    fireEvent.pointerMove(svg, { clientX: 350, clientY: 330, pointerId: 2 });
+    fireEvent.pointerMove(svg, { clientX: 380, clientY: 350, pointerId: 2 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 380, clientY: 350, pointerId: 2 });
+    });
+
+    expect(placeRackAction).toHaveBeenCalledTimes(before + 1);
+    const fd = vi.mocked(placeRackAction).mock.calls.at(-1)![0] as FormData;
+    expect(fd.get("id")).toBe("rack-placed");
+    const x = Number(fd.get("x")), y = Number(fd.get("y"));
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(1);
+    // The marker's pointerdown must stopPropagation, or this drag would also pan the canvas.
+    expect(svg.querySelector("g")!.getAttribute("transform")).toBe(transformBefore);
   });
 
   it("the rack Edit icon opens the rack in the rack designer (/racks/<id>)", () => {

@@ -285,8 +285,9 @@ function DevicePin({
 }
 
 /** A placed rack: a square marker (distinct from the round device pins) carrying the rack code.
- *  Selection is decided by the SVG root's tap detection via `data-rack-id` — the same drift-proof
- *  path rooms use — so this renders no pointer handlers of its own. */
+ *  Like a device pin, it owns its pointer-down: a press with no travel selects it (popover), a
+ *  drag moves it. `dragPoint`, when present, is a LIVE drag preview only — the committed move uses
+ *  the pointer-up position computed fresh. */
 function RackMarker({
   rack,
   imgW,
@@ -294,6 +295,8 @@ function RackMarker({
   zoom,
   editMode,
   selected,
+  dragPoint,
+  onPointerDownRack,
 }: {
   rack: SiteRackRow;
   imgW: number;
@@ -301,14 +304,27 @@ function RackMarker({
   zoom: number;
   editMode?: boolean;
   selected?: boolean;
+  dragPoint?: NormPoint | null;
+  onPointerDownRack?: (e: React.PointerEvent, rackId: string) => void;
 }) {
-  const anchor = normToScreen([rack.x as number, rack.y as number], identityView(imgW, imgH));
+  const p: NormPoint = dragPoint ?? [rack.x as number, rack.y as number];
+  const anchor = normToScreen(p, identityView(imgW, imgH));
   return (
     <g
       data-testid={`plan-rack-${rack.code}`}
-      data-rack-id={rack.id}
       transform={`translate(${anchor.x} ${anchor.y})`}
-      style={editMode ? { cursor: "pointer" } : undefined}
+      // Owns its pointer-down (stopPropagation), or a drag on it would pan the canvas via the
+      // SVG root's own onPointerDown — the same contract the device pins keep.
+      onPointerDown={
+        editMode
+          ? (e) => {
+              e.stopPropagation();
+              onPointerDownRack?.(e, rack.id);
+            }
+          : undefined
+      }
+      onClick={editMode ? (e) => e.stopPropagation() : undefined}
+      style={editMode ? { cursor: "grab" } : undefined}
     >
       <g transform={`scale(${1 / zoom})`}>
         <title>Rack {rack.code}</title>
@@ -491,13 +507,14 @@ export function FloorPlanCanvas({
 
   // ---- Live drag previews (visual only — the action commits ONCE, on pointer-up) ----
   const [pinPreview, setPinPreview] = useState<{ deviceId: string; point: NormPoint } | null>(null);
+  const [rackPreview, setRackPreview] = useState<{ rackId: string; point: NormPoint } | null>(null);
   const [vertexPreview, setVertexPreview] = useState<
     { roomId: string; index: number; point: NormPoint } | null
   >(null);
 
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
   // even if the cursor leaves the SVG mid-gesture.
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null; rackId: string | null } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null } | null>(null);
   // Undo stack for the room CURRENTLY being vertex-edited: each committed change (move / insert /
   // delete) first pushes the polygon as it was, so a right-click can step back through them. Reset
   // whenever the edited room changes (see the effect below). Tracing uses drawPoints directly.
@@ -514,6 +531,8 @@ export function FloorPlanCanvas({
   const pinDragRef = useRef<{ deviceId: string; moved: boolean; clientX: number; clientY: number } | null>(
     null
   );
+  // Rack-move drag: same shape/contract as pinDragRef.
+  const rackDragRef = useRef<{ rackId: string; moved: boolean; clientX: number; clientY: number } | null>(null);
   // Vertex-move drag: same shape/contract as pinDragRef. `polygon` is the room's polygon AS
   // RENDERED at drag-start — the commit on pointer-up maps over this exact array using `index`,
   // never a re-derived or stale one (Task 2 review note).
@@ -747,18 +766,6 @@ export function FloorPlanCanvas({
     setSelectedRackId(null);
   }
 
-  /** Tapping a placed rack marker selects it → shows the edit/delete popover. */
-  function selectRack(id: string) {
-    setSelectedRackId(id);
-    setPlacingDeviceId(null);
-    setPlacingRackId(null);
-    setDrawingRoomId(null);
-    setDrawPoints([]);
-    setHoverPoint(null);
-    setSelectedPinId(null);
-    setSelectedVertex(null);
-    clearRoomSelection();
-  }
 
   // ---- Pin / vertex drag start (attached by the child shapes; both stopPropagation first) ----
   const onPinPointerDown = (e: React.PointerEvent, deviceId: string) => {
@@ -768,6 +775,17 @@ export function FloorPlanCanvas({
     clearRoomSelection();
     setSelectedVertex(null);
     pinDragRef.current = { deviceId, moved: false, clientX: e.clientX, clientY: e.clientY };
+  };
+
+  // A rack press selects it immediately (so a no-move release just shows the popover) and arms a
+  // drag; the move only commits on pointer-up, and only if it actually moved.
+  const onRackPointerDown = (e: React.PointerEvent, rackId: string) => {
+    if (e.button !== 0) return;
+    setSelectedRackId(rackId);
+    setSelectedPinId(null);
+    clearRoomSelection();
+    setSelectedVertex(null);
+    rackDragRef.current = { rackId, moved: false, clientX: e.clientX, clientY: e.clientY };
   };
 
   const onVertexPointerDown = (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => {
@@ -782,16 +800,13 @@ export function FloorPlanCanvas({
     e.currentTarget.setPointerCapture?.(e.pointerId);
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
-    const target = e.target as Element;
-    const roomEl = target.closest?.("[data-room-id]");
-    const rackEl = target.closest?.("[data-rack-id]");
+    const roomEl = (e.target as Element).closest?.("[data-room-id]");
     dragRef.current = {
       x: e.clientX,
       y: e.clientY,
       panX: view.panX,
       panY: view.panY,
       roomId: roomEl?.getAttribute("data-room-id") ?? null,
-      rackId: rackEl?.getAttribute("data-rack-id") ?? null,
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -802,6 +817,15 @@ export function FloorPlanCanvas({
       drag.clientY = e.clientY;
       const n = toNorm(e.clientX, e.clientY);
       if (n) setPinPreview({ deviceId: drag.deviceId, point: n });
+      return;
+    }
+    if (rackDragRef.current) {
+      const drag = rackDragRef.current;
+      drag.moved = true;
+      drag.clientX = e.clientX;
+      drag.clientY = e.clientY;
+      const n = toNorm(e.clientX, e.clientY);
+      if (n) setRackPreview({ rackId: drag.rackId, point: n });
       return;
     }
     if (vertexDragRef.current) {
@@ -833,6 +857,17 @@ export function FloorPlanCanvas({
       }
       return;
     }
+    if (rackDragRef.current) {
+      const drag = rackDragRef.current;
+      rackDragRef.current = null;
+      setRackPreview(null);
+      // Only a drag that moved commits a new position — a still press was a plain select.
+      if (drag.moved) {
+        const n = toNorm(drag.clientX, drag.clientY);
+        if (n) void commitPlaceRack(drag.rackId, n);
+      }
+      return;
+    }
     if (vertexDragRef.current) {
       const drag = vertexDragRef.current;
       vertexDragRef.current = null;
@@ -856,9 +891,9 @@ export function FloorPlanCanvas({
     if (d && editMode && !placingDeviceId && !placingRackId && !drawingRoomId) {
       const travel = Math.hypot(e.clientX - d.x, e.clientY - d.y);
       if (travel < TAP_THRESHOLD_PX) {
-        // A rack marker sits above the room polygons, so a tap on one takes precedence.
-        if (d.rackId) selectRack(d.rackId);
-        else if (d.roomId) selectRoom(d.roomId);
+        // Pins and racks own their own pointer-down (they stopPropagation), so a tap that reaches
+        // here landed on a room polygon or empty space.
+        if (d.roomId) selectRoom(d.roomId);
         else {
           clearRoomSelection();
           setSelectedRackId(null);
@@ -923,8 +958,10 @@ export function FloorPlanCanvas({
         // last coordinates even though the drag "looked" cancelled. Clearing the live preview
         // state as well snaps the pin/vertex back to its pre-drag, committed position visually.
         pinDragRef.current = null;
+        rackDragRef.current = null;
         vertexDragRef.current = null;
         setPinPreview(null);
+        setRackPreview(null);
         setVertexPreview(null);
         return;
       }
@@ -1177,6 +1214,8 @@ export function FloorPlanCanvas({
                 zoom={view.zoom}
                 editMode={editMode}
                 selected={selectedRackId === rack.id}
+                dragPoint={rackPreview && rackPreview.rackId === rack.id ? rackPreview.point : null}
+                onPointerDownRack={onRackPointerDown}
               />
             ))}
             {drawingRoomId && (
