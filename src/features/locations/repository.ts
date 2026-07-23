@@ -7,6 +7,7 @@ import type {
   RoomRow,
   RackRow,
   FloorDeviceRow,
+  FloorPlanRow,
 } from "@/lib/supabase/types";
 
 export async function createSite(
@@ -182,4 +183,59 @@ export async function updateFloorDevice(
 export async function deleteFloorDevice(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("floor_devices").delete().eq("id", id);
   if (error) throw new Error(`deleteFloorDevice: ${error.message}`);
+}
+
+export async function getFloorPlan(db: SupabaseClient, floorId: string): Promise<FloorPlanRow | null> {
+  const { data, error } = await db.from("floor_plans").select("*").eq("floor_id", floorId).maybeSingle();
+  if (error) throw new Error(`getFloorPlan: ${error.message}`);
+  return (data as FloorPlanRow | null) ?? null;
+}
+
+/** Floor must exist before a plan can be attached to it — this is a read, not a trust boundary
+ *  the caller can skip. `.upsert` on floor_id conflict means re-uploading a plan for the same
+ *  floor replaces the row rather than duplicating it (storage path is deterministic per floor). */
+export async function upsertFloorPlan(
+  db: SupabaseClient,
+  input: {
+    floorId: string;
+    storagePath: string;
+    widthPx: number;
+    heightPx: number;
+    originalFilename: string;
+    source: "image" | "pdf";
+  }
+): Promise<FloorPlanRow> {
+  const { data: floor, error: floorErr } = await db.from("floors").select("id").eq("id", input.floorId).single();
+  if (floorErr || !floor) throw new Error(`upsertFloorPlan: floor not found`);
+  const { data, error } = await db
+    .from("floor_plans")
+    .upsert(
+      {
+        floor_id: input.floorId,
+        storage_path: input.storagePath,
+        width_px: input.widthPx,
+        height_px: input.heightPx,
+        original_filename: input.originalFilename,
+        source: input.source,
+      },
+      { onConflict: "floor_id" }
+    )
+    .select("*")
+    .single();
+  if (error) throw new Error(`upsertFloorPlan: ${error.message}`);
+  return data as FloorPlanRow;
+}
+
+/** Deletes the plan row AND clears every placement that depended on it — devices lose their x/y,
+ *  rooms lose their plan_polygon — all in the same flow, so a stale plan never leaves stale
+ *  coordinates pointing at an image that no longer exists. */
+export async function deleteFloorPlan(db: SupabaseClient, floorId: string): Promise<void> {
+  const { error: planErr } = await db.from("floor_plans").delete().eq("floor_id", floorId);
+  if (planErr) throw new Error(`deleteFloorPlan: ${planErr.message}`);
+  const { error: devErr } = await db.from("floor_devices")
+    .update({ x: null, y: null }).eq("floor_id", floorId);
+  if (devErr) throw new Error(`deleteFloorPlan: ${devErr.message}`);
+  const { error: roomErr } = await db.from("rooms")
+    .update({ plan_polygon: null }).eq("floor_id", floorId);
+  if (roomErr) throw new Error(`deleteFloorPlan: ${roomErr.message}`);
 }

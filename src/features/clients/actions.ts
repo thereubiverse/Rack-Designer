@@ -26,10 +26,35 @@ import {
   createFloorDevice,
   updateFloorDevice,
   deleteFloorDevice,
+  getFloorPlan,
+  upsertFloorPlan,
+  deleteFloorPlan,
 } from "@/features/locations/repository";
+import { readPngDimensions } from "./pngHeader";
+import { uploadPlanObject, removePlanObject } from "./planStorage";
 
 const FLOOR_DEVICE_STATUSES = ["planned", "installed"] as const;
 type FloorDeviceStatus = (typeof FLOOR_DEVICE_STATUSES)[number];
+
+const PLAN_SOURCES = ["image", "pdf"] as const;
+type PlanSource = (typeof PLAN_SOURCES)[number];
+
+const MAX_PLAN_BYTES = 15 * 1024 * 1024; // 15MB
+
+interface BlobLike {
+  size: number;
+  name?: string;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+function isBlobLike(v: unknown): v is BlobLike {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as { size?: unknown }).size === "number" &&
+    typeof (v as { arrayBuffer?: unknown }).arrayBuffer === "function"
+  );
+}
 
 function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "device"): string {
   const msg = e instanceof Error ? e.message : "Unknown error";
@@ -408,6 +433,87 @@ export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok:
   } catch (e) {
     return { ok: false, error: friendly(e, "device") };
   }
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+/** Trust posture for this slice: dimensions are decoded from the uploaded bytes (never taken from
+ *  FormData), and the storage scope (site) is derived from the floor row (never from the caller).
+ *  ORDER MATTERS and is part of the contract: floor lookup -> size check -> PNG decode -> storage
+ *  upload -> row upsert. A rejection at any step must leave NO storage write behind. */
+export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const floorId = String(formData.get("floorId") ?? "");
+  const file = formData.get("file");
+  const rawSource = String(formData.get("source") ?? "image");
+
+  // Duck-typed rather than `instanceof Blob`/`instanceof File`: FormData's Blob comes from
+  // whatever Fetch/File implementation the runtime provides, and different runtimes (Node vs. a
+  // jsdom test environment) do not share a Blob/File constructor, so an identity check would be
+  // brittle. All this action actually needs is `.size` and `.arrayBuffer()`.
+  if (!isBlobLike(file)) return { ok: false, error: "No file provided" };
+  if (!PLAN_SOURCES.includes(rawSource as PlanSource)) return { ok: false, error: "Invalid plan source" };
+  const source = rawSource as PlanSource;
+
+  const db = createServiceClient();
+
+  // Floor lookup: derives the site for the storage path. NEVER trust a client-supplied siteId,
+  // and this also doubles as "does this floor exist" — an unknown floor fails here, before any
+  // byte is read or any storage call is made.
+  const { data: floor, error: floorErr } = await db.from("floors").select("id, site_id").eq("id", floorId).single();
+  if (floorErr || !floor) return { ok: false, error: "Floor not found" };
+  const siteId = (floor as { site_id: string }).site_id;
+
+  // Size check uses the Blob API's `.size` — BEFORE reading any bytes.
+  if (file.size > MAX_PLAN_BYTES) return { ok: false, error: "File is too large (max 15MB)" };
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  // Decoded from the actual bytes, never from any client-supplied width/height field. Rejects
+  // anything that isn't a well-formed PNG BEFORE any storage write.
+  const dims = readPngDimensions(bytes);
+  if (!dims) return { ok: false, error: "File is not a valid PNG" };
+
+  const path = `${siteId}/${floorId}.png`;
+
+  try {
+    await uploadPlanObject(db, path, bytes);
+    await upsertFloorPlan(db, {
+      floorId,
+      storagePath: path,
+      widthPx: dims.width,
+      heightPx: dims.height,
+      originalFilename: typeof file.name === "string" ? file.name : "plan.png",
+      source,
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+export async function deleteFloorPlanAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const floorId = String(formData.get("floorId") ?? "");
+
+  const db = createServiceClient();
+
+  // Best-effort object removal: a missing (or already-removed) storage object must never block
+  // the row + placement cleanup below, so any failure here — including the lookup itself — is
+  // swallowed inside its own try/catch.
+  try {
+    const plan = await getFloorPlan(db, floorId);
+    if (plan) await removePlanObject(db, plan.storage_path);
+  } catch {
+    // swallow — see comment above.
+  }
+
+  try {
+    await deleteFloorPlan(db, floorId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+
   revalidatePath("/clients");
   return { ok: true };
 }
