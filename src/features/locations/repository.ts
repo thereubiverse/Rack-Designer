@@ -79,3 +79,41 @@ export async function createRack(
   if (error) throw new Error(`createRack: ${error.message}`);
   return data as RackRow;
 }
+
+export async function listFloorsForSite(db: SupabaseClient, siteId: string): Promise<FloorRow[]> {
+  const { data, error } = await db.from("floors").select("*").eq("site_id", siteId)
+    .order("sort_order", { ascending: true }).order("code", { ascending: true });
+  if (error) throw new Error(`listFloorsForSite: ${error.message}`);
+  return (data ?? []) as FloorRow[];
+}
+
+export async function listRoomsForSite(db: SupabaseClient, siteId: string): Promise<RoomRow[]> {
+  const floors = await listFloorsForSite(db, siteId);
+  if (floors.length === 0) return [];
+  const { data, error } = await db.from("rooms").select("*")
+    .in("floor_id", floors.map((f) => f.id)).order("code", { ascending: true });
+  if (error) throw new Error(`listRoomsForSite: ${error.message}`);
+  return (data ?? []) as RoomRow[];
+}
+
+export async function renameFloor(db: SupabaseClient, id: string, input: { code: string; name?: string | null }): Promise<void> {
+  const { error } = await db.from("floors")
+    .update({ code: normaliseCode(input.code), name: input.name ?? null }).eq("id", id);
+  if (error) throw new Error(`renameFloor: ${error.message}`);
+}
+
+export async function deleteFloor(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("floors").delete().eq("id", id);
+  if (error) throw new Error(`deleteFloor: ${error.message}`);
+}
+
+export async function renameRoom(db: SupabaseClient, id: string, input: { code: string; name?: string | null; type: RoomType }): Promise<void> {
+  const { error } = await db.from("rooms")
+    .update({ code: normaliseCode(input.code), name: input.name ?? null, type: input.type }).eq("id", id);
+  if (error) throw new Error(`renameRoom: ${error.message}`);
+}
+
+export async function deleteRoom(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("rooms").delete().eq("id", id);
+  if (error) throw new Error(`deleteRoom: ${error.message}`);
+}

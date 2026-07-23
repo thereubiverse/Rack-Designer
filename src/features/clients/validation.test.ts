@@ -17,6 +17,12 @@ describe("validateCode", () => {
   it("rejects characters outside the allowed set, naming the kind", () => {
     expect(validateCode("AC ME", "site")).toBe("Site code can only use letters, numbers, - and _");
   });
+  it("accepts a floor code", () => {
+    expect(validateCode("gf", "floor")).toBeNull();
+  });
+  it("rejects an empty device code, naming the kind", () => {
+    expect(validateCode("", "device")).toBe("Device code is required");
+  });
 });
 
 describe("describeCascade", () => {
@@ -26,6 +32,12 @@ describe("describeCascade", () => {
   });
   it("says nothing is affected when the subtree is empty", () => {
     expect(describeCascade({})).toBe("nothing else");
+  });
+  it("includes rooms between sites and racks, pluralised", () => {
+    expect(describeCascade({ rooms: 2, racks: 1, devices: 3 })).toBe("2 rooms, 1 rack and 3 devices");
+  });
+  it("singularises a lone room", () => {
+    expect(describeCascade({ rooms: 1 })).toBe("1 room");
   });
 });
 
