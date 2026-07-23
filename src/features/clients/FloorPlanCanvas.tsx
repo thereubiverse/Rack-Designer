@@ -430,6 +430,15 @@ export function FloorPlanCanvas({
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
   // even if the cursor leaves the SVG mid-gesture.
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; roomId: string | null } | null>(null);
+  // Undo stack for the room CURRENTLY being vertex-edited: each committed change (move / insert /
+  // delete) first pushes the polygon as it was, so a right-click can step back through them. Reset
+  // whenever the edited room changes (see the effect below). Tracing uses drawPoints directly.
+  const editHistoryRef = useRef<NormPoint[][]>([]);
+
+  // The vertex-edit undo stack is per edited room — switching rooms (or leaving edit) starts fresh.
+  useEffect(() => {
+    editHistoryRef.current = [];
+  }, [editingRoomId]);
   // Pin-move drag: set by DevicePin's onPointerDown (which stopPropagation's, so the ROOT's own
   // onPointerDown above never fires — panning and pin-dragging can never both start from the same
   // gesture). `moved` distinguishes a plain select-click (no commit) from an actual drag (commits
@@ -505,6 +514,12 @@ export function FloorPlanCanvas({
     router.refresh();
   }
 
+  /** Commit a vertex edit, first recording the polygon as it was so a right-click can undo it. */
+  function commitRoomPolygonEdit(roomId: string, priorPolygon: NormPoint[], nextPolygon: NormPoint[]) {
+    editHistoryRef.current.push(priorPolygon);
+    void commitRoomPolygon(roomId, nextPolygon);
+  }
+
   async function commitDrawnRoom(roomId: string, points: NormPoint[]) {
     // Dedupe BEFORE validating/saving, uniformly for both closing gestures (Enter and
     // dblclick funnel through this single function). If enough vertices collapse to drop below
@@ -549,14 +564,27 @@ export function FloorPlanCanvas({
     // reference equality is exactly how a refusal is told apart from a real removal here.
     if (result === room.plan_polygon) return;
     setSelectedVertex(null);
-    void commitRoomPolygon(room.id, result);
+    commitRoomPolygonEdit(room.id, room.plan_polygon, result);
   }
 
   function onInsertVertexClick(roomId: string, polygon: NormPoint[], edgeIndex: number) {
     // `edgeIndex` came from a synchronous polygon.map in RoomPolygon (Task 2 review note) — never
     // stale — so it's always in-range for insertVertexOnEdge, which throws otherwise.
     const next = insertVertexOnEdge(polygon, edgeIndex);
-    void commitRoomPolygon(roomId, next);
+    commitRoomPolygonEdit(roomId, polygon, next);
+  }
+
+  /** Right-click undo. While tracing, removes the last placed point. While vertex-editing, reverts
+   *  the last committed change (move / insert / delete) by replaying the recorded polygon. */
+  function undoLastPoint() {
+    if (drawingRoomId) {
+      setDrawPoints((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+      return;
+    }
+    if (editingRoomId && editHistoryRef.current.length > 0) {
+      const prevPolygon = editHistoryRef.current.pop()!;
+      void commitRoomPolygon(editingRoomId, prevPolygon);
+    }
   }
 
   // ---- Tray selection ----
@@ -680,7 +708,7 @@ export function FloorPlanCanvas({
         const n = toNorm(drag.clientX, drag.clientY);
         if (n) {
           const nextPolygon = drag.polygon.map((p, i) => (i === drag.index ? n : p));
-          void commitRoomPolygon(drag.roomId, nextPolygon);
+          commitRoomPolygonEdit(drag.roomId, drag.polygon, nextPolygon);
         }
       }
       return;
@@ -919,6 +947,14 @@ export function FloorPlanCanvas({
           onPointerCancel={onPointerUp}
           onClick={handleCanvasClick}
           onDoubleClick={handleCanvasDoubleClick}
+          onContextMenu={(e) => {
+            // Right-click = undo the last point, while tracing or vertex-editing. Suppress the
+            // browser menu only in those modes so a normal right-click works everywhere else.
+            if (editMode && (drawingRoomId || editingRoomId)) {
+              e.preventDefault();
+              undoLastPoint();
+            }
+          }}
         >
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
             <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />

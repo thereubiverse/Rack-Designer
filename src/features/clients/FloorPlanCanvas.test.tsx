@@ -563,4 +563,47 @@ describe("FloorPlanCanvas (edit mode)", () => {
     fireEvent.pointerUp(svg, { clientX: 300, clientY: 300, pointerId: 4 });
     expect(screen.queryByTestId("room-actions-popover")).toBeNull();
   });
+
+  it("right-click while TRACING removes the last placed point", async () => {
+    renderCanvas(true);
+    enterEditMode();
+    fireEvent.click(screen.getByTestId("tray-room-NOPLAN"));
+    const svg = screen.getByTestId("floor-plan-canvas");
+    // Four corners, then undo one → three remain → Enter commits a 3-vertex polygon.
+    fireEvent.click(svg, { clientX: 100, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 100 });
+    fireEvent.click(svg, { clientX: 300, clientY: 300 });
+    fireEvent.click(svg, { clientX: 100, clientY: 300 });
+    fireEvent.contextMenu(svg);
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Enter" });
+    });
+    const fd = vi.mocked(setRoomPolygonAction).mock.calls.at(-1)![0] as FormData;
+    expect(JSON.parse(String(fd.get("polygon")))).toHaveLength(3);
+  });
+
+  it("right-click while EDITING reverts the last committed vertex change", async () => {
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI"); // TRI has 3 vertices; handles shown
+    const svg = screen.getByTestId("floor-plan-canvas");
+
+    // Insert a vertex → commits a 4-point polygon and records the 3-point original for undo.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("vertex-insert-TRI-0"));
+    });
+    const afterInsert = JSON.parse(
+      String((vi.mocked(setRoomPolygonAction).mock.calls.at(-1)![0] as FormData).get("polygon"))
+    );
+    expect(afterInsert).toHaveLength(4);
+
+    // Right-click → re-commits the original 3-point polygon.
+    await act(async () => {
+      fireEvent.contextMenu(svg);
+    });
+    const afterUndo = JSON.parse(
+      String((vi.mocked(setRoomPolygonAction).mock.calls.at(-1)![0] as FormData).get("polygon"))
+    );
+    expect(afterUndo).toHaveLength(3);
+  });
 });
