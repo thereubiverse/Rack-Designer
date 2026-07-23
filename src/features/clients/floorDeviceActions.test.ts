@@ -217,6 +217,19 @@ describe("updateFloorDeviceAction", () => {
     expect(deviceUpdate?.values.floor_id).toBe("f2");
     expect(deviceUpdate?.values.site_id).toBe("SITE-B");
   });
+
+  it("rejects a device type whose category is not 'floor', with no update recorded", async () => {
+    const { db, updateCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      device_types: { selectResult: () => ({ data: { id: "t-rack", category: "rack" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await updateFloorDeviceAction(updateDeviceForm({ deviceTypeId: "t-rack" }));
+
+    expect(res.ok).toBe(false);
+    expect(updateCalls.find((c) => c.table === "floor_devices")).toBeUndefined();
+  });
 });
 
 describe("deleteFloorDeviceAction", () => {
