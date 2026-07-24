@@ -14,7 +14,7 @@ import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
-import { deviceTypeIcon } from "@/features/device-library/deviceTypeIcons";
+import { deviceTypeIcon, deviceTypeColor } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
 import {
   normToScreen,
@@ -69,10 +69,6 @@ const SNAP_PX = 12;
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
-const STATUS_PIN_COLOR: Record<FloorDeviceRow["status"], string> = {
-  planned: "#525252",
-  installed: "#15803d",
-};
 
 /** The view every child shape is positioned with: zero pan, unit zoom, so normToScreen(p, this)
  *  collapses to (nx * imgW, ny * imgH) — plain IMAGE-PIXEL space. See the coordinate-model
@@ -232,6 +228,7 @@ function DevicePin({
   glyphScale,
   typeName,
   icon,
+  color,
   editMode,
   selected,
   dragPoint,
@@ -245,6 +242,8 @@ function DevicePin({
   glyphScale: number;
   typeName: string;
   icon: string;
+  /** Pin fill, colour-coded by device type. */
+  color: string;
   editMode?: boolean;
   selected?: boolean;
   dragPoint?: NormPoint | null;
@@ -257,7 +256,6 @@ function DevicePin({
   // never this prop.
   const p: NormPoint = dragPoint ?? [device.x as number, device.y as number];
   const anchor = normToScreen(p, identityView(imgW, imgH));
-  const color = STATUS_PIN_COLOR[device.status];
 
   return (
     // The OUTER group's transform is exactly translate(anchor) — nothing else — so a test can
@@ -361,7 +359,7 @@ function RackMarker({
         {selected && (
           <rect x={-12} y={-12} width={24} height={24} rx={6} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <rect x={-9} y={-9} width={18} height={18} rx={4} fill="#0f172a" stroke="#ffffff" strokeWidth={2} />
+        <rect x={-9} y={-9} width={18} height={18} rx={4} fill={deviceTypeColor("RK")} stroke="#ffffff" strokeWidth={2} />
         {/* The rack (server) glyph, white, centred in the square. */}
         <g transform="translate(-6 -6)" style={{ pointerEvents: "none" }}>
           <Icon icon={deviceTypeIcon("RK")} width={12} height={12} color="#ffffff" />
@@ -1208,6 +1206,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
+  const typeColor = (id: string) => deviceTypeColor(deviceTypes.find((t) => t.id === id)?.code);
   // Pins/racks are LOCKED to a fixed fraction of the print: the inner glyph is scaled purely by the
   // plan size, with no dependence on the live zoom, so a pin is always the same size RELATIVE to the
   // plan (it grows/shrinks 1:1 with the print). The factor sets a pin's radius as a fraction of the
@@ -1390,6 +1389,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 glyphScale={pinScale}
                 typeName={typeName(device.device_type_id)}
                 icon={typeIcon(device.device_type_id)}
+                color={typeColor(device.device_type_id)}
                 editMode={editMode}
                 selected={selectedPinId === device.id}
                 dragPoint={pinPreview && pinPreview.deviceId === device.id ? pinPreview.point : null}

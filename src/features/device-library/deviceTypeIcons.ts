@@ -38,3 +38,42 @@ export function deviceTypeIcon(code: string | null | undefined): string {
   if (!code) return DEFAULT_DEVICE_ICON;
   return DEVICE_TYPE_ICON[code.toUpperCase()] ?? DEFAULT_DEVICE_ICON;
 }
+
+// A distinct fill per device type so pins/racks are colour-coded by type at a glance. Chosen at the
+// ~600 tailwind level so a white icon and label read clearly on top. Unmapped types get a neutral.
+const DEVICE_TYPE_COLOR: Record<string, string> = {
+  // Floor device types
+  CAM: "#dc2626", // red
+  AP: "#2563eb", // blue
+  ACP: "#d97706", // amber
+  DP: "#475569", // slate
+  ISP: "#7c3aed", // violet
+  LP: "#0d9488", // teal
+  PH: "#0891b2", // cyan
+  PR: "#4f46e5", // indigo
+  "3DP": "#db2777", // pink
+  RK: "#0f172a", // near-black (racks)
+  SCR: "#16a34a", // green
+  TO: "#ea580c", // orange
+
+  // Rack device types
+  SW: "#2563eb",
+  RT: "#0891b2",
+  GW: "#0891b2",
+  FW: "#dc2626",
+  SRV: "#475569",
+  PP: "#7c3aed",
+  PDU: "#ea580c",
+  UPS: "#16a34a",
+  KVM: "#4f46e5",
+  CM: "#64748b",
+  ST: "#64748b",
+};
+
+export const DEFAULT_DEVICE_COLOR = "#525252";
+
+/** Fill colour for a device type's code (case-insensitive); the default for unmapped codes. */
+export function deviceTypeColor(code: string | null | undefined): string {
+  if (!code) return DEFAULT_DEVICE_COLOR;
+  return DEVICE_TYPE_COLOR[code.toUpperCase()] ?? DEFAULT_DEVICE_COLOR;
+}

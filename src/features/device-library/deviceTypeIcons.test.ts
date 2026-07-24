@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { deviceTypeIcon, DEFAULT_DEVICE_ICON } from "./deviceTypeIcons";
+import {
+  deviceTypeIcon,
+  DEFAULT_DEVICE_ICON,
+  deviceTypeColor,
+  DEFAULT_DEVICE_COLOR,
+} from "./deviceTypeIcons";
 
 describe("deviceTypeIcon", () => {
   it("maps known type codes to their icon, case-insensitively", () => {
@@ -14,5 +19,18 @@ describe("deviceTypeIcon", () => {
     expect(deviceTypeIcon("")).toBe(DEFAULT_DEVICE_ICON);
     expect(deviceTypeIcon(null)).toBe(DEFAULT_DEVICE_ICON);
     expect(deviceTypeIcon(undefined)).toBe(DEFAULT_DEVICE_ICON);
+  });
+});
+
+describe("deviceTypeColor", () => {
+  it("maps known type codes to a colour, case-insensitively", () => {
+    expect(deviceTypeColor("CAM")).toBe("#dc2626");
+    expect(deviceTypeColor("ap")).toBe("#2563eb");
+  });
+
+  it("falls back to the default colour for unmapped or missing codes", () => {
+    expect(deviceTypeColor("ZZZ")).toBe(DEFAULT_DEVICE_COLOR);
+    expect(deviceTypeColor(null)).toBe(DEFAULT_DEVICE_COLOR);
+    expect(deviceTypeColor(undefined)).toBe(DEFAULT_DEVICE_COLOR);
   });
 });
