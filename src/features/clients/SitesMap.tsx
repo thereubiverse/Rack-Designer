@@ -130,6 +130,17 @@ const FIT_OPTIONS = {
   maxZoom: 16,
 } satisfies L.FitBoundsOptions;
 
+/** The default padded fit over all sites. Fit with FRACTIONAL zoom (zoomSnap 0) so it lands
+ *  exactly — snapping rounds down a whole power-of-two level and wastes half the frame — then
+ *  restore the caller's snap for interaction. Shared by the mount refit and the fit control so the
+ *  two can never drift. */
+function fitToBounds(map: L.Map, bounds: LatLngBounds) {
+  const snap = map.options.zoomSnap;
+  map.options.zoomSnap = 0;
+  map.fitBounds(bounds, FIT_OPTIONS);
+  map.options.zoomSnap = snap;
+}
+
 /** Snap used while PINCHING, as opposed to scrolling.
  *
  *  A macOS trackpad pinch is not a touch gesture — it arrives as a wheel event with ctrlKey set,
@@ -214,12 +225,7 @@ function FitBounds({ bounds }: FitBoundsProps) {
     //
     // fitBounds reads zoomSnap synchronously to compute its target zoom, so flipping it around the
     // call gets both: an exact fit, and whole-level zooms for interaction.
-    const fit = () => {
-      const snap = map.options.zoomSnap;
-      map.options.zoomSnap = 0;
-      map.fitBounds(bounds, FIT_OPTIONS);
-      map.options.zoomSnap = snap;
-    };
+    const fit = () => fitToBounds(map, bounds);
 
     // The mount fit is done by MapContainer's own `bounds`/`boundsOptions`, so skip it here.
     // Re-fitting immediately after mount is not merely redundant — Leaflet treats fitBounds as
@@ -247,6 +253,42 @@ function FitBounds({ bounds }: FitBoundsProps) {
     // captures every value it could vary by.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, map]);
+
+  return null;
+}
+
+/** A "zoom to fit" control (below the +/- zoom control) that resets the viewport to the default
+ *  padded fit over every site. The control is created once; `boundsRef` keeps the latest bounds so
+ *  a click always fits the current set without re-adding the control. */
+function FitControl({ bounds }: { bounds: LatLngBounds }) {
+  const map = useMap();
+  const boundsRef = useRef(bounds);
+  boundsRef.current = bounds;
+
+  useEffect(() => {
+    const control = new L.Control({ position: "topleft" });
+    control.onAdd = () => {
+      const container = L.DomUtil.create("div", "leaflet-bar leaflet-control leaflet-control-fit");
+      const btn = L.DomUtil.create("a", "", container) as HTMLAnchorElement;
+      btn.href = "#";
+      btn.title = "Zoom to fit all sites";
+      btn.setAttribute("role", "button");
+      btn.setAttribute("aria-label", "Zoom to fit all sites");
+      // Four corner brackets — a "fit to frame" glyph, matching the app's line-icon style.
+      btn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M20 9V5a1 1 0 0 0-1-1h-4"/><path d="M4 15v4a1 1 0 0 0 1 1h4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/></svg>';
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.on(btn, "click", (e) => {
+        L.DomEvent.stop(e);
+        fitToBounds(map, boundsRef.current);
+      });
+      return container;
+    };
+    control.addTo(map);
+    return () => {
+      control.remove();
+    };
+  }, [map]);
 
   return null;
 }
@@ -329,6 +371,7 @@ export function SitesMap({ blips, clientCode, selectedId, onSelect }: SitesMapPr
         />
         <AttributionControl position="bottomright" prefix={false} />
         <FitBounds bounds={bounds} />
+        <FitControl bounds={bounds} />
         <GestureAwareZoom />
         {blips.map((blip) => (
           <SiteMarker

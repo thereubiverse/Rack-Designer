@@ -136,6 +136,29 @@ fieldset:disabled [data-testid$="-trigger"] {
   background-color: #f5f5f5 !important;
 }
 
+/* The custom "zoom to fit" control, styled to match the zoom buttons above it (white rounded
+   square with the same soft shadow) so the stack reads as one set. */
+.leaflet-control-fit {
+  border: none !important;
+  box-shadow: none !important;
+}
+.leaflet-control-fit a {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  background-color: #ffffff !important;
+  color: #404040 !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+.leaflet-control-fit a:hover,
+.leaflet-control-fit a:focus {
+  background-color: #f5f5f5 !important;
+}
+
 /* Zoom animation must stay ENABLED on the sites map: it is what makes Leaflet keep the existing
    tiles and CSS-scale them through the transition. With it off, every zoom does a full view reset
    that drops the old tiles before the new ones load — measured as the map going to 0% tile
