@@ -1200,9 +1200,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
-  // Pins/racks scale WITH the plan rather than staying screen-constant: at the fitted view they show
-  // their design size (glyphScale * fitZoom = 1), then grow/shrink as the live zoom moves off fit.
-  const pinScale = 1 / fitZoomRef.current;
+  // Pin/rack glyph scale. Below the fitted zoom the pins shrink WITH the plan (glyphScale*zoom =
+  // zoom/fitZoom < 1); at or above it they're capped at their design screen size (1/zoom cancels the
+  // outer zoom) so zooming in never blows them up. min() picks whichever rule applies.
+  const pinScale = Math.min(1 / fitZoomRef.current, 1 / view.zoom);
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
       ? { index: vertexPreview.index, point: vertexPreview.point }
