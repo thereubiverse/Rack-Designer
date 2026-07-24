@@ -263,41 +263,43 @@ function CreateTypeModal({ category, onClose, onCreated }: {
             className="mt-1 h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal focus:border-neutral-400 focus:outline-none"
           />
         </label>
-        <label className="mt-3 block text-[11px] font-semibold text-neutral-600">
-          ID prefix *
-          <input
-            data-testid="new-type-code"
-            value={code}
-            onChange={(e) => setCode(normalizeCode(e.target.value))}
-            className="mt-1 h-9 w-24 rounded-lg border border-neutral-200 px-2 text-sm font-normal focus:border-neutral-400 focus:outline-none"
-          />
-        </label>
-        <p className="mt-1 text-xs text-neutral-500">{CODE_HELP}</p>
-        <div className="mt-3 text-[11px] font-semibold text-neutral-600">
-          Appearance
-          <div className="mt-1 flex items-center gap-1.5">
-            <button
-              type="button"
-              data-testid="new-type-icon"
-              onClick={() => setPickerOpen(true)}
-              title="Choose icon"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-neutral-200 transition-colors hover:bg-neutral-100"
-              style={{ color }}
-            >
-              <Icon icon={icon} width={18} height={18} />
-            </button>
-            <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Choose colour (wheel + RGB/hex)">
-              <span className="block h-full w-full rounded-lg border border-neutral-200" style={{ background: color }} />
-              <input
-                type="color"
-                data-testid="new-type-color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              />
-            </label>
+        <div className="mt-3 flex items-end gap-3">
+          <label className="flex-1 text-[11px] font-semibold text-neutral-600">
+            ID prefix *
+            <input
+              data-testid="new-type-code"
+              value={code}
+              onChange={(e) => setCode(normalizeCode(e.target.value))}
+              className="mt-1 h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal focus:border-neutral-400 focus:outline-none"
+            />
+          </label>
+          <div className="text-[11px] font-semibold text-neutral-600">
+            Appearance
+            <div className="mt-1 flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="new-type-icon"
+                onClick={() => setPickerOpen(true)}
+                title="Choose icon"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-neutral-200 transition-colors hover:bg-neutral-100"
+                style={{ color }}
+              >
+                <Icon icon={icon} width={18} height={18} />
+              </button>
+              <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Choose colour (wheel + RGB/hex)">
+                <span className="block h-full w-full rounded-lg border border-neutral-200" style={{ background: color }} />
+                <input
+                  type="color"
+                  data-testid="new-type-color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+              </label>
+            </div>
           </div>
         </div>
+        <p className="mt-1 text-xs text-neutral-500">{CODE_HELP}</p>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
