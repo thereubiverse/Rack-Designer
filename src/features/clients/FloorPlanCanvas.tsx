@@ -498,6 +498,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [view, setView] = useState<LiveView>({ panX: 0, panY: 0, zoom: 1 });
   const [paneW, setPaneW] = useState(FALLBACK_PANE_WIDTH);
   const [paneH, setPaneH] = useState(FALLBACK_PANE_HEIGHT);
+  // The pre-fit view the Fit button remembers, so a second click returns to it (toggle). Null when
+  // the button will fit; set to the captured view when the button will restore. Any manual pan/zoom
+  // clears it, so the toggle only pairs a fit with an immediately-following restore.
+  const [returnView, setReturnView] = useState<LiveView | null>(null);
   // Latest view, readable synchronously — the fit tween needs its start point without waiting for a
   // re-render, and it must not go stale between animation frames.
   const viewRef = useRef(view);
@@ -586,6 +590,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Zoom about a fixed viewport point (SVG-local coordinates), keeping that point visually still.
   const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
     cancelFitAnim();
+    setReturnView(null);
     setView((v) => {
       const nextZoom = clampZoom(v.zoom * factor);
       if (nextZoom === v.zoom) return v;
@@ -601,10 +606,25 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Reset the view to fit the whole plan in the pane and centre it — the same math the fit-on-mount
   // effect runs, but on demand. Uses the last-measured pane width so it tracks the current layout.
   const fitToArea = useCallback(() => {
+    // Toggle: a click while a pre-fit view is remembered restores it instead of re-fitting.
+    if (returnView) {
+      animateViewTo(returnView);
+      setReturnView(null);
+      return;
+    }
+    const before = viewRef.current;
     const z = Math.min(paneW / imgW, paneH / imgH);
+    const target = { zoom: z, panX: (paneW - imgW * z) / 2, panY: (paneH - imgH * z) / 2 };
     fitZoomRef.current = z;
-    animateViewTo({ zoom: z, panX: (paneW - imgW * z) / 2, panY: (paneH - imgH * z) / 2 });
-  }, [paneW, paneH, imgW, imgH, animateViewTo]);
+    animateViewTo(target);
+    // Arm the restore only if fitting actually moved the view — if we're already at the fit, there's
+    // nothing meaningful to return to and the next click should just fit again.
+    const moved =
+      Math.abs(before.zoom - z) > 1e-3 ||
+      Math.abs(before.panX - target.panX) > 0.5 ||
+      Math.abs(before.panY - target.panY) > 0.5;
+    setReturnView(moved ? before : null);
+  }, [returnView, paneW, paneH, imgW, imgH, animateViewTo]);
 
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
@@ -1106,6 +1126,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     }
     const d = dragRef.current;
     if (!d) return;
+    setReturnView(null);
     setView((v) => ({ ...v, panX: d.panX + (e.clientX - d.x), panY: d.panY + (e.clientY - d.y) }));
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -1569,10 +1590,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             <span className="pointer-events-auto">
               <IconButton
                 data-testid="fit-to-area"
-                icon="tabler:arrows-maximize"
-                tip="Fit to area"
+                icon={returnView ? "tabler:arrows-minimize" : "tabler:arrows-maximize"}
+                tip={returnView ? "Back to previous view" : "Fit to area"}
                 tipSide="right"
-                variant="floating"
+                variant={returnView ? "floatingActive" : "floating"}
+                aria-pressed={returnView != null}
                 onClick={fitToArea}
               />
             </span>
