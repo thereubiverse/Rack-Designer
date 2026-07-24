@@ -49,6 +49,41 @@ const FALLBACK_PANE_HEIGHT = 560;
 const ZOOM_MAX = 8;
 const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute number
 
+// Fit-to-area easing — the SAME transition the rack designer's Fit toggle uses
+// (transform 340ms cubic-bezier(0.2, 0, 0, 1)), so the plan glides to the fitted view instead of
+// snapping. The rack canvas gets this from a CSS transition on its DOM transform; the plan's
+// transform is an SVG attribute driven by React state, so we tween the state itself with the same
+// curve. `cubicBezier` returns the standard progress-remap y(x) for two control points, solved for
+// t via a few Newton-Raphson steps (with a bisection fallback) — identical shape to the CSS timing.
+const FIT_ANIM_MS = 340;
+function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const sampleX = (t: number) => ((ax * t + bx) * t + cx) * t;
+  const sampleY = (t: number) => ((ay * t + by) * t + cy) * t;
+  const solveX = (x: number) => {
+    let t = x;
+    for (let i = 0; i < 8; i++) {
+      const err = sampleX(t) - x;
+      if (Math.abs(err) < 1e-4) return t;
+      const d = (3 * ax * t + 2 * bx) * t + cx;
+      if (Math.abs(d) < 1e-6) break;
+      t -= err / d;
+    }
+    let lo = 0, hi = 1;
+    t = x;
+    for (let i = 0; i < 20; i++) {
+      const err = sampleX(t) - x;
+      if (Math.abs(err) < 1e-4) break;
+      if (err > 0) hi = t; else lo = t;
+      t = (lo + hi) / 2;
+    }
+    return t;
+  };
+  return (t: number) => sampleY(solveX(t));
+}
+const FIT_EASE = cubicBezier(0.2, 0, 0, 1);
+
 // Wheel-zoom sensitivity, split by gesture. A macOS trackpad pinch arrives as a wheel event with
 // ctrlKey set; its accumulated deltaY tracks the two-finger spread, so feeding it through
 // exp(-deltaY * k) at k ~= 0.01 makes the zoom follow the fingers close to 1:1 — the direct,
@@ -463,6 +498,42 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [view, setView] = useState<LiveView>({ panX: 0, panY: 0, zoom: 1 });
   const [paneW, setPaneW] = useState(FALLBACK_PANE_WIDTH);
   const [paneH, setPaneH] = useState(FALLBACK_PANE_HEIGHT);
+  // Latest view, readable synchronously — the fit tween needs its start point without waiting for a
+  // re-render, and it must not go stale between animation frames.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  // Handle of the in-flight fit-to-area tween (rAF id), so a new fit or any manual pan/zoom can
+  // cancel it cleanly instead of fighting it frame-by-frame.
+  const fitAnimRef = useRef<number | null>(null);
+  const cancelFitAnim = useCallback(() => {
+    if (fitAnimRef.current != null) {
+      cancelAnimationFrame(fitAnimRef.current);
+      fitAnimRef.current = null;
+    }
+  }, []);
+  // Ease the view from wherever it is now to `target` over FIT_ANIM_MS with the shared fit curve.
+  const animateViewTo = useCallback((target: LiveView) => {
+    cancelFitAnim();
+    if (typeof requestAnimationFrame === "undefined") { setView(target); return; }
+    const start = viewRef.current;
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / FIT_ANIM_MS);
+      const e = FIT_EASE(p);
+      setView({
+        zoom: start.zoom + (target.zoom - start.zoom) * e,
+        panX: start.panX + (target.panX - start.panX) * e,
+        panY: start.panY + (target.panY - start.panY) * e,
+      });
+      fitAnimRef.current = p < 1 ? requestAnimationFrame(step) : null;
+    };
+    fitAnimRef.current = requestAnimationFrame(step);
+  }, [cancelFitAnim]);
+
+  // Stop any in-flight fit tween if the canvas unmounts (e.g. switching floors) so its rAF callback
+  // can't fire setView after teardown.
+  useEffect(() => cancelFitAnim, [cancelFitAnim]);
 
   const clampZoom = useCallback((z: number) => {
     const floor = fitZoomRef.current * ZOOM_MIN_FACTOR;
@@ -514,6 +585,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
   // Zoom about a fixed viewport point (SVG-local coordinates), keeping that point visually still.
   const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
+    cancelFitAnim();
     setView((v) => {
       const nextZoom = clampZoom(v.zoom * factor);
       if (nextZoom === v.zoom) return v;
@@ -524,15 +596,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         panY: cy - (cy - v.panY) * ratio,
       };
     });
-  }, [clampZoom]);
+  }, [clampZoom, cancelFitAnim]);
 
   // Reset the view to fit the whole plan in the pane and centre it — the same math the fit-on-mount
   // effect runs, but on demand. Uses the last-measured pane width so it tracks the current layout.
   const fitToArea = useCallback(() => {
     const z = Math.min(paneW / imgW, paneH / imgH);
     fitZoomRef.current = z;
-    setView({ zoom: z, panX: (paneW - imgW * z) / 2, panY: (paneH - imgH * z) / 2 });
-  }, [paneW, paneH, imgW, imgH]);
+    animateViewTo({ zoom: z, panX: (paneW - imgW * z) / 2, panY: (paneH - imgH * z) / 2 });
+  }, [paneW, paneH, imgW, imgH, animateViewTo]);
 
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
@@ -985,6 +1057,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (e.button !== 0) return;
+    cancelFitAnim();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
