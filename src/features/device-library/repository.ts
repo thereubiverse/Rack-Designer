@@ -30,12 +30,13 @@ export async function listDeviceTypes(db: SupabaseClient): Promise<DeviceTypeRow
 
 export async function createDeviceType(
   db: SupabaseClient,
-  input: { name: string; code: string; category: "floor" | "rack" },
+  input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
 ): Promise<DeviceTypeRow> {
   const { data, error } = await db.from("device_types")
     .insert({
       name: input.name, code: input.code,
       category: input.category, is_standard: false,
+      color: input.color ?? null, icon: input.icon ?? null,
     })
     .select("*").single();
   if (error) throw new Error(`createDeviceType: ${error.message}`);

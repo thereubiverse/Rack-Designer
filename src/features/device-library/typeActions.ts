@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { createDeviceType, updateDeviceType, deleteDeviceType } from "./repository";
 import { validateCode, validateTypeName } from "./deviceTypeRules";
 
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
 /** Map raw Postgres/Supabase errors to copy a user can act on. */
 function friendly(e: unknown): string {
   const msg = e instanceof Error ? e.message : "Unknown error";
@@ -15,21 +17,28 @@ function friendly(e: unknown): string {
 }
 
 export async function createDeviceTypeAction(
-  input: { name: string; code: string; category: "floor" | "rack" },
+  input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
 ): Promise<{ ok: boolean; error?: string }> {
-  const err = validateTypeName(input.name) ?? validateCode(input.code);
+  const err =
+    validateTypeName(input.name) ??
+    validateCode(input.code) ??
+    (typeof input.color === "string" && !HEX_RE.test(input.color) ? "Colour must be a hex value like #2563eb" : null);
   if (err) return { ok: false, error: err };
   const db = createServiceClient();
   try {
-    await createDeviceType(db, { name: input.name.trim(), code: input.code, category: input.category });
+    await createDeviceType(db, {
+      name: input.name.trim(),
+      code: input.code,
+      category: input.category,
+      color: input.color,
+      icon: input.icon,
+    });
   } catch (e) {
     return { ok: false, error: friendly(e) };
   }
   revalidatePath("/device-library/types");
   return { ok: true };
 }
-
-const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export interface DeviceTypeChange {
   id: string;

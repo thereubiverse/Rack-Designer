@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DeviceTypesManager } from "./DeviceTypesManager";
 import type { DeviceTypeRow } from "./repository";
@@ -67,9 +67,7 @@ describe("DeviceTypesManager", () => {
   it("editing a type's colour saves it as a colour override", async () => {
     const user = userEvent.setup();
     render(<DeviceTypesManager floor={floor} rack={rack} />);
-    const hex = screen.getByTestId("type-hex-r1");
-    await user.clear(hex);
-    await user.type(hex, "#123456");
+    fireEvent.change(screen.getByTestId("type-color-r1"), { target: { value: "#123456" } });
     await user.click(screen.getByTestId("save-rack"));
     expect(saveDeviceTypesAction).toHaveBeenCalledWith([{ id: "r1", color: "#123456" }]);
   });
@@ -93,7 +91,24 @@ describe("DeviceTypesManager", () => {
     expect(screen.getAllByText(/1–4 characters/).length).toBeGreaterThan(0);
     await user.type(screen.getByTestId("new-type-code"), "pdub"); // normalizes to PDUB
     await user.click(screen.getByTestId("new-type-create"));
-    expect(createDeviceTypeAction).toHaveBeenCalledWith({ name: "PDU Bar", code: "PDUB", category: "rack" });
+    expect(createDeviceTypeAction).toHaveBeenCalledWith({
+      name: "PDU Bar", code: "PDUB", category: "rack", color: "#525252", icon: "tabler:cpu",
+    });
+  });
+
+  it("a new custom type carries the colour and icon chosen in the create modal", async () => {
+    const user = userEvent.setup();
+    render(<DeviceTypesManager floor={floor} rack={rack} />);
+    await user.click(screen.getByTestId("add-type-rack"));
+    await user.type(screen.getByTestId("new-type-name"), "Widget");
+    await user.type(screen.getByTestId("new-type-code"), "wid");
+    fireEvent.change(screen.getByTestId("new-type-color"), { target: { value: "#00ff88" } });
+    await user.click(screen.getByTestId("new-type-icon")); // opens the (stubbed) picker
+    await user.click(screen.getByTestId("stub-pick")); // "tabler:star"
+    await user.click(screen.getByTestId("new-type-create"));
+    expect(createDeviceTypeAction).toHaveBeenCalledWith({
+      name: "Widget", code: "WID", category: "rack", color: "#00ff88", icon: "tabler:star",
+    });
   });
 
   it("deleting a custom type calls the action and surfaces failures", async () => {

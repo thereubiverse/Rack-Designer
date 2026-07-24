@@ -7,7 +7,7 @@ import type { DeviceTypeRow } from "./repository";
 import { createDeviceTypeAction, saveDeviceTypesAction, deleteDeviceTypeAction } from "./typeActions";
 import type { DeviceTypeChange } from "./typeActions";
 import { normalizeCode, validateCode, validateTypeName, CODE_HELP } from "./deviceTypeRules";
-import { deviceTypeColor, deviceTypeIcon } from "./deviceTypeIcons";
+import { deviceTypeColor, deviceTypeIcon, DEFAULT_DEVICE_COLOR, DEFAULT_DEVICE_ICON } from "./deviceTypeIcons";
 import { IconPicker } from "./editor/IconPicker";
 
 type Category = "floor" | "rack";
@@ -213,7 +213,7 @@ function Appearance({
       >
         <Icon icon={icon} width={18} height={18} />
       </button>
-      <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Change colour">
+      <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Change colour (wheel + RGB/hex)">
         <span className="block h-full w-full rounded-lg border border-neutral-200" style={{ background: validHex ? color : "#ffffff" }} />
         <input
           type="color"
@@ -223,14 +223,6 @@ function Appearance({
           className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
         />
       </label>
-      <input
-        value={color}
-        spellCheck={false}
-        onChange={(e) => onColor(e.target.value)}
-        aria-label="Hex colour"
-        data-testid={`type-hex-${id}`}
-        className="h-9 w-24 rounded-lg border border-neutral-200 px-2 font-mono text-sm text-neutral-600 focus:border-neutral-400 focus:outline-none"
-      />
     </div>
   );
 }
@@ -240,6 +232,9 @@ function CreateTypeModal({ category, onClose, onCreated }: {
 }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [color, setColor] = useState(DEFAULT_DEVICE_COLOR);
+  const [icon, setIcon] = useState(DEFAULT_DEVICE_ICON);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const label = category === "floor" ? "Floor" : "Rack";
@@ -248,7 +243,7 @@ function CreateTypeModal({ category, onClose, onCreated }: {
     const err = validateTypeName(name) ?? validateCode(code);
     if (err) { setError(err); return; }
     setBusy(true); setError(null);
-    const res = await createDeviceTypeAction({ name: name.trim(), code, category });
+    const res = await createDeviceTypeAction({ name: name.trim(), code, category, color, icon });
     setBusy(false);
     if (!res.ok) { setError(res.error ?? "Create failed"); return; }
     onCreated();
@@ -258,7 +253,7 @@ function CreateTypeModal({ category, onClose, onCreated }: {
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label={`Create ${label} Device Type`}>
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <h3 className="text-base font-bold">Create {label} Device Type</h3>
-        <p className="mt-1 text-sm text-neutral-500">Create a custom device type. You can set its colour and icon after it&apos;s added.</p>
+        <p className="mt-1 text-sm text-neutral-500">Create a custom device type with its own colour and icon.</p>
         <label className="mt-4 block text-[11px] font-semibold text-neutral-600">
           Name *
           <input
@@ -278,6 +273,32 @@ function CreateTypeModal({ category, onClose, onCreated }: {
           />
         </label>
         <p className="mt-1 text-xs text-neutral-500">{CODE_HELP}</p>
+        <div className="mt-3 text-[11px] font-semibold text-neutral-600">
+          Appearance
+          <div className="mt-1 flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="new-type-icon"
+              onClick={() => setPickerOpen(true)}
+              title="Choose icon"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-neutral-200 transition-colors hover:bg-neutral-100"
+              style={{ color }}
+            >
+              <Icon icon={icon} width={18} height={18} />
+            </button>
+            <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Choose colour (wheel + RGB/hex)">
+              <span className="block h-full w-full rounded-lg border border-neutral-200" style={{ background: color }} />
+              <input
+                type="color"
+                data-testid="new-type-color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+            </label>
+            <span className="font-mono text-sm font-normal text-neutral-500">{color}</span>
+          </div>
+        </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold transition-colors hover:bg-neutral-100">Cancel</button>
@@ -287,6 +308,12 @@ function CreateTypeModal({ category, onClose, onCreated }: {
           </button>
         </div>
       </div>
+      {pickerOpen && (
+        <IconPicker
+          onPick={(n) => { setIcon(n); setPickerOpen(false); }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }
