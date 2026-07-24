@@ -265,6 +265,7 @@ function DevicePin({
     // the live zoom. The counter-scale lives on the INNER group instead (see the comment on
     // FloorPlanCanvas for why the split exists).
     <g
+      className="plan-pin-group"
       data-testid={`plan-pin-${device.code}`}
       transform={`translate(${anchor.x} ${anchor.y})`}
       // A per-shape pointer-down MUST stopPropagation, or a pin drag would also pan the canvas
@@ -292,6 +293,7 @@ function DevicePin({
           <Icon icon={icon} width={13} height={13} color="#ffffff" />
         </g>
         <text
+          className="plan-pin-label"
           x={0}
           y={-15}
           textAnchor="middle"
@@ -301,6 +303,7 @@ function DevicePin({
           stroke="#ffffff"
           strokeWidth={3}
           paintOrder="stroke"
+          style={{ pointerEvents: "none" }}
         >
           {device.code}
         </text>
@@ -337,6 +340,7 @@ function RackMarker({
   const anchor = normToScreen(p, identityView(imgW, imgH));
   return (
     <g
+      className="plan-pin-group"
       data-testid={`plan-rack-${rack.code}`}
       transform={`translate(${anchor.x} ${anchor.y})`}
       // Owns its pointer-down (stopPropagation), or a drag on it would pan the canvas via the
@@ -363,6 +367,7 @@ function RackMarker({
           <Icon icon={deviceTypeIcon("RK")} width={12} height={12} color="#ffffff" />
         </g>
         <text
+          className="plan-pin-label"
           x={0}
           y={-15}
           textAnchor="middle"
@@ -372,6 +377,7 @@ function RackMarker({
           stroke="#ffffff"
           strokeWidth={3}
           paintOrder="stroke"
+          style={{ pointerEvents: "none" }}
         >
           {rack.code}
         </text>
@@ -543,6 +549,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const router = useRouter();
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When on, pin/rack code labels are hidden until that marker is hovered (declutters a busy plan).
+  const [labelsOnHover, setLabelsOnHover] = useState(false);
 
   // ---- Tray selection / active gesture mode (mutually exclusive) ----
   const [placingDeviceId, setPlacingDeviceId] = useState<string | null>(null);
@@ -1200,14 +1208,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
-  // Pin/rack glyph scale, as a fraction of design screen size (netScale), then divided by the outer
-  // zoom to get the inner scale:
-  //  - at/above the fitted zoom (zoomed in): capped at 1 so pins never balloon;
-  //  - below it (zoomed out): the ratio SQUARED, so pins shrink faster than the plan and become
-  //    small/unobtrusive when viewing the whole floor.
-  const zoomRatio = view.zoom / fitZoomRef.current;
-  const netScale = Math.min(1, zoomRatio * zoomRatio);
-  const pinScale = netScale / view.zoom;
+  // Pins/racks are LOCKED to a fixed fraction of the print: the inner glyph is scaled purely by the
+  // plan size, with no dependence on the live zoom, so a pin is always the same size RELATIVE to the
+  // plan (it grows/shrinks 1:1 with the print). The factor was calibrated so a pin's radius is
+  // ~0.28% of the plan width — the ratio the pins had when this was dialled in.
+  const pinScale = imgW * 0.000283;
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
       ? { index: vertexPreview.index, point: vertexPreview.point }
@@ -1324,7 +1329,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       <div
         ref={paneRef}
-        className="no-select-ui relative overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50"
+        className={`no-select-ui relative overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 ${
+          labelsOnHover ? "pins-hover-labels" : ""
+        }`}
         style={{ height: CANVAS_HEIGHT }}
       >
         <svg
@@ -1605,6 +1612,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               tipSide="left"
               variant="floating"
               onClick={() => zoomAt(0.8, paneW / 2, CANVAS_HEIGHT / 2)}
+            />
+          </span>
+          <span className="pointer-events-auto">
+            <IconButton
+              data-testid="toggle-pin-labels"
+              icon={labelsOnHover ? "tabler:tag-off" : "tabler:tag"}
+              tip={labelsOnHover ? "Labels: on hover" : "Labels: always shown"}
+              tipSide="left"
+              variant={labelsOnHover ? "floatingActive" : "floating"}
+              aria-pressed={labelsOnHover}
+              onClick={() => setLabelsOnHover((v) => !v)}
             />
           </span>
         </div>

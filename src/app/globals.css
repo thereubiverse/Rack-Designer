@@ -198,6 +198,17 @@ fieldset:disabled [data-testid$="-trigger"] {
   opacity: 1;
 }
 
+/* Pin/rack code labels can be toggled to appear only on hover (declutters a busy plan). The mode is
+   a class on the plan pane; each marker's group reveals its own label on hover. The label itself has
+   pointer-events:none, so only the marker glyph drives the hover. */
+.pins-hover-labels .plan-pin-label {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.pins-hover-labels .plan-pin-group:hover .plan-pin-label {
+  opacity: 1;
+}
+
 /* Disable text selection across a UI surface, but keep it in writable fields. */
 .no-select-ui {
   user-select: none;

@@ -742,6 +742,20 @@ describe("FloorPlanCanvas (edit mode)", () => {
   });
 });
 
+describe("FloorPlanCanvas (pin labels toggle)", () => {
+  it("toggles the plan pane into hover-only-label mode", () => {
+    renderCanvas();
+    const pane = screen.getByTestId("floor-plan-canvas").parentElement!;
+    expect(pane.className).not.toContain("pins-hover-labels");
+
+    fireEvent.click(screen.getByTestId("toggle-pin-labels"));
+    expect(pane.className).toContain("pins-hover-labels");
+
+    fireEvent.click(screen.getByTestId("toggle-pin-labels"));
+    expect(pane.className).not.toContain("pins-hover-labels");
+  });
+});
+
 describe("FloorPlanCanvas (create-by-geometry handle)", () => {
   function renderWithHandle(props: {
     ref: React.Ref<FloorPlanCanvasHandle>;
