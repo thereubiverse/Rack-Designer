@@ -26,6 +26,7 @@ import { FloorDevicesPanel, type FloorDevicesPanelHandle } from "./FloorDevicesP
 import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
 import { PlanBottomSheet, type PlanBottomSheetHandle } from "./PlanBottomSheet";
 import { PlanUploadZone } from "./PlanUploadZone";
+import { useHeaderTitle } from "@/features/shell/headerTitle";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -80,6 +81,7 @@ export function SiteDetail({
   plans: FloorPlanRow[];
   planUrls: Record<string, string>;
 }) {
+  useHeaderTitle(site.name);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

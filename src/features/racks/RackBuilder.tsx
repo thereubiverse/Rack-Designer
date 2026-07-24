@@ -8,6 +8,7 @@ import type { RackBreadcrumb } from "@/features/clients/repository";
 import type { DeviceTypeRow, PickerTemplate, BrandRow } from "@/features/device-library/repository";
 import { emptyFace, type Face } from "@/domain/faceplate";
 import { RackDeviceEditor } from "@/features/device-library/editor/RackDeviceEditor";
+import { useHeaderTitle } from "@/features/shell/headerTitle";
 import type { DeviceDraft } from "@/features/device-library/editor/useDeviceDraft";
 import { saveNewDeviceTemplateAction, listTemplatesForTypeAction, createBrandAction, deleteBrandAction } from "@/features/device-library/actions";
 import { RackCanvas, type RackCanvasHandle } from "./RackCanvas";
@@ -59,6 +60,7 @@ export function RackBuilder({ rack, initialDevices, initialConnections, initialE
   brands: BrandRow[];
   wizard: { enabled: boolean; hasKey: boolean };
 }) {
+  useHeaderTitle(rack.name || breadcrumb?.rackCode);
   // Templates become state so "Create Custom Device" can splice a freshly created template into the
   // picker's list (refetched for that one type) without a full page reload.
   const [templatesByType, setTemplatesByType] = useState(initialTemplatesByType);

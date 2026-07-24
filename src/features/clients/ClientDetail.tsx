@@ -10,6 +10,7 @@ import { createSiteAction, renameSiteAction, deleteSiteAction } from "./actions"
 import { DeleteDialog } from "./DeleteDialog";
 import { UnlocatedSites } from "./UnlocatedSites";
 import { toBlips } from "./sitesMapOps";
+import { useHeaderTitle } from "@/features/shell/headerTitle";
 
 // Leaflet touches `window` at import time, which breaks the server render of this page if
 // imported directly. Loading it via next/dynamic with ssr:false defers the import to the client.
@@ -20,6 +21,7 @@ const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focu
 /** One client's sites: breadcrumb back to /clients, a card table of sites (address + rack
  *  count), "+ Add site" and per-row rename/delete — same shape as ClientsTable one level down. */
 export function ClientDetail({ client, sites }: { client: ClientRow; sites: SiteSummary[] }) {
+  useHeaderTitle(client.name);
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);

@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { AppSidebar, SIDEBAR_WIDTH, SIDEBAR_COLLAPSED } from "./AppSidebar";
+import { HeaderTitleContext } from "./headerTitle";
 
 const STORE_KEY = "dl-sidebar-collapsed";
 
+// Fallback title per route — used until (or unless) a page publishes its own last-crumb title via
+// useHeaderTitle. Dynamic pages (a client, a site, a rack) override this with their resolved name.
 const TITLES: [prefix: string, title: string][] = [
   ["/racks", "Racks"],
   ["/device-library", "Device Library"],
   ["/settings", "Settings"],
+  ["/clients", "Clients"],
 ];
 
 /** Client shell that owns the sidebar collapse state so the hamburger (in the top bar) and the
@@ -19,13 +23,16 @@ const TITLES: [prefix: string, title: string][] = [
  *  page title in the top bar is derived from the current route. */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [pageTitle, setPageTitle] = useState<string | null>(null);
   const pathname = usePathname();
-  const title = TITLES.find(([p]) => pathname.startsWith(p))?.[1] ?? "Rack Designer";
+  const fallback = TITLES.find(([p]) => pathname.startsWith(p))?.[1] ?? "Rack Designer";
+  const title = pageTitle ?? fallback;
 
   useEffect(() => { if (localStorage.getItem(STORE_KEY) === "1") setCollapsed(true); }, []);
   useEffect(() => { localStorage.setItem(STORE_KEY, collapsed ? "1" : "0"); }, [collapsed]);
 
   return (
+    <HeaderTitleContext.Provider value={setPageTitle}>
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
       <AppSidebar collapsed={collapsed} />
 
@@ -67,5 +74,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     </div>
+    </HeaderTitleContext.Provider>
   );
 }
