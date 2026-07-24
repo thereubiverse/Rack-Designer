@@ -141,51 +141,48 @@ function fitToBounds(map: L.Map, bounds: LatLngBounds) {
   map.options.zoomSnap = snap;
 }
 
-/** Snap used while PINCHING, as opposed to scrolling.
- *
- *  A macOS trackpad pinch is not a touch gesture — it arrives as a wheel event with ctrlKey set,
- *  so Leaflet runs it through the same handler as a scroll wheel. That is a problem, because the
- *  snap value is a FLOOR (Math.ceil), and the two gestures have opposite needs:
- *
- *    scroll — a few large discrete notches. A floor is GOOD: it guarantees each notch does
- *             something visible.
- *    pinch  — a continuous stream of tiny deltas. A floor is BAD: it amplifies each one. A single
- *             pinch event's proportional zoom is around 0.018 levels; the 0.1 scroll floor rounds
- *             that up by roughly 5x, so a gentle pinch tore through 0.84 zoom levels.
- *
- *  A much finer floor lets pinch stay proportional to the fingers while still snapping enough to
- *  keep the pins from drifting the way fully continuous zoom does. */
-const PINCH_ZOOM_SNAP = 0.02;
+/** Zoom levels per pinch-wheel pixel. A macOS trackpad pinch arrives as a wheel event with ctrlKey
+ *  set (not a touch gesture), and its accumulated deltaY tracks the two-finger spread — so at this
+ *  factor the zoom follows the fingers roughly 1:1, the direct "like a tablet" feel. It mirrors the
+ *  floor-plan canvas's pinch tuning (there `exp(-deltaY*0.01)`; in Leaflet's log2 zoom that's
+ *  ~0.0144 levels/px). Higher = more sensitive. */
+const PINCH_ZOOM_SPEED = 0.014;
 
-/** How much scroll distance equals one zoom level, while PINCHING. Lower = more sensitive.
+/** Makes the trackpad pinch feel like a tablet's.
  *
- *  This is the honest sensitivity dial: unlike zoomSnap (which only sets a floor on the step size)
- *  this scales the response proportionally across the whole gesture. Leaflet's default of 60 is
- *  tuned for a scroll wheel's large deltas; a trackpad pinch reports much smaller ones, so it needs
- *  a smaller divisor to travel a comparable distance. */
-const PINCH_PX_PER_ZOOM_LEVEL = 20;
-
-/** Leaflet's default, used for the scroll wheel. Named so the two gestures are visibly paired. */
-const SCROLL_PX_PER_ZOOM_LEVEL = 60;
-
-/** Switches the zoom granularity to match the gesture, since Leaflet cannot tell them apart.
- *  Leaflet reads `zoomSnap` inside its debounced `_performZoom`, which runs on a timer AFTER the
- *  wheel event, so setting the option from a wheel listener always lands in time. */
+ *  Leaflet routes a macOS pinch (a ctrlKey wheel event) through its scroll-wheel handler, which is
+ *  DEBOUNCED and SNAPPED — it zooms in discrete chunks, so a pinch reads as stepped, not as the
+ *  continuous, finger-tracking zoom a touchscreen gives. Native touch pinch (`touchZoom`) already
+ *  does the right thing on a real tablet; this fixes the trackpad case.
+ *
+ *  For a ctrlKey wheel event we take over: preventDefault + stopPropagation so Leaflet's own
+ *  handler never sees it (a capture-phase listener runs first), then zoom directly and continuously
+ *  about the cursor via setZoomAround. zoomSnap is flipped to 0 around the call so the fractional
+ *  target isn't rounded — restored immediately after (setView is synchronous), the same trick
+ *  fitToBounds uses. The scroll wheel is left entirely to Leaflet's snapped path. */
 function GestureAwareZoom() {
   const map = useMap();
 
   useEffect(() => {
     const container = map.getContainer();
     const onWheel = (e: WheelEvent) => {
-      const pinching = e.ctrlKey;
-      map.options.zoomSnap = pinching ? PINCH_ZOOM_SNAP : INTERACTIVE_ZOOM_SNAP;
-      map.options.wheelPxPerZoomLevel = pinching
-        ? PINCH_PX_PER_ZOOM_LEVEL
-        : SCROLL_PX_PER_ZOOM_LEVEL;
+      if (!e.ctrlKey) return; // scroll wheel: leave it to Leaflet's snapped handler
+      e.preventDefault();
+      e.stopPropagation();
+      const target = Math.max(
+        map.getMinZoom(),
+        Math.min(map.getMaxZoom(), map.getZoom() - e.deltaY * PINCH_ZOOM_SPEED)
+      );
+      const around = map.containerPointToLatLng(map.mouseEventToContainerPoint(e));
+      const snap = map.options.zoomSnap;
+      map.options.zoomSnap = 0; // continuous — no rounding to the interactive step
+      map.setZoomAround(around, target, { animate: false });
+      map.options.zoomSnap = snap;
     };
-    container.addEventListener("wheel", onWheel, { capture: true, passive: true });
+    // passive:false so preventDefault works; capture so we run before Leaflet's own wheel handler.
+    container.addEventListener("wheel", onWheel, { capture: true, passive: false });
     return () => {
-      container.removeEventListener("wheel", onWheel, { capture: true });
+      container.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
     };
   }, [map]);
 
