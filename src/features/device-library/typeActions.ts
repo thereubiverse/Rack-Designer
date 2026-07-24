@@ -29,14 +29,27 @@ export async function createDeviceTypeAction(
   return { ok: true };
 }
 
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+export interface DeviceTypeChange {
+  id: string;
+  name?: string;
+  code?: string;
+  /** null clears the override (back to the built-in default); a #rrggbb string sets it. */
+  color?: string | null;
+  /** null clears the override; an Iconify "prefix:name" id sets it. */
+  icon?: string | null;
+}
+
 /** Batch save from one column's "Save changes" — applied sequentially, first error aborts. */
 export async function saveDeviceTypesAction(
-  changes: { id: string; name?: string; code?: string }[],
+  changes: DeviceTypeChange[],
 ): Promise<{ ok: boolean; error?: string }> {
   for (const c of changes) {
     const err =
       (c.name !== undefined ? validateTypeName(c.name) : null) ??
-      (c.code !== undefined ? validateCode(c.code) : null);
+      (c.code !== undefined ? validateCode(c.code) : null) ??
+      (typeof c.color === "string" && !HEX_RE.test(c.color) ? "Colour must be a hex value like #2563eb" : null);
     if (err) return { ok: false, error: err };
   }
   const db = createServiceClient();
@@ -45,6 +58,8 @@ export async function saveDeviceTypesAction(
       await updateDeviceType(db, c.id, {
         ...(c.name !== undefined ? { name: c.name.trim() } : {}),
         ...(c.code !== undefined ? { code: c.code } : {}),
+        ...(c.color !== undefined ? { color: c.color } : {}),
+        ...(c.icon !== undefined ? { icon: c.icon } : {}),
       });
     }
   } catch (e) {

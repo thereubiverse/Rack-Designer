@@ -3,7 +3,7 @@
 import { useState, forwardRef, useImperativeHandle } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
-import { deviceTypeIcon, deviceTypeColor } from "@/features/device-library/deviceTypeIcons";
+import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
 import { ROOM_TYPES } from "@/domain/hierarchy";
 import type { FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
@@ -72,8 +72,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   const { sections, floorLevel } = groupDevicesByRoom(rooms, devices);
 
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
-  const typeCode = (id: string) => deviceTypes.find((t) => t.id === id)?.code;
-  const typeIcon = (id: string) => deviceTypeIcon(typeCode(id));
+  const typeOf = (id: string) => deviceTypes.find((t) => t.id === id);
 
   // ---- Add room ----
   const [addRoomOpen, setAddRoomOpen] = useState(false);
@@ -258,7 +257,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
         <td className="px-4 py-2 font-medium text-neutral-900">{device.code}</td>
         <td className="px-4 py-2 text-neutral-600">
           <span className="inline-flex items-center gap-1.5">
-            <Icon icon={typeIcon(device.device_type_id)} width={15} height={15} color={deviceTypeColor(typeCode(device.device_type_id))} className="shrink-0" />
+            <Icon icon={resolveTypeIcon(typeOf(device.device_type_id))} width={15} height={15} color={resolveTypeColor(typeOf(device.device_type_id))} className="shrink-0" />
             {typeName(device.device_type_id)}
           </span>
         </td>

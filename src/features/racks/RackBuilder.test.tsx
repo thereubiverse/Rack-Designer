@@ -55,7 +55,7 @@ const typeId = "type-sw";
 const templateId = "tpl-sw";
 
 const deviceType: DeviceTypeRow = {
-  id: typeId, name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true,
+  id: typeId, name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true, color: null, icon: null,
 };
 
 const template: PickerTemplate = {

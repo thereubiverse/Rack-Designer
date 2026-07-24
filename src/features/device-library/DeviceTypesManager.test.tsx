@@ -13,10 +13,17 @@ vi.mock("./typeActions", () => ({
 }));
 import { createDeviceTypeAction, saveDeviceTypesAction, deleteDeviceTypeAction } from "./typeActions";
 
+// Stub the (network-backed) icon picker with a button that immediately returns a known id.
+vi.mock("./editor/IconPicker", () => ({
+  IconPicker: ({ onPick }: { onPick: (n: string) => void }) => (
+    <button data-testid="stub-pick" onClick={() => onPick("tabler:star")}>pick</button>
+  ),
+}));
+
 function row(over: Partial<DeviceTypeRow>): DeviceTypeRow {
   return {
     id: "t1", name: "Switch", created_at: "2026-01-01",
-    category: "rack", code: "SW", is_standard: true, ...over,
+    category: "rack", code: "SW", is_standard: true, color: null, icon: null, ...over,
   };
 }
 const floor = [row({ id: "f1", name: "Camera", code: "CAM", category: "floor" })];
@@ -55,6 +62,25 @@ describe("DeviceTypesManager", () => {
     await user.click(save);
     expect(saveDeviceTypesAction).toHaveBeenCalledWith([{ id: "r1", code: "SWX" }]);
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("editing a type's colour saves it as a colour override", async () => {
+    const user = userEvent.setup();
+    render(<DeviceTypesManager floor={floor} rack={rack} />);
+    const hex = screen.getByTestId("type-hex-r1");
+    await user.clear(hex);
+    await user.type(hex, "#123456");
+    await user.click(screen.getByTestId("save-rack"));
+    expect(saveDeviceTypesAction).toHaveBeenCalledWith([{ id: "r1", color: "#123456" }]);
+  });
+
+  it("picking a new icon saves it as an icon override", async () => {
+    const user = userEvent.setup();
+    render(<DeviceTypesManager floor={floor} rack={rack} />);
+    await user.click(screen.getByTestId("type-icon-r1")); // opens the (stubbed) picker
+    await user.click(screen.getByTestId("stub-pick")); // returns "tabler:star"
+    await user.click(screen.getByTestId("save-rack"));
+    expect(saveDeviceTypesAction).toHaveBeenCalledWith([{ id: "r1", icon: "tabler:star" }]);
   });
 
   it("Add opens the create modal and validates the prefix before creating", async () => {

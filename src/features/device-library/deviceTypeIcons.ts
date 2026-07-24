@@ -77,3 +77,15 @@ export function deviceTypeColor(code: string | null | undefined): string {
   if (!code) return DEFAULT_DEVICE_COLOR;
   return DEVICE_TYPE_COLOR[code.toUpperCase()] ?? DEFAULT_DEVICE_COLOR;
 }
+
+type TypeAppearance = { code: string; color?: string | null; icon?: string | null };
+
+/** A type's effective icon: its stored override if set, else the built-in default for its code. */
+export function resolveTypeIcon(type: TypeAppearance | null | undefined): string {
+  return type?.icon ?? deviceTypeIcon(type?.code);
+}
+
+/** A type's effective colour: its stored override if set, else the built-in default for its code. */
+export function resolveTypeColor(type: TypeAppearance | null | undefined): string {
+  return type?.color ?? deviceTypeColor(type?.code);
+}

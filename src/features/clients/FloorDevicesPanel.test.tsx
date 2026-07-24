@@ -48,8 +48,8 @@ const rooms: RoomRow[] = [
 ];
 
 const deviceTypes: DeviceTypeRow[] = [
-  { id: "type-cam", name: "Camera", category: "floor", code: "CAM", is_standard: true, created_at: "2026-01-01" },
-  { id: "type-ap", name: "Access Point", category: "floor", code: "AP", is_standard: true, created_at: "2026-01-01" },
+  { id: "type-cam", name: "Camera", category: "floor", code: "CAM", is_standard: true, created_at: "2026-01-01", color: null, icon: null },
+  { id: "type-ap", name: "Access Point", category: "floor", code: "AP", is_standard: true, created_at: "2026-01-01", color: null, icon: null },
 ];
 
 // GF gets two devices (for the plural note test); 2F and CLOSET each test a different edge:

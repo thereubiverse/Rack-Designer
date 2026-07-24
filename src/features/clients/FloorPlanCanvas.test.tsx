@@ -164,9 +164,9 @@ const DEVICES: FloorDeviceRow[] = [
 ];
 
 const DEVICE_TYPES: DeviceTypeRow[] = [
-  { id: "type-cam", name: "Camera", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "CAM", is_standard: true },
-  { id: "type-sen", name: "Sensor", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "SEN", is_standard: true },
-  { id: "type-to", name: "Telephone", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "TO", is_standard: true },
+  { id: "type-cam", name: "Camera", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "CAM", is_standard: true, color: null, icon: null },
+  { id: "type-sen", name: "Sensor", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "SEN", is_standard: true, color: null, icon: null },
+  { id: "type-to", name: "Telephone", created_at: "2026-01-01T00:00:00Z", category: "floor", code: "TO", is_standard: true, color: null, icon: null },
 ];
 
 function rack(over: Partial<SiteRackRow>): SiteRackRow {

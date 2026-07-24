@@ -7,7 +7,7 @@ import { Icon } from "@iconify/react";
 import { ROOM_TYPES } from "@/domain/hierarchy";
 import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow, FloorPlanRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
-import { deviceTypeIcon, deviceTypeColor } from "@/features/device-library/deviceTypeIcons";
+import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
 import { createRackInSiteAction } from "@/features/locations/actions";
 import {
@@ -392,7 +392,7 @@ export function SiteDetail({
                             onClick={() => startAddDevice(t.id)}
                             className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
                           >
-                            <Icon icon={deviceTypeIcon(t.code)} width={16} height={16} color={deviceTypeColor(t.code)} className="shrink-0" />
+                            <Icon icon={resolveTypeIcon(t)} width={16} height={16} color={resolveTypeColor(t)} className="shrink-0" />
                             {t.name}
                           </button>
                         ))

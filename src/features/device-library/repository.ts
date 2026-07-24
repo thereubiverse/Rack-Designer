@@ -7,6 +7,8 @@ export interface DeviceTypeRow {
   category: "floor" | "rack";
   code: string;          // ID prefix for generated device IDs (SW01, ...)
   is_standard: boolean;  // seeded by us: code editable, never deletable
+  color: string | null;  // optional #rrggbb override; null -> built-in default for the code
+  icon: string | null;   // optional Iconify id override; null -> built-in default for the code
 }
 export interface DeviceTemplateRow {
   id: string; name: string;
@@ -46,15 +48,20 @@ async function getDeviceType(db: SupabaseClient, id: string): Promise<DeviceType
   return data as DeviceTypeRow;
 }
 
-/** Standard types accept a code change only; custom types accept name and/or code. */
+/** Standard types accept a code change only; custom types accept name and/or code. Appearance
+ *  (colour/icon) is editable for BOTH — a user can recolour or re-icon any type, standard or not. */
 export async function updateDeviceType(
-  db: SupabaseClient, id: string, patch: { name?: string; code?: string },
+  db: SupabaseClient,
+  id: string,
+  patch: { name?: string; code?: string; color?: string | null; icon?: string | null },
 ): Promise<void> {
   const row = await getDeviceType(db, id);
-  const applied = row.is_standard
+  const applied: Record<string, unknown> = row.is_standard
     ? (patch.code !== undefined ? { code: patch.code } : {})
     : { ...(patch.name !== undefined ? { name: patch.name } : {}),
         ...(patch.code !== undefined ? { code: patch.code } : {}) };
+  if (patch.color !== undefined) applied.color = patch.color;
+  if (patch.icon !== undefined) applied.icon = patch.icon;
   if (Object.keys(applied).length === 0) return;
   const { error } = await db.from("device_types").update(applied).eq("id", id);
   if (error) throw new Error(`updateDeviceType: ${error.message}`);

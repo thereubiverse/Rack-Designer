@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Icon } from "@iconify/react";
 import type { DeviceTypeRow } from "./repository";
 import { createDeviceTypeAction, saveDeviceTypesAction, deleteDeviceTypeAction } from "./typeActions";
+import type { DeviceTypeChange } from "./typeActions";
 import { normalizeCode, validateCode, validateTypeName, CODE_HELP } from "./deviceTypeRules";
+import { deviceTypeColor, deviceTypeIcon } from "./deviceTypeIcons";
+import { IconPicker } from "./editor/IconPicker";
 
 type Category = "floor" | "rack";
 
@@ -25,17 +29,32 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
   // Draft edits keyed by row id; absent key = unchanged. Codes are normalized as typed.
   const [codes, setCodes] = useState<Record<string, string>>({});
   const [names, setNames] = useState<Record<string, string>>({});
+  const [colors, setColors] = useState<Record<string, string>>({});
+  const [icons, setIcons] = useState<Record<string, string>>({});
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
-  const changes = types
+  // Effective values shown in the row: draft override -> stored override -> built-in default.
+  const effColor = (t: DeviceTypeRow) => colors[t.id] ?? t.color ?? deviceTypeColor(t.code);
+  const effIcon = (t: DeviceTypeRow) => icons[t.id] ?? t.icon ?? deviceTypeIcon(t.code);
+
+  const changes: DeviceTypeChange[] = types
     .map((t) => {
       const code = codes[t.id] !== undefined && codes[t.id] !== t.code ? codes[t.id] : undefined;
       const name = names[t.id] !== undefined && names[t.id] !== t.name ? names[t.id] : undefined;
-      return { id: t.id, ...(name !== undefined ? { name } : {}), ...(code !== undefined ? { code } : {}) };
+      const color = colors[t.id] !== undefined && colors[t.id] !== t.color ? colors[t.id] : undefined;
+      const icon = icons[t.id] !== undefined && icons[t.id] !== t.icon ? icons[t.id] : undefined;
+      return {
+        id: t.id,
+        ...(name !== undefined ? { name } : {}),
+        ...(code !== undefined ? { code } : {}),
+        ...(color !== undefined ? { color } : {}),
+        ...(icon !== undefined ? { icon } : {}),
+      };
     })
-    .filter((c) => "name" in c || "code" in c);
+    .filter((c) => "name" in c || "code" in c || "color" in c || "icon" in c);
   const dirty = changes.length > 0;
 
   async function save() {
@@ -43,7 +62,7 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
     const res = await saveDeviceTypesAction(changes);
     setSaving(false);
     if (!res.ok) { setError(res.error ?? "Save failed"); return; }
-    setCodes({}); setNames({});
+    setCodes({}); setNames({}); setColors({}); setIcons({});
     router.refresh();
   }
 
@@ -54,8 +73,15 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
     router.refresh();
   }
 
-  const half = Math.ceil(standard.length / 2);
-  const columns = [standard.slice(0, half), standard.slice(half)];
+  const appearance = (t: DeviceTypeRow) => (
+    <Appearance
+      id={t.id}
+      color={effColor(t)}
+      icon={effIcon(t)}
+      onColor={(hex) => setColors((c) => ({ ...c, [t.id]: hex }))}
+      onOpenPicker={() => setPickerFor(t.id)}
+    />
+  );
 
   return (
     <section className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
@@ -66,29 +92,24 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
         <div className="border-b border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm font-semibold text-neutral-700">
           Standard Device Types
         </div>
-        <div className="p-4">
-          <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-            {columns.map((col, ci) => (
-              <div key={ci} className="space-y-3">
-                {col.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-neutral-800">{t.name}</span>
-                    <input
-                      value={codes[t.id] ?? t.code}
-                      onChange={(e) => setCodes((c) => ({ ...c, [t.id]: normalizeCode(e.target.value) }))}
-                      className="h-9 w-20 rounded-lg border border-neutral-200 px-2 text-sm text-neutral-600 focus:border-neutral-400 focus:outline-none"
-                    />
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
+        <div className="space-y-2 p-4">
+          {standard.map((t) => (
+            <div key={t.id} className="flex items-center gap-3">
+              {appearance(t)}
+              <span className="flex-1 text-sm font-semibold text-neutral-800">{t.name}</span>
+              <input
+                value={codes[t.id] ?? t.code}
+                onChange={(e) => setCodes((c) => ({ ...c, [t.id]: normalizeCode(e.target.value) }))}
+                className="h-9 w-20 rounded-lg border border-neutral-200 px-2 text-sm text-neutral-600 focus:border-neutral-400 focus:outline-none"
+              />
+            </div>
+          ))}
           <button
             type="button"
             data-testid={`save-${category}`}
             disabled={!dirty || saving}
             onClick={save}
-            className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
+            className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9] disabled:opacity-40 disabled:hover:bg-blue-600"
           >
             {saving ? "Saving…" : "Save changes"}
           </button>
@@ -116,6 +137,7 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
             <div className="space-y-2">
               {customs.map((t) => (
                 <div key={t.id} className="flex items-center gap-2">
+                  {appearance(t)}
                   <input
                     value={names[t.id] ?? t.name}
                     onChange={(e) => setNames((n) => ({ ...n, [t.id]: e.target.value }))}
@@ -144,6 +166,13 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
+      {pickerFor && (
+        <IconPicker
+          onPick={(name) => { setIcons((i) => ({ ...i, [pickerFor]: name })); setPickerFor(null); }}
+          onClose={() => setPickerFor(null)}
+        />
+      )}
+
       {modalOpen && (
         <CreateTypeModal
           category={category}
@@ -152,6 +181,57 @@ function DeviceTypeColumn({ title, category, types }: { title: string; category:
         />
       )}
     </section>
+  );
+}
+
+/** Per-type appearance: icon button (opens the icon picker), a colour swatch (native `<input
+ *  type="color">` — the OS colour wheel with RGB/hex fields), and a hex text field. The icon shows
+ *  in the type's colour so the pairing is obvious. */
+function Appearance({
+  id,
+  color,
+  icon,
+  onColor,
+  onOpenPicker,
+}: {
+  id: string;
+  color: string;
+  icon: string;
+  onColor: (hex: string) => void;
+  onOpenPicker: () => void;
+}) {
+  const validHex = /^#[0-9a-fA-F]{6}$/.test(color);
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        data-testid={`type-icon-${id}`}
+        onClick={onOpenPicker}
+        title="Change icon"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-neutral-200 transition-colors hover:bg-neutral-100"
+        style={{ color }}
+      >
+        <Icon icon={icon} width={18} height={18} />
+      </button>
+      <label className="relative h-9 w-9 shrink-0 cursor-pointer" title="Change colour">
+        <span className="block h-full w-full rounded-lg border border-neutral-200" style={{ background: validHex ? color : "#ffffff" }} />
+        <input
+          type="color"
+          data-testid={`type-color-${id}`}
+          value={validHex ? color : "#000000"}
+          onChange={(e) => onColor(e.target.value)}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+      </label>
+      <input
+        value={color}
+        spellCheck={false}
+        onChange={(e) => onColor(e.target.value)}
+        aria-label="Hex colour"
+        data-testid={`type-hex-${id}`}
+        className="h-9 w-24 rounded-lg border border-neutral-200 px-2 font-mono text-sm text-neutral-600 focus:border-neutral-400 focus:outline-none"
+      />
+    </div>
   );
 }
 
@@ -178,7 +258,7 @@ function CreateTypeModal({ category, onClose, onCreated }: {
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label={`Create ${label} Device Type`}>
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-neutral-900 shadow-2xl">
         <h3 className="text-base font-bold">Create {label} Device Type</h3>
-        <p className="mt-1 text-sm text-neutral-500">Create a custom device type.</p>
+        <p className="mt-1 text-sm text-neutral-500">Create a custom device type. You can set its colour and icon after it&apos;s added.</p>
         <label className="mt-4 block text-[11px] font-semibold text-neutral-600">
           Name *
           <input

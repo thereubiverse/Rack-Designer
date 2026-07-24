@@ -14,7 +14,7 @@ import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
-import { deviceTypeIcon, deviceTypeColor } from "@/features/device-library/deviceTypeIcons";
+import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
 import {
   normToScreen,
@@ -319,6 +319,8 @@ function RackMarker({
   imgW,
   imgH,
   glyphScale,
+  color,
+  icon,
   editMode,
   selected,
   dragPoint,
@@ -329,6 +331,9 @@ function RackMarker({
   imgH: number;
   /** Constant scale for the marker glyph (1 / fit-zoom) — scales with the plan on zoom, like pins. */
   glyphScale: number;
+  /** Fill + glyph from the "Rack" device type (customisable), or its built-in default. */
+  color: string;
+  icon: string;
   editMode?: boolean;
   selected?: boolean;
   dragPoint?: NormPoint | null;
@@ -359,10 +364,10 @@ function RackMarker({
         {selected && (
           <rect x={-12} y={-12} width={24} height={24} rx={6} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <rect x={-9} y={-9} width={18} height={18} rx={4} fill={deviceTypeColor("RK")} stroke="#ffffff" strokeWidth={2} />
+        <rect x={-9} y={-9} width={18} height={18} rx={4} fill={color} stroke="#ffffff" strokeWidth={2} />
         {/* The rack (server) glyph, white, centred in the square. */}
         <g transform="translate(-6 -6)" style={{ pointerEvents: "none" }}>
-          <Icon icon={deviceTypeIcon("RK")} width={12} height={12} color="#ffffff" />
+          <Icon icon={icon} width={12} height={12} color="#ffffff" />
         </g>
         <text
           className="plan-pin-label"
@@ -1205,8 +1210,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
-  const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
-  const typeColor = (id: string) => deviceTypeColor(deviceTypes.find((t) => t.id === id)?.code);
+  const typeIcon = (id: string) => resolveTypeIcon(deviceTypes.find((t) => t.id === id));
+  const typeColor = (id: string) => resolveTypeColor(deviceTypes.find((t) => t.id === id));
+  // Racks follow the "Rack" (RK) device type's appearance so recolouring it recolours the markers.
+  const rkType = deviceTypes.find((t) => t.code === "RK") ?? { code: "RK" };
+  const rackColor = resolveTypeColor(rkType);
+  const rackIcon = resolveTypeIcon(rkType);
   // Pins/racks are LOCKED to a fixed fraction of the print: the inner glyph is scaled purely by the
   // plan size, with no dependence on the live zoom, so a pin is always the same size RELATIVE to the
   // plan (it grows/shrinks 1:1 with the print). The factor sets a pin's radius as a fraction of the
@@ -1403,6 +1412,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 imgW={imgW}
                 imgH={imgH}
                 glyphScale={pinScale}
+                color={rackColor}
+                icon={rackIcon}
                 editMode={editMode}
                 selected={selectedRackId === rack.id}
                 dragPoint={rackPreview && rackPreview.rackId === rack.id ? rackPreview.point : null}

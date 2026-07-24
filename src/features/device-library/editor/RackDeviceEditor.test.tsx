@@ -40,7 +40,7 @@ vi.mock("./DeviceWizard", () => ({
   ),
 }));
 
-const types: DeviceTypeRow[] = [{ id: "t1", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true }];
+const types: DeviceTypeRow[] = [{ id: "t1", name: "Switch", created_at: "", category: "rack", code: "SW", is_standard: true, color: null, icon: null }];
 const brands: BrandRow[] = [{ id: "b1", name: "Cisco", created_at: "" }];
 
 const oneGroupFace: Face = {

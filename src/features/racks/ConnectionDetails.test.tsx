@@ -11,7 +11,7 @@ const b: PortRef = { rackDeviceId: "pp", side: "front", groupId: "g-pp", portInd
 const conn: Connection = { id: "c1", a, b };
 
 const t = (id: string, code: string, name: string): DeviceTypeRow => ({
-  id, name, created_at: "", category: "floor", code, is_standard: true,
+  id, name, created_at: "", category: "floor", code, is_standard: true, color: null, icon: null,
 });
 const floorTypes = [t("cam", "CAM", "Camera"), t("to", "TO", "Telecommunications Outlet"), t("rk", "RK", "Rack")];
 const siteScope = {

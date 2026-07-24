@@ -80,7 +80,7 @@ const rooms: RoomRow[] = [
 ];
 
 const deviceTypes: DeviceTypeRow[] = [
-  { id: "type-cam", name: "Camera", category: "floor", code: "CAM", is_standard: true, created_at: "2026-01-01" },
+  { id: "type-cam", name: "Camera", category: "floor", code: "CAM", is_standard: true, created_at: "2026-01-01", color: null, icon: null },
 ];
 
 // CAM01 and AP01 (both GF) are placed on the plan (x/y non-null) — 2 device pins, hand-computable

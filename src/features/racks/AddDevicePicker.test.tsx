@@ -6,7 +6,7 @@ import { emptyFace } from "@/domain/faceplate";
 import type { DeviceTypeRow, PickerTemplate } from "@/features/device-library/repository";
 
 const type = (id: string, name: string, code: string): DeviceTypeRow => ({
-  id, name, created_at: "", category: "rack", code, is_standard: true,
+  id, name, created_at: "", category: "rack", code, is_standard: true, color: null, icon: null,
 });
 const tpl = (id: string, name: string, typeId: string): PickerTemplate => ({
   id, name, brandId: null, brandName: "cisco", deviceTypeId: typeId,

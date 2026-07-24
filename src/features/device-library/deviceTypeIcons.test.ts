@@ -4,6 +4,8 @@ import {
   DEFAULT_DEVICE_ICON,
   deviceTypeColor,
   DEFAULT_DEVICE_COLOR,
+  resolveTypeIcon,
+  resolveTypeColor,
 } from "./deviceTypeIcons";
 
 describe("deviceTypeIcon", () => {
@@ -32,5 +34,14 @@ describe("deviceTypeColor", () => {
     expect(deviceTypeColor("ZZZ")).toBe(DEFAULT_DEVICE_COLOR);
     expect(deviceTypeColor(null)).toBe(DEFAULT_DEVICE_COLOR);
     expect(deviceTypeColor(undefined)).toBe(DEFAULT_DEVICE_COLOR);
+  });
+});
+
+describe("resolveTypeIcon / resolveTypeColor", () => {
+  it("prefer a type's stored override, else fall back to the code default", () => {
+    expect(resolveTypeIcon({ code: "CAM", icon: "tabler:star" })).toBe("tabler:star");
+    expect(resolveTypeIcon({ code: "CAM", icon: null })).toBe("tabler:camera");
+    expect(resolveTypeColor({ code: "CAM", color: "#123456" })).toBe("#123456");
+    expect(resolveTypeColor({ code: "CAM", color: null })).toBe("#dc2626");
   });
 });
