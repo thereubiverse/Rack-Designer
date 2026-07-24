@@ -285,7 +285,7 @@ function DevicePin({
         {selected && (
           <circle r={14} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <circle r={10} fill={color} stroke="#ffffff" strokeWidth={2} />
+        <circle r={10} fill={color} />
         {/* The type's icon, white, centred in the pin. Iconify renders a nested <svg>; the wrapping
             group positions it so its 13x13 box is centred on the pin's origin. */}
         <g transform="translate(-6.5 -6.5)" style={{ pointerEvents: "none" }}>
@@ -299,9 +299,6 @@ function DevicePin({
           fontSize={11}
           fontWeight={600}
           fill="#171717"
-          stroke="#ffffff"
-          strokeWidth={3}
-          paintOrder="stroke"
           style={{ pointerEvents: "none" }}
         >
           {device.code}
@@ -365,7 +362,7 @@ function RackMarker({
         {selected && (
           <rect x={-12} y={-12} width={24} height={24} rx={6} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <rect x={-9} y={-9} width={18} height={18} rx={4} fill={color} stroke="#ffffff" strokeWidth={2} />
+        <rect x={-9} y={-9} width={18} height={18} rx={4} fill={color} />
         {/* The rack (server) glyph, white, centred in the square. */}
         <g transform="translate(-6 -6)" style={{ pointerEvents: "none" }}>
           <Icon icon={icon} width={12} height={12} color="#ffffff" />
@@ -378,9 +375,6 @@ function RackMarker({
           fontSize={11}
           fontWeight={600}
           fill="#171717"
-          stroke="#ffffff"
-          strokeWidth={3}
-          paintOrder="stroke"
           style={{ pointerEvents: "none" }}
         >
           {rack.code}
