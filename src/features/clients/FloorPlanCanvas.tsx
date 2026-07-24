@@ -229,7 +229,7 @@ function DevicePin({
   device,
   imgW,
   imgH,
-  zoom,
+  glyphScale,
   typeName,
   icon,
   editMode,
@@ -240,7 +240,9 @@ function DevicePin({
   device: FloorDeviceRow;
   imgW: number;
   imgH: number;
-  zoom: number;
+  /** Constant scale for the pin glyph (1 / fit-zoom): the pin looks its design size at the fitted
+   *  view and then scales WITH the plan as the user zooms, instead of staying screen-constant. */
+  glyphScale: number;
   typeName: string;
   icon: string;
   editMode?: boolean;
@@ -278,7 +280,7 @@ function DevicePin({
       onClick={editMode ? (e) => e.stopPropagation() : undefined}
       style={editMode ? { cursor: "grab" } : undefined}
     >
-      <g transform={`scale(${1 / zoom})`}>
+      <g transform={`scale(${glyphScale})`}>
         <title>{typeName}</title>
         {selected && (
           <circle r={14} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
@@ -315,7 +317,7 @@ function RackMarker({
   rack,
   imgW,
   imgH,
-  zoom,
+  glyphScale,
   editMode,
   selected,
   dragPoint,
@@ -324,7 +326,8 @@ function RackMarker({
   rack: SiteRackRow;
   imgW: number;
   imgH: number;
-  zoom: number;
+  /** Constant scale for the marker glyph (1 / fit-zoom) — scales with the plan on zoom, like pins. */
+  glyphScale: number;
   editMode?: boolean;
   selected?: boolean;
   dragPoint?: NormPoint | null;
@@ -349,7 +352,7 @@ function RackMarker({
       onClick={editMode ? (e) => e.stopPropagation() : undefined}
       style={editMode ? { cursor: "grab" } : undefined}
     >
-      <g transform={`scale(${1 / zoom})`}>
+      <g transform={`scale(${glyphScale})`}>
         <title>Rack {rack.code}</title>
         {selected && (
           <rect x={-12} y={-12} width={24} height={24} rx={6} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
@@ -1197,6 +1200,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
+  // Pins/racks scale WITH the plan rather than staying screen-constant: at the fitted view they show
+  // their design size (glyphScale * fitZoom = 1), then grow/shrink as the live zoom moves off fit.
+  const pinScale = 1 / fitZoomRef.current;
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
       ? { index: vertexPreview.index, point: vertexPreview.point }
@@ -1369,7 +1375,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 device={device}
                 imgW={imgW}
                 imgH={imgH}
-                zoom={view.zoom}
+                glyphScale={pinScale}
                 typeName={typeName(device.device_type_id)}
                 icon={typeIcon(device.device_type_id)}
                 editMode={editMode}
@@ -1384,7 +1390,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 rack={rack}
                 imgW={imgW}
                 imgH={imgH}
-                zoom={view.zoom}
+                glyphScale={pinScale}
                 editMode={editMode}
                 selected={selectedRackId === rack.id}
                 dragPoint={rackPreview && rackPreview.rackId === rack.id ? rackPreview.point : null}
