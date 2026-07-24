@@ -36,14 +36,15 @@ import {
   clearRoomPolygonAction,
 } from "./actions";
 
-const CANVAS_HEIGHT = 560;
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
 // pointer drift every physical click carries, small enough that a deliberate pan never selects.
 const TAP_THRESHOLD_PX = 6;
-// jsdom has no ResizeObserver (feature-detected below), so tests always land here — a fixed
-// number keeps the fit-on-mount deterministic instead of depending on whatever jsdom's default
-// (0-width) container measures as.
+// jsdom has no ResizeObserver (feature-detected below), so tests always land here — fixed numbers
+// keep the fit-on-mount deterministic instead of depending on whatever jsdom's default (0-size)
+// container measures as. The pane now FILLS its container (its real height is measured at runtime),
+// so these are only the jsdom fallbacks.
 const FALLBACK_PANE_WIDTH = 870;
+const FALLBACK_PANE_HEIGHT = 560;
 
 const ZOOM_MAX = 8;
 const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute number
@@ -467,6 +468,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const fitZoomRef = useRef(1);
   const [view, setView] = useState<LiveView>({ panX: 0, panY: 0, zoom: 1 });
   const [paneW, setPaneW] = useState(FALLBACK_PANE_WIDTH);
+  const [paneH, setPaneH] = useState(FALLBACK_PANE_HEIGHT);
 
   const clampZoom = useCallback((z: number) => {
     const floor = fitZoomRef.current * ZOOM_MIN_FACTOR;
@@ -481,22 +483,30 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   useEffect(() => {
     const el = paneRef.current;
     if (!el) return;
-    const fit = (w: number) => {
-      setPaneW(w);
-      const z = Math.min(w / imgW, CANVAS_HEIGHT / imgH);
+    const fit = (w: number, h: number) => {
+      const z = Math.min(w / imgW, h / imgH);
       fitZoomRef.current = z;
-      setView({ zoom: z, panX: (w - imgW * z) / 2, panY: (CANVAS_HEIGHT - imgH * z) / 2 });
+      setView({ zoom: z, panX: (w - imgW * z) / 2, panY: (h - imgH * z) / 2 });
     };
     if (typeof ResizeObserver === "undefined") {
-      fit(FALLBACK_PANE_WIDTH);
+      setPaneW(FALLBACK_PANE_WIDTH);
+      setPaneH(FALLBACK_PANE_HEIGHT);
+      fit(FALLBACK_PANE_WIDTH, FALLBACK_PANE_HEIGHT);
       return;
     }
+    // Keep paneW/paneH current on every resize (the pane fills a viewport-sized container now, so
+    // it changes with the window), but FIT only on the first real measurement — a later resize must
+    // not clobber the user's own pan/zoom.
     let fitted = false;
     const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (!w || fitted) return;
-      fitted = true;
-      fit(w);
+      const r = entries[0]?.contentRect;
+      if (!r || !r.width || !r.height) return;
+      setPaneW(r.width);
+      setPaneH(r.height);
+      if (!fitted) {
+        fitted = true;
+        fit(r.width, r.height);
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -525,11 +535,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Reset the view to fit the whole plan in the pane and centre it — the same math the fit-on-mount
   // effect runs, but on demand. Uses the last-measured pane width so it tracks the current layout.
   const fitToArea = useCallback(() => {
-    const w = paneW;
-    const z = Math.min(w / imgW, CANVAS_HEIGHT / imgH);
+    const z = Math.min(paneW / imgW, paneH / imgH);
     fitZoomRef.current = z;
-    setView({ zoom: z, panX: (w - imgW * z) / 2, panY: (CANVAS_HEIGHT - imgH * z) / 2 });
-  }, [paneW, imgW, imgH]);
+    setView({ zoom: z, panX: (paneW - imgW * z) / 2, panY: (paneH - imgH * z) / 2 });
+  }, [paneW, paneH, imgW, imgH]);
 
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
@@ -1231,7 +1240,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const selectedRack = selectedRackId ? racks.find((r) => r.id === selectedRackId) ?? null : null;
 
   return (
-    <div className="space-y-2">
+    // Fills the height its container gives it; the tray/pin-popover (edit mode) take their own
+    // height and the plan pane flexes to fill the rest, so the plan can run to the viewport bottom.
+    <div className="flex h-full flex-col gap-2">
       {editMode && (
         <div data-testid="plan-tray" className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
           {unplaced.length === 0 &&
@@ -1337,16 +1348,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
       <div
         ref={paneRef}
-        className={`no-select-ui relative overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 ${
+        className={`no-select-ui relative min-h-0 flex-1 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 ${
           labelsOnHover ? "pins-hover-labels" : ""
         }`}
-        style={{ height: CANVAS_HEIGHT }}
       >
         <svg
           ref={svgRef}
           data-testid="floor-plan-canvas"
           width="100%"
-          height={CANVAS_HEIGHT}
+          height="100%"
           style={{
             display: "block",
             touchAction: "none",
@@ -1612,7 +1622,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               tip="Zoom in"
               tipSide="left"
               variant="floating"
-              onClick={() => zoomAt(1.25, paneW / 2, CANVAS_HEIGHT / 2)}
+              onClick={() => zoomAt(1.25, paneW / 2, paneH / 2)}
             />
           </span>
           <span className="pointer-events-auto">
@@ -1622,7 +1632,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               tip="Zoom out"
               tipSide="left"
               variant="floating"
-              onClick={() => zoomAt(0.8, paneW / 2, CANVAS_HEIGHT / 2)}
+              onClick={() => zoomAt(0.8, paneW / 2, paneH / 2)}
             />
           </span>
           <span className="pointer-events-auto">

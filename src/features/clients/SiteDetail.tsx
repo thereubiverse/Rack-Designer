@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
@@ -29,6 +29,14 @@ import { PlanUploadZone } from "./PlanUploadZone";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
+
+// Set the plan height BEFORE paint (so the canvas fits to its final size, not a transient one),
+// but fall back to useEffect on the server where useLayoutEffect would warn and no-op anyway.
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+// The app content sits in a `pb-12` (3rem) wrapper; the plan area cancels that so it can run flush
+// to the very bottom of the window.
+const CONTENT_BOTTOM_PADDING = "3rem";
 
 interface RackGroup {
   floorCode: string;
@@ -94,6 +102,26 @@ export function SiteDetail({
   const sheetRef = useRef<PlanBottomSheetHandle>(null);
   const pendingDeviceType = useRef<string | null>(null);
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+
+  // The plan+sheet area fills from its top down to the bottom of the window. Its top is measured
+  // (breadcrumb/title/tabs above it can vary), so the height is `viewport - top`. Only set once the
+  // has-plan wrapper is mounted; null lets the wrapper size to its content otherwise.
+  const planWrapRef = useRef<HTMLDivElement>(null);
+  const [planFillHeight, setPlanFillHeight] = useState<number | null>(null);
+  useIsoLayoutEffect(() => {
+    const el = planWrapRef.current;
+    if (!el) {
+      setPlanFillHeight(null);
+      return;
+    }
+    const measure = () => {
+      const top = el.getBoundingClientRect().top;
+      setPlanFillHeight(Math.max(360, Math.round(window.innerHeight - top)));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -418,7 +446,17 @@ export function SiteDetail({
             // overlaying its lower edge.
             if (activeFloorPlan && activePlanUrl) {
               return (
-                <div className="relative overflow-hidden rounded-2xl">
+                <div
+                  ref={planWrapRef}
+                  className="relative overflow-hidden rounded-2xl"
+                  // Fill to the bottom of the window; the negative margin cancels the page's bottom
+                  // padding so the sheet sits flush with the very bottom (no extra gap / scrollbar).
+                  style={
+                    planFillHeight != null
+                      ? { height: planFillHeight, marginBottom: `-${CONTENT_BOTTOM_PADDING}` }
+                      : undefined
+                  }
+                >
                   <FloorPlanCanvas
                     key={activeFloor.id}
                     ref={canvasRef}
