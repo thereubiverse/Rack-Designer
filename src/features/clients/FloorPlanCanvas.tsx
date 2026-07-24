@@ -14,6 +14,7 @@ import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
+import { deviceTypeIcon } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
 import {
   normToScreen,
@@ -230,6 +231,7 @@ function DevicePin({
   imgH,
   zoom,
   typeName,
+  icon,
   editMode,
   selected,
   dragPoint,
@@ -240,6 +242,7 @@ function DevicePin({
   imgH: number;
   zoom: number;
   typeName: string;
+  icon: string;
   editMode?: boolean;
   selected?: boolean;
   dragPoint?: NormPoint | null;
@@ -278,12 +281,17 @@ function DevicePin({
       <g transform={`scale(${1 / zoom})`}>
         <title>{typeName}</title>
         {selected && (
-          <circle r={12} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
+          <circle r={14} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <circle r={7} fill={color} stroke="#ffffff" strokeWidth={2} />
+        <circle r={10} fill={color} stroke="#ffffff" strokeWidth={2} />
+        {/* The type's icon, white, centred in the pin. Iconify renders a nested <svg>; the wrapping
+            group positions it so its 13x13 box is centred on the pin's origin. */}
+        <g transform="translate(-6.5 -6.5)" style={{ pointerEvents: "none" }}>
+          <Icon icon={icon} width={13} height={13} color="#ffffff" />
+        </g>
         <text
           x={0}
-          y={-12}
+          y={-15}
           textAnchor="middle"
           fontSize={11}
           fontWeight={600}
@@ -1184,6 +1192,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
+  const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
       ? { index: vertexPreview.index, point: vertexPreview.point }
@@ -1358,6 +1367,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 imgH={imgH}
                 zoom={view.zoom}
                 typeName={typeName(device.device_type_id)}
+                icon={typeIcon(device.device_type_id)}
                 editMode={editMode}
                 selected={selectedPinId === device.id}
                 dragPoint={pinPreview && pinPreview.deviceId === device.id ? pinPreview.point : null}

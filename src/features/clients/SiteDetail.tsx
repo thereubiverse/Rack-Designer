@@ -3,9 +3,11 @@
 import { useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { Icon } from "@iconify/react";
 import { ROOM_TYPES } from "@/domain/hierarchy";
 import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow, FloorPlanRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
+import { deviceTypeIcon } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
 import { createRackInSiteAction } from "@/features/locations/actions";
 import {
@@ -388,8 +390,9 @@ export function SiteDetail({
                             type="button"
                             data-testid={`device-type-${t.id}`}
                             onClick={() => startAddDevice(t.id)}
-                            className="block w-full rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                            className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
                           >
+                            <Icon icon={deviceTypeIcon(t.code)} width={16} height={16} className="shrink-0 text-neutral-500" />
                             {t.name}
                           </button>
                         ))
