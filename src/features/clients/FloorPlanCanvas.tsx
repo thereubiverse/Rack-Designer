@@ -1210,9 +1210,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const typeIcon = (id: string) => deviceTypeIcon(deviceTypes.find((t) => t.id === id)?.code);
   // Pins/racks are LOCKED to a fixed fraction of the print: the inner glyph is scaled purely by the
   // plan size, with no dependence on the live zoom, so a pin is always the same size RELATIVE to the
-  // plan (it grows/shrinks 1:1 with the print). The factor was calibrated so a pin's radius is
-  // ~0.28% of the plan width — the ratio the pins had when this was dialled in.
-  const pinScale = imgW * 0.000283;
+  // plan (it grows/shrinks 1:1 with the print). The factor sets a pin's radius as a fraction of the
+  // plan width (~0.37%).
+  const pinScale = imgW * 0.00037;
   const vertexPreviewForRoom = (roomId: string) =>
     vertexPreview && vertexPreview.roomId === roomId
       ? { index: vertexPreview.index, point: vertexPreview.point }
