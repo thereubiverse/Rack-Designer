@@ -352,12 +352,16 @@ function RackMarker({
       <g transform={`scale(${1 / zoom})`}>
         <title>Rack {rack.code}</title>
         {selected && (
-          <rect x={-11} y={-11} width={22} height={22} rx={5} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
+          <rect x={-12} y={-12} width={24} height={24} rx={6} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="3 2" />
         )}
-        <rect x={-8} y={-8} width={16} height={16} rx={3} fill="#0f172a" stroke="#ffffff" strokeWidth={2} />
+        <rect x={-9} y={-9} width={18} height={18} rx={4} fill="#0f172a" stroke="#ffffff" strokeWidth={2} />
+        {/* The rack (server) glyph, white, centred in the square. */}
+        <g transform="translate(-6 -6)" style={{ pointerEvents: "none" }}>
+          <Icon icon={deviceTypeIcon("RK")} width={12} height={12} color="#ffffff" />
+        </g>
         <text
           x={0}
-          y={-14}
+          y={-15}
           textAnchor="middle"
           fontSize={11}
           fontWeight={600}
