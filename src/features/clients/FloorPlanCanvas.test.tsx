@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { FloorPlanCanvas } from "./FloorPlanCanvas";
+import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
@@ -738,5 +739,72 @@ describe("FloorPlanCanvas (edit mode)", () => {
     const fd = vi.mocked(clearRackPlacementAction).mock.calls.at(-1)![0] as FormData;
     expect(fd.get("id")).toBe("rack-placed");
     expect(screen.queryByTestId("rack-actions-popover")).toBeNull();
+  });
+});
+
+describe("FloorPlanCanvas (create-by-geometry handle)", () => {
+  function renderWithHandle(props: {
+    ref: React.Ref<FloorPlanCanvasHandle>;
+    onRoomTraced?: (polygon: [number, number][]) => void;
+    onDevicePlaced?: (point: [number, number]) => void;
+  }) {
+    return render(
+      <FloorPlanCanvas
+        ref={props.ref}
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        editable
+        onRoomTraced={props.onRoomTraced}
+        onDevicePlaced={props.onDevicePlaced}
+      />
+    );
+  }
+
+  it("startPlaceDevice + a plan click reports the placed point (no id, no place action)", async () => {
+    const before = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    const onDevicePlaced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithHandle({ ref, onDevicePlaced });
+
+    act(() => ref.current!.startPlaceDevice());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 400, clientY: 300 });
+    });
+
+    expect(onDevicePlaced).toHaveBeenCalledTimes(1);
+    const [pt] = onDevicePlaced.mock.calls[0];
+    expect(pt[0]).toBeGreaterThanOrEqual(0);
+    expect(pt[0]).toBeLessThanOrEqual(1);
+    expect(pt[1]).toBeGreaterThanOrEqual(0);
+    expect(pt[1]).toBeLessThanOrEqual(1);
+    // Creation defers persistence to the modal — the canvas never places an id-less device itself.
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(before);
+  });
+
+  it("startTraceRoom + three clicks + double-click reports the traced outline", async () => {
+    const onRoomTraced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithHandle({ ref, onRoomTraced });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 300, clientY: 200 });
+      fireEvent.click(svg, { clientX: 500, clientY: 200 });
+      fireEvent.click(svg, { clientX: 400, clientY: 400 });
+    });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 400, clientY: 400 });
+    });
+
+    expect(onRoomTraced).toHaveBeenCalledTimes(1);
+    const [polygon] = onRoomTraced.mock.calls[0];
+    expect(polygon.length).toBeGreaterThanOrEqual(3);
+    expect(isValidPolygon(polygon)).toBe(true);
   });
 });

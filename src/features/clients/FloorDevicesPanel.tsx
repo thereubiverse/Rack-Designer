@@ -13,7 +13,10 @@ import {
   createFloorDeviceAction,
   updateFloorDeviceAction,
   deleteFloorDeviceAction,
+  setRoomPolygonAction,
+  placeFloorDeviceAction,
 } from "./actions";
+import type { NormPoint } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
 import { IconButton } from "./IconButton";
 
@@ -36,11 +39,12 @@ const ROOM_TYPE_CHIP: Record<string, string> = {
  *  since device code suggestion must never collide with a code used on a different floor of the
  *  same site. `rackCountByRoomId` lets the room-delete dialog spell out its cascade without this
  *  component fetching anything itself. */
-/** Imperative openers so a parent (e.g. the plan toolbar) can pop the add-room / add-device modals
- *  without duplicating their state or device-code-suggestion logic, which stay owned here. */
+/** Imperative openers for the create-by-geometry flows: the plan toolbar traces/places first, then
+ *  opens these modals carrying the geometry. All the modal state + device-code suggestion stay
+ *  owned here; on submit the geometry is chained via setRoomPolygon / placeFloorDevice. */
 export interface FloorDevicesPanelHandle {
-  openAddRoom: () => void;
-  openAddDevice: () => void;
+  openAddRoomWithPolygon: (polygon: NormPoint[]) => void;
+  openAddDeviceWithPlacement: (deviceTypeId: string, point: NormPoint) => void;
 }
 
 interface FloorDevicesPanelProps {
@@ -50,11 +54,15 @@ interface FloorDevicesPanelProps {
   deviceTypes: DeviceTypeRow[];
   allSiteDeviceCodes: string[];
   rackCountByRoomId: Record<string, number>;
+  /** The header's detail-first Add room / Add device buttons. Hidden inside the plan sheet (the
+   *  toolbar's geometry-first flow supersedes them), shown in the no-plan fallback where there's no
+   *  plan to trace/place on. */
+  showAddButtons?: boolean;
 }
 
 export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevicesPanelProps>(
   function FloorDevicesPanel(
-    { floor, rooms, devices, deviceTypes, allSiteDeviceCodes, rackCountByRoomId },
+    { floor, rooms, devices, deviceTypes, allSiteDeviceCodes, rackCountByRoomId, showAddButtons = true },
     ref
   ) {
   const router = useRouter();
@@ -66,6 +74,9 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   // ---- Add room ----
   const [addRoomOpen, setAddRoomOpen] = useState(false);
   const [addRoomError, setAddRoomError] = useState<string | null>(null);
+  // Set when the room was traced first (toolbar flow); its outline is saved right after the room
+  // is created. Null for a plain detail-first add.
+  const [pendingRoomPolygon, setPendingRoomPolygon] = useState<NormPoint[] | null>(null);
 
   async function handleAddRoom(formData: FormData) {
     setAddRoomError(null);
@@ -75,6 +86,19 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
       setAddRoomError(res.error ?? "Failed");
       return;
     }
+    // Trace-then-name: persist the outline onto the room we just created.
+    if (pendingRoomPolygon && res.id) {
+      const poly = new FormData();
+      poly.set("roomId", res.id);
+      poly.set("polygon", JSON.stringify(pendingRoomPolygon));
+      const polyRes = await setRoomPolygonAction(poly);
+      if (!polyRes.ok) {
+        // The room exists; only its outline failed. Surface it but still close — the outline can
+        // be redrawn from the tray rather than being stuck in this modal.
+        setAddRoomError(polyRes.error ?? "Room created, but saving its outline failed");
+      }
+    }
+    setPendingRoomPolygon(null);
     setAddRoomOpen(false);
     router.refresh();
   }
@@ -120,24 +144,38 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   const [addTypeId, setAddTypeId] = useState<string>(deviceTypes[0]?.id ?? "");
   const [addCode, setAddCode] = useState<string>("");
   const [addCodeTouched, setAddCodeTouched] = useState(false);
+  // Set when the device was placed first (toolbar flow); it's placed at this point right after the
+  // device is created. Null for a plain detail-first add.
+  const [pendingDevicePoint, setPendingDevicePoint] = useState<NormPoint | null>(null);
+
+  /** Reset the device form to a chosen type with a fresh suggested code. */
+  function primeAddDevice(typeId: string) {
+    setAddDeviceError(null);
+    const type = deviceTypes.find((t) => t.id === typeId) ?? deviceTypes[0];
+    setAddTypeId(type?.id ?? "");
+    setAddCode(type ? suggestDeviceCode(type.code, allSiteDeviceCodes) : "");
+    setAddCodeTouched(false);
+  }
 
   function openAddDevice() {
-    setAddDeviceError(null);
-    const firstType = deviceTypes[0];
-    setAddTypeId(firstType?.id ?? "");
-    setAddCode(firstType ? suggestDeviceCode(firstType.code, allSiteDeviceCodes) : "");
-    setAddCodeTouched(false);
+    primeAddDevice(deviceTypes[0]?.id ?? "");
+    setPendingDevicePoint(null);
     setAddDeviceOpen(true);
   }
 
   // No deps array: recreated every render so the openers always close over the current
-  // deviceTypes / allSiteDeviceCodes (needed by openAddDevice's code suggestion).
+  // deviceTypes / allSiteDeviceCodes (needed for code suggestion).
   useImperativeHandle(ref, () => ({
-    openAddRoom: () => {
+    openAddRoomWithPolygon: (polygon: NormPoint[]) => {
       setAddRoomError(null);
+      setPendingRoomPolygon(polygon);
       setAddRoomOpen(true);
     },
-    openAddDevice,
+    openAddDeviceWithPlacement: (deviceTypeId: string, point: NormPoint) => {
+      primeAddDevice(deviceTypeId);
+      setPendingDevicePoint(point);
+      setAddDeviceOpen(true);
+    },
   }));
 
   function handleAddTypeChange(id: string) {
@@ -161,6 +199,18 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
       setAddDeviceError(res.error ?? "Failed");
       return;
     }
+    // Place-then-detail: drop the device we just created at the clicked point.
+    if (pendingDevicePoint && res.id) {
+      const place = new FormData();
+      place.set("id", res.id);
+      place.set("x", String(pendingDevicePoint[0]));
+      place.set("y", String(pendingDevicePoint[1]));
+      const placeRes = await placeFloorDeviceAction(place);
+      if (!placeRes.ok) {
+        setAddDeviceError(placeRes.error ?? "Device created, but placing it failed");
+      }
+    }
+    setPendingDevicePoint(null);
     setAddDeviceOpen(false);
     router.refresh();
   }
@@ -255,27 +305,32 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-neutral-900">Rooms &amp; devices</h2>
-        <div className="flex items-center gap-1">
-          <IconButton
-            data-testid="add-room"
-            icon="tabler:door"
-            tip="Add room"
-            onClick={() => {
-              setAddRoomError(null);
-              setAddRoomOpen(true);
-            }}
-          />
-          <IconButton
-            data-testid="add-device"
-            icon="tabler:plus"
-            tip="Add device"
-            variant="primary"
-            onClick={openAddDevice}
-          />
+      {/* Only the no-plan fallback shows these (see showAddButtons): with a plan, the toolbar's
+          trace/place-first flow supersedes them, and the sheet tab already labels the section. */}
+      {showAddButtons && (
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-neutral-900">Rooms &amp; devices</h2>
+          <div className="flex items-center gap-1">
+            <IconButton
+              data-testid="add-room"
+              icon="tabler:door"
+              tip="Add room"
+              onClick={() => {
+                setAddRoomError(null);
+                setPendingRoomPolygon(null);
+                setAddRoomOpen(true);
+              }}
+            />
+            <IconButton
+              data-testid="add-device"
+              icon="tabler:plus"
+              tip="Add device"
+              variant="primary"
+              onClick={openAddDevice}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {sections.map(({ room, devices: roomDevices }) => (
         <div
@@ -362,7 +417,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
             </label>
             {addRoomError && <p className="text-sm text-red-600">{addRoomError}</p>}
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setAddRoomOpen(false)} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">
+              <button type="button" onClick={() => { setAddRoomOpen(false); setPendingRoomPolygon(null); }} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">
                 Cancel
               </button>
               <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-[#376ad9]">
@@ -490,7 +545,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
             </label>
             {addDeviceError && <p className="text-sm text-red-600">{addDeviceError}</p>}
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setAddDeviceOpen(false)} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">
+              <button type="button" onClick={() => { setAddDeviceOpen(false); setPendingDevicePoint(null); }} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100">
                 Cancel
               </button>
               <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-[#376ad9]">

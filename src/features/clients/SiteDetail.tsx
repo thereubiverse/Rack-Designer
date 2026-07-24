@@ -21,8 +21,8 @@ import { DeleteDialog } from "./DeleteDialog";
 import { IconButton } from "./IconButton";
 import { FloorTabs } from "./FloorTabs";
 import { FloorDevicesPanel, type FloorDevicesPanelHandle } from "./FloorDevicesPanel";
-import { FloorPlanCanvas } from "./FloorPlanCanvas";
-import { PlanBottomSheet } from "./PlanBottomSheet";
+import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
+import { PlanBottomSheet, type PlanBottomSheetHandle } from "./PlanBottomSheet";
 import { PlanUploadZone } from "./PlanUploadZone";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
@@ -82,9 +82,14 @@ export function SiteDetail({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Lets the plan toolbar's Add-room / Add-device buttons drive the modals that FloorDevicesPanel
-  // owns, without lifting that modal state (and device-code suggestion) out of the panel.
+  // The create-by-geometry flow spans three components: the canvas runs the trace/place gesture,
+  // the panel owns the details modal, the sheet gets out of the way. SiteDetail holds the refs that
+  // connect them, plus the device type the user picked before placing.
   const panelRef = useRef<FloorDevicesPanelHandle>(null);
+  const canvasRef = useRef<FloorPlanCanvasHandle>(null);
+  const sheetRef = useRef<PlanBottomSheetHandle>(null);
+  const pendingDeviceType = useRef<string | null>(null);
+  const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -263,9 +268,13 @@ export function SiteDetail({
       ) : (
         <>
           {activeFloor && (() => {
-            const roomsDevicesContent = (
+            // ref + showAddButtons vary by context: inside the sheet the toolbar's geometry-first
+            // flow owns creation (ref wired, header buttons hidden); the no-plan fallback shows the
+            // detail-first header buttons and needs no ref.
+            const roomsDevicesPanel = (withRef: boolean) => (
               <FloorDevicesPanel
-                ref={panelRef}
+                ref={withRef ? panelRef : undefined}
+                showAddButtons={!withRef}
                 floor={activeFloor}
                 rooms={activeFloorRooms}
                 devices={activeFloorDevices}
@@ -274,6 +283,18 @@ export function SiteDetail({
                 rackCountByRoomId={rackCountByRoomId}
               />
             );
+
+            const startAddRoom = () => {
+              setDeviceMenuOpen(false);
+              sheetRef.current?.collapse();
+              canvasRef.current?.startTraceRoom();
+            };
+            const startAddDevice = (typeId: string) => {
+              pendingDeviceType.current = typeId;
+              setDeviceMenuOpen(false);
+              sheetRef.current?.collapse();
+              canvasRef.current?.startPlaceDevice();
+            };
 
             const racksContent =
               groups.length === 0 ? (
@@ -327,8 +348,9 @@ export function SiteDetail({
                 </div>
               );
 
-            // Plan-level controls injected into the canvas's top-left toolbar. Add-room / Add-device
-            // drive the FloorDevicesPanel modals through its imperative handle.
+            // Plan-level controls injected into the canvas's top-left toolbar. Add room starts a
+            // trace; Add device opens a type menu, then starts placement — both finish in the
+            // panel's modal via the canvas callbacks below.
             const planTools = (
               <>
                 <IconButton
@@ -337,16 +359,44 @@ export function SiteDetail({
                   tip="Add room"
                   tipSide="right"
                   variant="floating"
-                  onClick={() => panelRef.current?.openAddRoom()}
+                  onClick={startAddRoom}
                 />
-                <IconButton
-                  data-testid="plan-add-device"
-                  icon="tabler:circle-plus"
-                  tip="Add device"
-                  tipSide="right"
-                  variant="floating"
-                  onClick={() => panelRef.current?.openAddDevice()}
-                />
+                <div className="relative">
+                  <IconButton
+                    data-testid="plan-add-device"
+                    icon="tabler:circle-plus"
+                    tip="Add device"
+                    tipSide="right"
+                    variant={deviceMenuOpen ? "floatingActive" : "floating"}
+                    aria-pressed={deviceMenuOpen}
+                    onClick={() => setDeviceMenuOpen((o) => !o)}
+                  />
+                  {deviceMenuOpen && (
+                    <div
+                      data-testid="device-type-menu"
+                      className="absolute left-full top-0 z-40 ml-2 max-h-64 w-56 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-1 shadow-lg"
+                    >
+                      <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                        Pick a device to place
+                      </p>
+                      {deviceTypes.length === 0 ? (
+                        <p className="px-3 py-2 text-sm text-neutral-400">No device types available</p>
+                      ) : (
+                        deviceTypes.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            data-testid={`device-type-${t.id}`}
+                            onClick={() => startAddDevice(t.id)}
+                            className="block w-full rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                          >
+                            {t.name}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
                 <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
                 <IconButton
                   data-testid="delete-plan"
@@ -366,6 +416,7 @@ export function SiteDetail({
                 <div className="relative overflow-hidden rounded-2xl">
                   <FloorPlanCanvas
                     key={activeFloor.id}
+                    ref={canvasRef}
                     plan={activeFloorPlan}
                     planUrl={activePlanUrl}
                     rooms={activeFloorRooms}
@@ -374,10 +425,17 @@ export function SiteDetail({
                     deviceTypes={deviceTypes}
                     editable
                     planTools={planTools}
+                    onRoomTraced={(polygon) => panelRef.current?.openAddRoomWithPolygon(polygon)}
+                    onDevicePlaced={(point) => {
+                      const typeId = pendingDeviceType.current;
+                      pendingDeviceType.current = null;
+                      if (typeId) panelRef.current?.openAddDeviceWithPlacement(typeId, point);
+                    }}
                   />
                   <PlanBottomSheet
+                    ref={sheetRef}
                     tabs={[
-                      { id: "rooms", label: "Rooms & Devices", content: roomsDevicesContent },
+                      { id: "rooms", label: "Rooms & Devices", content: roomsDevicesPanel(true) },
                       { id: "racks", label: "Racks", content: racksContent },
                     ]}
                   />
@@ -413,7 +471,7 @@ export function SiteDetail({
                 ) : (
                   <PlanUploadZone floorId={activeFloor.id} hasPlan={false} />
                 )}
-                {roomsDevicesContent}
+                {roomsDevicesPanel(false)}
                 {racksContent}
               </div>
             );

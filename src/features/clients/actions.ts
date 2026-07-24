@@ -315,7 +315,9 @@ export async function deleteFloorAction(formData: FormData): Promise<{ ok: boole
   return { ok: true };
 }
 
-export async function createRoomAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export async function createRoomAction(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string; id?: string }> {
   const floorId = String(formData.get("floorId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -330,13 +332,15 @@ export async function createRoomAction(formData: FormData): Promise<{ ok: boolea
   const type = rawType as RoomType;
 
   const db = createServiceClient();
+  let room;
   try {
-    await createRoom(db, { floorId, code: normaliseCode(code), name, type });
+    room = await createRoom(db, { floorId, code: normaliseCode(code), name, type });
   } catch (e) {
     return { ok: false, error: friendly(e, "room") };
   }
   revalidatePath("/clients");
-  return { ok: true };
+  // The new id lets the caller chain setRoomPolygonAction in the trace-then-name flow.
+  return { ok: true, id: room.id };
 }
 
 export async function renameRoomAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
@@ -376,7 +380,9 @@ export async function deleteRoomAction(formData: FormData): Promise<{ ok: boolea
   return { ok: true };
 }
 
-export async function createFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export async function createFloorDeviceAction(
+  formData: FormData
+): Promise<{ ok: boolean; error?: string; id?: string }> {
   const floorId = String(formData.get("floorId") ?? "");
   const roomIdRaw = String(formData.get("roomId") ?? "");
   const roomId = roomIdRaw === "" ? null : roomIdRaw;
@@ -394,13 +400,15 @@ export async function createFloorDeviceAction(formData: FormData): Promise<{ ok:
   const status = rawStatus as FloorDeviceStatus;
 
   const db = createServiceClient();
+  let device;
   try {
-    await createFloorDevice(db, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
+    device = await createFloorDevice(db, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
   } catch (e) {
     return { ok: false, error: friendly(e, "device") };
   }
   revalidatePath("/clients");
-  return { ok: true };
+  // The new id lets the caller chain placeFloorDeviceAction in the place-then-detail flow.
+  return { ok: true, id: device.id };
 }
 
 export async function updateFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {

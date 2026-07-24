@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
@@ -389,16 +397,15 @@ function RackMarker({
  *  Nothing here rounds to integers either, so it composes with the "one transform, no wiggle"
  *  rule above rather than reintroducing it.
  */
-export function FloorPlanCanvas({
-  plan,
-  planUrl,
-  rooms,
-  devices,
-  racks,
-  deviceTypes,
-  editable,
-  planTools,
-}: {
+/** Imperative starts for the create-by-geometry flows, so the plan toolbar (owned by SiteDetail)
+ *  can kick off tracing a brand-new room or placing a brand-new device without the canvas needing
+ *  to know about the modals those flows finish in. */
+export interface FloorPlanCanvasHandle {
+  startTraceRoom: () => void;
+  startPlaceDevice: () => void;
+}
+
+interface FloorPlanCanvasProps {
   plan: FloorPlanRow;
   planUrl: string;
   rooms: RoomRow[];
@@ -411,7 +418,19 @@ export function FloorPlanCanvas({
    *  the delete-confirm dialog; kept out of the canvas so the same controls stay reachable in the
    *  plan-unavailable recovery state where no canvas renders. */
   planTools?: ReactNode;
-}) {
+  /** Fired once when a brand-new room outline is finished (Enter / double-click). The canvas has no
+   *  room id yet — SiteDetail opens the naming modal and creates + outlines the room on submit. */
+  onRoomTraced?: (polygon: NormPoint[]) => void;
+  /** Fired once when a brand-new device is dropped on the plan. SiteDetail knows the chosen type
+   *  and opens the details modal, creating + placing the device on submit. */
+  onDevicePlaced?: (point: NormPoint) => void;
+}
+
+export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvasProps>(
+  function FloorPlanCanvas(
+    { plan, planUrl, rooms, devices, racks, deviceTypes, editable, planTools, onRoomTraced, onDevicePlaced },
+    ref
+  ) {
   const imgW = plan.width_px;
   const imgH = plan.height_px;
 
@@ -510,6 +529,10 @@ export function FloorPlanCanvas({
   const [placingDeviceId, setPlacingDeviceId] = useState<string | null>(null);
   const [placingRackId, setPlacingRackId] = useState<string | null>(null);
   const [drawingRoomId, setDrawingRoomId] = useState<string | null>(null);
+  // Create-by-geometry modes (no id yet): tracing a NEW room, or placing a NEW device. These run
+  // independently of editMode — the plan toolbar kicks them off directly.
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [creatingDevice, setCreatingDevice] = useState(false);
   const [drawPoints, setDrawPoints] = useState<NormPoint[]>([]);
   const [hoverPoint, setHoverPoint] = useState<NormPoint | null>(null);
 
@@ -738,6 +761,45 @@ export function FloorPlanCanvas({
     setSelectedVertex(null);
   }
 
+  // ---- Create-by-geometry (started from the plan toolbar via the imperative handle) ----
+  /** Reset every selection/gesture so a fresh create mode starts from a clean slate. */
+  function clearAllGestures() {
+    setPlacingDeviceId(null);
+    setPlacingRackId(null);
+    setDrawingRoomId(null);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSelectedPinId(null);
+    setSelectedRackId(null);
+    setSelectedVertex(null);
+    clearRoomSelection();
+  }
+
+  function startTraceRoom() {
+    clearAllGestures();
+    setCreatingDevice(false);
+    setCreatingRoom(true);
+  }
+
+  function startPlaceDevice() {
+    clearAllGestures();
+    setCreatingRoom(false);
+    setCreatingDevice(true);
+  }
+
+  useImperativeHandle(ref, () => ({ startTraceRoom, startPlaceDevice }));
+
+  /** Close a brand-new room trace (Enter / double-click) and hand the outline up. Mirrors
+   *  commitDrawnRoom's dedupe-then-min-3 guard, but there's no room to persist to yet. */
+  function finishTracedRoom() {
+    const deduped = dedupePolygon(drawPoints, POLYGON_DEDUPE_EPSILON);
+    if (deduped.length < 3) return;
+    setCreatingRoom(false);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    onRoomTraced?.(deduped);
+  }
+
   async function deleteSelectedRoomOutline(roomId: string) {
     // Clears the OUTLINE, never the room — the room and its devices stay in the lists below.
     clearRoomSelection();
@@ -855,7 +917,7 @@ export function FloorPlanCanvas({
       if (n) setVertexPreview({ roomId: drag.roomId, index: drag.index, point: n });
       return;
     }
-    if (drawingRoomId) {
+    if (drawingRoomId || creatingRoom) {
       setHoverPoint(toNorm(e.clientX, e.clientY));
     }
     const d = dragRef.current;
@@ -906,7 +968,7 @@ export function FloorPlanCanvas({
     // event is unreliable here because any sub-threshold pan still fires pointermove. So selection
     // is decided from the pointer travel, not from `click`, which is exactly what made a real
     // click on a room fail before (the smallest drift suppressed it).
-    if (d && editMode && !placingDeviceId && !placingRackId && !drawingRoomId) {
+    if (d && editMode && !placingDeviceId && !placingRackId && !drawingRoomId && !creatingRoom && !creatingDevice) {
       const travel = Math.hypot(e.clientX - d.x, e.clientY - d.y);
       if (travel < TAP_THRESHOLD_PX) {
         // Pins and racks own their own pointer-down (they stopPropagation), so a tap that reaches
@@ -922,6 +984,20 @@ export function FloorPlanCanvas({
 
   // Simple taps (not drags) — device placement and room-outline vertex clicks.
   function handleCanvasClick(e: React.MouseEvent<SVGSVGElement>) {
+    // Create-by-geometry modes run without edit mode (started from the toolbar).
+    if (creatingDevice) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      setCreatingDevice(false);
+      onDevicePlaced?.(n);
+      return;
+    }
+    if (creatingRoom) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      setDrawPoints((prev) => [...prev, n]);
+      return;
+    }
     if (!editMode) return;
     if (placingDeviceId) {
       const n = toNorm(e.clientX, e.clientY);
@@ -947,6 +1023,13 @@ export function FloorPlanCanvas({
   }
 
   function handleCanvasDoubleClick(e: React.MouseEvent<SVGSVGElement>) {
+    if (creatingRoom) {
+      if (drawPoints.length >= 3) {
+        e.preventDefault();
+        finishTracedRoom();
+      }
+      return;
+    }
     if (!editMode || !drawingRoomId) return;
     if (drawPoints.length >= 3) {
       e.preventDefault();
@@ -957,12 +1040,15 @@ export function FloorPlanCanvas({
   // Keyboard: Enter closes a ≥3-point draw, Esc cancels the current gesture/selection cleanly,
   // Delete/Backspace un-places a selected pin or removes a selected vertex.
   useEffect(() => {
-    if (!editMode) return;
+    // Active in edit mode AND during a toolbar-started create gesture (which runs outside it).
+    if (!editMode && !creatingRoom && !creatingDevice) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setPlacingDeviceId(null);
         setPlacingRackId(null);
         setDrawingRoomId(null);
+        setCreatingRoom(false);
+        setCreatingDevice(false);
         setDrawPoints([]);
         setHoverPoint(null);
         setSelectedPinId(null);
@@ -984,6 +1070,10 @@ export function FloorPlanCanvas({
         return;
       }
       if (e.key === "Enter") {
+        if (creatingRoom && drawPoints.length >= 3) {
+          finishTracedRoom();
+          return;
+        }
         if (drawingRoomId && drawPoints.length >= 3) {
           void commitDrawnRoom(drawingRoomId, drawPoints);
         }
@@ -1005,7 +1095,7 @@ export function FloorPlanCanvas({
     // directly, so it must re-subscribe whenever any of them changes to avoid acting on stale
     // state (mirrors the existing eslint-disable precedent in the fit-on-mount effect above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, drawingRoomId, drawPoints, selectedPinId, selectedVertex, rooms]);
+  }, [editMode, creatingRoom, creatingDevice, drawingRoomId, drawPoints, selectedPinId, selectedVertex, rooms]);
 
   const { placed, unplaced } = partitionPlacement(devices);
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
@@ -1138,7 +1228,10 @@ export function FloorPlanCanvas({
           style={{
             display: "block",
             touchAction: "none",
-            cursor: placingDeviceId || placingRackId || drawingRoomId ? "crosshair" : undefined,
+            cursor:
+              placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice
+                ? "crosshair"
+                : undefined,
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -1199,7 +1292,7 @@ export function FloorPlanCanvas({
                 onPointerDownRack={onRackPointerDown}
               />
             ))}
-            {drawingRoomId && (
+            {(drawingRoomId || creatingRoom) && (
               <g>
                 {drawPoints.map((p, i) => {
                   const pos = normToScreen(p, identityView(imgW, imgH));
@@ -1270,7 +1363,7 @@ export function FloorPlanCanvas({
 
         {/* Transient status: an error, or the click-to-place / click-to-draw instructions. Floated
             top-center so it reads as part of the plan rather than adding a row of chrome above it. */}
-        {(error || placingDeviceId || placingRackId || drawingRoomId) && (
+        {(error || placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice) && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2">
             {error ? (
               <p
@@ -1281,9 +1374,9 @@ export function FloorPlanCanvas({
               </p>
             ) : (
               <p className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm">
-                {placingDeviceId && "Click on the plan to place the device. Esc to cancel."}
+                {(placingDeviceId || creatingDevice) && "Click on the plan to place the device. Esc to cancel."}
                 {placingRackId && "Click on the plan to place the rack. Esc to cancel."}
-                {drawingRoomId &&
+                {(drawingRoomId || creatingRoom) &&
                   `Click to add points${
                     drawPoints.length >= 3 ? " — Enter or double-click to finish" : ` (${drawPoints.length}/3 minimum)`
                   }. Esc to cancel.`}
@@ -1392,4 +1485,4 @@ export function FloorPlanCanvas({
       </div>
     </div>
   );
-}
+});

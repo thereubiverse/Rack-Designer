@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { createRef } from "react";
 import { render, screen, within, fireEvent, act } from "@testing-library/react";
-import { FloorDevicesPanel } from "./FloorDevicesPanel";
+import { FloorDevicesPanel, type FloorDevicesPanelHandle } from "./FloorDevicesPanel";
 import type { FloorRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import {
@@ -10,17 +11,22 @@ import {
   createFloorDeviceAction,
   updateFloorDeviceAction,
   deleteFloorDeviceAction,
+  setRoomPolygonAction,
+  placeFloorDeviceAction,
 } from "./actions";
 
 const refreshMock = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock }) }));
 vi.mock("./actions", () => ({
-  createRoomAction: vi.fn(async () => ({ ok: true })),
+  // The create actions return the new id so the trace/place-first flows can chain the geometry.
+  createRoomAction: vi.fn(async () => ({ ok: true, id: "new-room" })),
   renameRoomAction: vi.fn(async () => ({ ok: true })),
   deleteRoomAction: vi.fn(async () => ({ ok: true })),
-  createFloorDeviceAction: vi.fn(async () => ({ ok: true })),
+  createFloorDeviceAction: vi.fn(async () => ({ ok: true, id: "new-device" })),
   updateFloorDeviceAction: vi.fn(async () => ({ ok: true })),
   deleteFloorDeviceAction: vi.fn(async () => ({ ok: true })),
+  setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+  placeFloorDeviceAction: vi.fn(async () => ({ ok: true })),
 }));
 
 const floor: FloorRow = {
@@ -378,6 +384,54 @@ describe("FloorDevicesPanel", () => {
       expect(formData.get("id")).toBe("room-2f");
       expect(formData.get("name")).toBe("Upper IDF");
       expect(refreshMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("create-by-geometry handle", () => {
+    it("openAddRoomWithPolygon: Create chains createRoom, then saves that outline on the new room id", async () => {
+      const before = vi.mocked(setRoomPolygonAction).mock.calls.length;
+      const ref = createRef<FloorDevicesPanelHandle>();
+      renderPanel({ ref });
+
+      const polygon: [number, number][] = [
+        [0.1, 0.1],
+        [0.5, 0.9],
+        [0.9, 0.1],
+      ];
+      act(() => ref.current!.openAddRoomWithPolygon(polygon));
+
+      const dialog = within(screen.getByRole("dialog", { name: "Add room" }));
+      fireEvent.change(dialog.getByLabelText(/Code/i), { target: { value: "NEWRM" } });
+      await act(async () => {
+        fireEvent.click(dialog.getByRole("button", { name: "Create" }));
+      });
+
+      expect(createRoomAction).toHaveBeenCalled();
+      expect(setRoomPolygonAction).toHaveBeenCalledTimes(before + 1);
+      const polyFd = vi.mocked(setRoomPolygonAction).mock.calls.at(-1)![0] as FormData;
+      expect(polyFd.get("roomId")).toBe("new-room"); // the id createRoomAction returned
+      expect(JSON.parse(String(polyFd.get("polygon")))).toEqual(polygon);
+    });
+
+    it("openAddDeviceWithPlacement: pre-selects the type, and Create chains createDevice then places it at the point", async () => {
+      const before = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+      const ref = createRef<FloorDevicesPanelHandle>();
+      renderPanel({ ref });
+
+      act(() => ref.current!.openAddDeviceWithPlacement("type-ap", [0.4, 0.6]));
+
+      const dialog = within(screen.getByRole("dialog", { name: "Add device" }));
+      expect((dialog.getByLabelText(/Type/i) as HTMLSelectElement).value).toBe("type-ap");
+      await act(async () => {
+        fireEvent.click(dialog.getByRole("button", { name: "Create" }));
+      });
+
+      expect(createFloorDeviceAction).toHaveBeenCalled();
+      expect(placeFloorDeviceAction).toHaveBeenCalledTimes(before + 1);
+      const placeFd = vi.mocked(placeFloorDeviceAction).mock.calls.at(-1)![0] as FormData;
+      expect(placeFd.get("id")).toBe("new-device"); // the id createFloorDeviceAction returned
+      expect(Number(placeFd.get("x"))).toBeCloseTo(0.4);
+      expect(Number(placeFd.get("y"))).toBeCloseTo(0.6);
     });
   });
 });

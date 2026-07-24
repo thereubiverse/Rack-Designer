@@ -141,7 +141,8 @@ describe("createFloorDeviceAction", () => {
 
     const res = await createFloorDeviceAction(createDeviceForm());
 
-    expect(res).toEqual({ ok: true });
+    expect(res.ok).toBe(true);
+    expect(res.id).toBeTruthy(); // new id is returned so the place-then-detail flow can chain
     const deviceInsert = insertCalls.find((c) => c.table === "floor_devices");
     expect(deviceInsert?.values.site_id).toBe("SITE-A");
   });
@@ -183,7 +184,7 @@ describe("createFloorDeviceAction", () => {
 
     const res = await createFloorDeviceAction(createDeviceForm({ code: "cam07" }));
 
-    expect(res).toEqual({ ok: true });
+    expect(res.ok).toBe(true);
     const deviceInsert = insertCalls.find((c) => c.table === "floor_devices");
     expect(deviceInsert?.values.code).toBe("CAM07");
   });

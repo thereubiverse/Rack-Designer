@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 export interface SheetTab {
   id: string;
   label: string;
   content: ReactNode;
+}
+
+export interface PlanBottomSheetHandle {
+  /** Collapse to the peek height — used when a create gesture starts so the plan is fully visible. */
+  collapse: () => void;
 }
 
 // Peek height shows just the grab handle + tab bar; expanded height covers the lower part of the
@@ -18,10 +29,13 @@ const DRAG_SLOP = 4;
  *  drags the handle up (or taps it / a tab) to expand it over the plan for managing the floor, and
  *  collapses it to give the plan back. Anchored to a `relative` parent (the plan wrapper), so it
  *  floats over the canvas rather than pushing the page down. */
-export function PlanBottomSheet({ tabs }: { tabs: SheetTab[] }) {
+export const PlanBottomSheet = forwardRef<PlanBottomSheetHandle, { tabs: SheetTab[] }>(
+  function PlanBottomSheet({ tabs }, ref) {
   const [activeId, setActiveId] = useState(tabs[0]?.id);
   const [height, setHeight] = useState(COLLAPSED_H);
   const [dragging, setDragging] = useState(false);
+
+  useImperativeHandle(ref, () => ({ collapse: () => setHeight(COLLAPSED_H) }));
 
   const expanded = height > COLLAPSED_H + DRAG_SLOP * 4;
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
@@ -108,4 +122,4 @@ export function PlanBottomSheet({ tabs }: { tabs: SheetTab[] }) {
       </div>
     </div>
   );
-}
+});
