@@ -807,4 +807,23 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
     expect(polygon.length).toBeGreaterThanOrEqual(3);
     expect(isValidPolygon(polygon)).toBe(true);
   });
+
+  it("right-click removes the last traced point during Add room (runs outside edit mode)", async () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    const { container } = renderWithHandle({ ref });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 300, clientY: 200 });
+      fireEvent.click(svg, { clientX: 500, clientY: 200 });
+      fireEvent.click(svg, { clientX: 400, clientY: 400 });
+    });
+    expect(container.querySelectorAll('[data-testid^="draw-point-"]')).toHaveLength(3);
+
+    await act(async () => {
+      fireEvent.contextMenu(svg, { clientX: 400, clientY: 400 });
+    });
+    expect(container.querySelectorAll('[data-testid^="draw-point-"]')).toHaveLength(2);
+  });
 });

@@ -705,7 +705,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   /** Right-click undo. While tracing, removes the last placed point. While vertex-editing, reverts
    *  the last committed change (move / insert / delete) by replaying the recorded polygon. */
   function undoLastPoint() {
-    if (drawingRoomId) {
+    if (drawingRoomId || creatingRoom) {
       setDrawPoints((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
       return;
     }
@@ -1242,7 +1242,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           onContextMenu={(e) => {
             // Right-click = undo the last point, while tracing or vertex-editing. Suppress the
             // browser menu only in those modes so a normal right-click works everywhere else.
-            if (editMode && (drawingRoomId || editingRoomId)) {
+            // creatingRoom (toolbar trace of a brand-new room) runs outside edit mode, so it's
+            // checked on its own rather than under the editMode guard.
+            if (creatingRoom || (editMode && (drawingRoomId || editingRoomId))) {
               e.preventDefault();
               undoLastPoint();
             }
