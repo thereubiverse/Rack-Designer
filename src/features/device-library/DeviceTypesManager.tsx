@@ -296,7 +296,6 @@ function CreateTypeModal({ category, onClose, onCreated }: {
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
               />
             </label>
-            <span className="font-mono text-sm font-normal text-neutral-500">{color}</span>
           </div>
         </div>
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
