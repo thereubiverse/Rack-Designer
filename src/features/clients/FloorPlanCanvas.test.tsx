@@ -826,4 +826,28 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
     });
     expect(container.querySelectorAll('[data-testid^="draw-point-"]')).toHaveLength(2);
   });
+
+  it("snaps a traced point to a nearby existing-room vertex", async () => {
+    const onRoomTraced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithHandle({ ref, onRoomTraced });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    // room-mdf's corner [0.3, 0.1] renders at screen ~(267, 56) given the jsdom fallback fit
+    // (870px pane, 1200x800 plan -> zoom 0.7, panX 15). Click ~4px off it: it should snap exactly.
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 270, clientY: 59 });
+      fireEvent.click(svg, { clientX: 500, clientY: 300 });
+      fireEvent.click(svg, { clientX: 300, clientY: 400 });
+    });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 300, clientY: 400 });
+    });
+
+    expect(onRoomTraced).toHaveBeenCalledTimes(1);
+    const [polygon] = onRoomTraced.mock.calls[0];
+    expect(polygon[0][0]).toBeCloseTo(0.3, 5);
+    expect(polygon[0][1]).toBeCloseTo(0.1, 5);
+  });
 });

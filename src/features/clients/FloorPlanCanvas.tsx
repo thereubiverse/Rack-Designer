@@ -62,6 +62,10 @@ const K_PINCH = 0.01;
 // dblclick closing paths) collapses that; this is its distance threshold in normalized space.
 const POLYGON_DEDUPE_EPSILON = 1e-3;
 
+// Vertex snapping while tracing: a trace point within this many SCREEN pixels of an existing room's
+// vertex jumps to it exactly, so rooms that share a wall meet on the same corners at any zoom.
+const SNAP_PX = 12;
+
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
 const STATUS_PIN_COLOR: Record<FloorDeviceRow["status"], string> = {
@@ -535,6 +539,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [creatingDevice, setCreatingDevice] = useState(false);
   const [drawPoints, setDrawPoints] = useState<NormPoint[]>([]);
   const [hoverPoint, setHoverPoint] = useState<NormPoint | null>(null);
+  // The existing-room vertex the cursor is currently snapping to (for the highlight ring), or null.
+  const [snapTarget, setSnapTarget] = useState<NormPoint | null>(null);
 
   // ---- Selection for move / un-place / vertex-edit ----
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
@@ -601,6 +607,33 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     [view, imgW, imgH]
   );
 
+  // Candidate snap points: every vertex of every OTHER outlined room on this floor. The room being
+  // re-outlined (drawingRoomId) is excluded so a trace never snaps to its own corners; a brand-new
+  // room (creatingRoom) has no id, so nothing is excluded.
+  const snapVertices: NormPoint[] = [];
+  for (const r of rooms) {
+    if (!r.plan_polygon) continue;
+    if (drawingRoomId && r.id === drawingRoomId) continue;
+    for (const p of r.plan_polygon) snapVertices.push(p);
+  }
+
+  /** Nearest existing-room vertex within SNAP_PX screen pixels of `n`, or null. Distance is measured
+   *  in screen space (via the live zoom) so the magnet feels the same at any zoom level. */
+  function snapToVertex(n: NormPoint): NormPoint | null {
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const v of snapVertices) {
+      const dx = (v[0] - n[0]) * imgW * view.zoom;
+      const dy = (v[1] - n[1]) * imgH * view.zoom;
+      const dist = Math.hypot(dx, dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = v;
+      }
+    }
+    return best;
+  }
+
   // ---- Action commits — each is called exactly once per completed gesture ----
   async function commitPlaceDevice(id: string, point: NormPoint) {
     const fd = new FormData();
@@ -666,6 +699,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setDrawingRoomId(null);
     setDrawPoints([]);
     setHoverPoint(null);
+    setSnapTarget(null);
     setError(null);
     router.refresh();
   }
@@ -769,6 +803,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setDrawingRoomId(null);
     setDrawPoints([]);
     setHoverPoint(null);
+    setSnapTarget(null);
     setSelectedPinId(null);
     setSelectedRackId(null);
     setSelectedVertex(null);
@@ -797,6 +832,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setCreatingRoom(false);
     setDrawPoints([]);
     setHoverPoint(null);
+    setSnapTarget(null);
     onRoomTraced?.(deduped);
   }
 
@@ -918,7 +954,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return;
     }
     if (drawingRoomId || creatingRoom) {
-      setHoverPoint(toNorm(e.clientX, e.clientY));
+      const raw = toNorm(e.clientX, e.clientY);
+      const snapped = raw ? snapToVertex(raw) : null;
+      setSnapTarget(snapped);
+      setHoverPoint(snapped ?? raw);
     }
     const d = dragRef.current;
     if (!d) return;
@@ -995,7 +1034,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (creatingRoom) {
       const n = toNorm(e.clientX, e.clientY);
       if (!n) return;
-      setDrawPoints((prev) => [...prev, n]);
+      setDrawPoints((prev) => [...prev, snapToVertex(n) ?? n]);
       return;
     }
     if (!editMode) return;
@@ -1018,7 +1057,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (drawingRoomId) {
       const n = toNorm(e.clientX, e.clientY);
       if (!n) return;
-      setDrawPoints((prev) => [...prev, n]);
+      setDrawPoints((prev) => [...prev, snapToVertex(n) ?? n]);
     }
   }
 
@@ -1051,6 +1090,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         setCreatingDevice(false);
         setDrawPoints([]);
         setHoverPoint(null);
+        setSnapTarget(null);
         setSelectedPinId(null);
         setSelectedRackId(null);
         setSelectedRoomId(null);
@@ -1325,6 +1365,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                     strokeWidth={2 / view.zoom}
                   />
                 )}
+                {snapTarget &&
+                  (() => {
+                    // Highlight the existing-room vertex the next point will snap to.
+                    const s = normToScreen(snapTarget, identityView(imgW, imgH));
+                    return (
+                      <circle
+                        data-testid="snap-target"
+                        cx={s.x}
+                        cy={s.y}
+                        r={9 / view.zoom}
+                        fill="none"
+                        stroke="#2563eb"
+                        strokeWidth={2 / view.zoom}
+                      />
+                    );
+                  })()}
               </g>
             )}
           </g>
