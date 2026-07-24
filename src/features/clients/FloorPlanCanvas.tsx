@@ -617,21 +617,64 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     for (const p of r.plan_polygon) snapVertices.push(p);
   }
 
-  /** Nearest existing-room vertex within SNAP_PX screen pixels of `n`, or null. Distance is measured
-   *  in screen space (via the live zoom) so the magnet feels the same at any zoom level. */
+  // Everything below measures distance in SCREEN space (norm * imgDim * zoom) so the magnet feels
+  // the same at any zoom, and projects onto walls with the correct visual perpendicular (the plan is
+  // wider than tall, so normalized space is anisotropic). Pan is a constant offset and cancels out.
+  const toScreenX = (nx: number) => nx * imgW * view.zoom;
+  const toScreenY = (ny: number) => ny * imgH * view.zoom;
+
+  /** Nearest existing-room vertex within SNAP_PX screen pixels of `n`, or null. */
   function snapToVertex(n: NormPoint): NormPoint | null {
     let best: NormPoint | null = null;
     let bestDist = SNAP_PX;
     for (const v of snapVertices) {
-      const dx = (v[0] - n[0]) * imgW * view.zoom;
-      const dy = (v[1] - n[1]) * imgH * view.zoom;
-      const dist = Math.hypot(dx, dy);
+      const dist = Math.hypot(toScreenX(v[0] - n[0]), toScreenY(v[1] - n[1]));
       if (dist < bestDist) {
         bestDist = dist;
         best = v;
       }
     }
     return best;
+  }
+
+  /** Nearest point ON an existing-room wall within SNAP_PX, or null — lets a trace drop a NEW point
+   *  onto a shared wall between its corners. Same room exclusion as vertices. */
+  function snapToEdge(n: NormPoint): NormPoint | null {
+    const px = toScreenX(n[0]);
+    const py = toScreenY(n[1]);
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const r of rooms) {
+      if (!r.plan_polygon) continue;
+      if (drawingRoomId && r.id === drawingRoomId) continue;
+      const poly = r.plan_polygon;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i];
+        const b = poly[(i + 1) % poly.length]; // wrap: the closing wall counts too
+        const ax = toScreenX(a[0]);
+        const ay = toScreenY(a[1]);
+        const bx = toScreenX(b[0]);
+        const by = toScreenY(b[1]);
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len2 = dx * dx + dy * dy;
+        // Project the cursor onto the segment, clamped to its endpoints.
+        const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+        const cx = ax + t * dx;
+        const cy = ay + t * dy;
+        const dist = Math.hypot(px - cx, py - cy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = [cx / (imgW * view.zoom), cy / (imgH * view.zoom)];
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Snap a traced point: prefer an exact existing corner, else a point on an existing wall. */
+  function snapPoint(n: NormPoint): NormPoint | null {
+    return snapToVertex(n) ?? snapToEdge(n);
   }
 
   // ---- Action commits — each is called exactly once per completed gesture ----
@@ -955,7 +998,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     }
     if (drawingRoomId || creatingRoom) {
       const raw = toNorm(e.clientX, e.clientY);
-      const snapped = raw ? snapToVertex(raw) : null;
+      const snapped = raw ? snapPoint(raw) : null;
       setSnapTarget(snapped);
       setHoverPoint(snapped ?? raw);
     }
@@ -1034,7 +1077,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (creatingRoom) {
       const n = toNorm(e.clientX, e.clientY);
       if (!n) return;
-      setDrawPoints((prev) => [...prev, snapToVertex(n) ?? n]);
+      setDrawPoints((prev) => [...prev, snapPoint(n) ?? n]);
       return;
     }
     if (!editMode) return;
@@ -1057,7 +1100,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (drawingRoomId) {
       const n = toNorm(e.clientX, e.clientY);
       if (!n) return;
-      setDrawPoints((prev) => [...prev, snapToVertex(n) ?? n]);
+      setDrawPoints((prev) => [...prev, snapPoint(n) ?? n]);
     }
   }
 

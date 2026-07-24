@@ -850,4 +850,29 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
     expect(polygon[0][0]).toBeCloseTo(0.3, 5);
     expect(polygon[0][1]).toBeCloseTo(0.1, 5);
   });
+
+  it("snaps a traced point onto an existing wall between corners (edge snap)", async () => {
+    const onRoomTraced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithHandle({ ref, onRoomTraced });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    // room-mdf's top wall runs [0.1,0.1]->[0.3,0.1] (screen y ~56); its midpoint is ~(183, 56).
+    // Click ~3px below it, far from either corner: it should snap onto the wall, not a corner.
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 183, clientY: 59 });
+      fireEvent.click(svg, { clientX: 500, clientY: 300 });
+      fireEvent.click(svg, { clientX: 300, clientY: 400 });
+    });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 300, clientY: 400 });
+    });
+
+    expect(onRoomTraced).toHaveBeenCalledTimes(1);
+    const [polygon] = onRoomTraced.mock.calls[0];
+    expect(polygon[0][1]).toBeCloseTo(0.1, 5); // pinned onto the wall's y
+    expect(polygon[0][0]).toBeGreaterThan(0.1); // strictly between the two corners
+    expect(polygon[0][0]).toBeLessThan(0.3);
+  });
 });
