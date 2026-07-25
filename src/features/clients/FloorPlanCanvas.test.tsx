@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createRef } from "react";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { getDocument as pdfjsGetDocument } from "pdfjs-dist";
 import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
@@ -60,6 +61,19 @@ vi.mock("./discoverActions", () => ({
       { id: "dev-0", label: "CAM01", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
       { id: "dev-1", label: "AP02", typeCode: "AP", point: [0.7, 0.2], confidence: "low" },
     ],
+  })),
+}));
+
+// PlanVectorLayer lazily imports pdf.js, which evaluates `new DOMMatrix()` at module scope and
+// cannot rasterise in jsdom anyway. These tests only care WHICH layer the canvas chooses, so the
+// library is faked; the layer's own debounce/cancel behaviour is covered in PlanVectorLayer.test.tsx.
+vi.mock("pdfjs-dist", () => ({
+  GlobalWorkerOptions: { workerSrc: "" },
+  // The document never resolves: these tests assert the DOM shape the canvas mounts, and a load
+  // that completes would only settle state after the assertions (outside act) for no added cover.
+  getDocument: vi.fn(() => ({
+    promise: new Promise<never>(() => {}),
+    destroy: async () => {},
   })),
 }));
 
@@ -2073,5 +2087,99 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     // before walls existed — the fit button is still there, a dead wall control is not.
     expect(screen.getByTestId("fit-to-area")).toBeInTheDocument();
     expect(screen.queryByTestId("toggle-walls")).toBeNull();
+  });
+});
+
+// The user's requirement: "no loss of quality or compression". A retained source PDF is rasterised
+// live at the current zoom instead of stretching the fixed 2600px PNG. These tests are the WIRING
+// contract only — which layer the canvas picks, and that picking the vector one moves nothing.
+describe("FloorPlanCanvas (vector plan rendering)", () => {
+  const PDF_PLAN: FloorPlanRow = {
+    ...PLAN,
+    source: "pdf",
+    pdf_storage_path: "floor-1/source.pdf",
+    pdf_page: 2,
+  };
+  const PDF_URL = "https://example.test/plan.pdf";
+
+  function renderWithPdf(over: { pdfUrl?: string | null; pdfPage?: number | null } = {}) {
+    return render(
+      <FloorPlanCanvas
+        plan={PDF_PLAN}
+        planUrl={PLAN_URL}
+        pdfUrl={"pdfUrl" in over ? over.pdfUrl : PDF_URL}
+        pdfPage={"pdfPage" in over ? over.pdfPage : PDF_PLAN.pdf_page}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
+        editable={false}
+      />
+    );
+  }
+
+  beforeEach(() => {
+    // The layer debounces before it touches pdf.js; frozen timers mean these DOM-shape assertions
+    // never race an async rasterisation.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders the vector layer INSTEAD of the raster <image> when a source PDF is available", () => {
+    renderWithPdf();
+    const svg = screen.getByTestId("floor-plan-canvas");
+    expect(screen.getByTestId("plan-vector-layer")).toBeInTheDocument();
+    expect(svg.querySelector("image")).toBeNull();
+  });
+
+  it("sizes the vector layer to exactly the imgW x imgH box the <image> occupied", () => {
+    renderWithPdf();
+    const fo = screen.getByTestId("plan-vector-layer");
+    expect(fo.tagName.toLowerCase()).toBe("foreignobject");
+    expect(fo.getAttribute("x")).toBe("0");
+    expect(fo.getAttribute("y")).toBe("0");
+    expect(fo.getAttribute("width")).toBe("1200");
+    expect(fo.getAttribute("height")).toBe("800");
+  });
+
+  it("leaves every plan coordinate exactly where the raster path put it", () => {
+    renderWithPdf();
+    // Identical to the raster-path expectation above: normToScreen([0.8,0.65]) in image-pixel space.
+    expect(screen.getByTestId("plan-pin-CAM02").getAttribute("transform")).toBe("translate(960 520)");
+    expect(screen.getByTestId("plan-room-MDF").getAttribute("points")!.trim().split(/\s+/)).toHaveLength(4);
+    // The single live transform is untouched: jsdom fit zoom 0.7, panX 15, panY 0.
+    const live = screen.getByTestId("floor-plan-canvas").querySelector("g")!;
+    expect(live.getAttribute("transform")).toBe("translate(15 0) scale(0.7)");
+  });
+
+  it("keeps the raster <image> when no source PDF was retained (image uploads, failed retention)", () => {
+    renderWithPdf({ pdfUrl: null, pdfPage: null });
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const image = svg.querySelector("image");
+    expect(image).not.toBeNull();
+    expect(image?.getAttribute("href")).toBe(PLAN_URL);
+    expect(image?.getAttribute("width")).toBe("1200");
+    expect(image?.getAttribute("height")).toBe("800");
+    expect(image?.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
+    expect(screen.queryByTestId("plan-vector-layer")).toBeNull();
+  });
+
+  it("falls back to the raster <image> if the PDF cannot be rendered", async () => {
+    // A blank plan would be far worse than a slightly soft one, so a dead signed URL / corrupt PDF
+    // must land back on the PNG rather than on nothing.
+    vi.useRealTimers();
+    vi.mocked(pdfjsGetDocument).mockImplementationOnce(() => {
+      throw new Error("signed URL expired");
+    });
+    renderWithPdf();
+    await waitFor(() =>
+      expect(screen.getByTestId("floor-plan-canvas").querySelector("image")).not.toBeNull()
+    );
+    const svg = screen.getByTestId("floor-plan-canvas");
+    expect(svg.querySelector("image")?.getAttribute("href")).toBe(PLAN_URL);
+    expect(screen.queryByTestId("plan-vector-layer")).toBeNull();
   });
 });

@@ -11,8 +11,12 @@ import type * as PdfjsModule from "pdfjs-dist";
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 /** pdf.js evaluates `new DOMMatrix()` at MODULE scope, which crashes Node during SSR — so the
  *  library may only ever be imported lazily, inside the browser-only conversion calls. Same
- *  disease as Leaflet's window-at-import-time; same cure, one level deeper. */
-function loadPdfjs(): Promise<typeof PdfjsModule> {
+ *  disease as Leaflet's window-at-import-time; same cure, one level deeper.
+ *
+ *  Exported so `PlanVectorLayer` shares this one memoised import and this one worker-src
+ *  assignment — a second setup elsewhere would mean a second worker bundle and a second chance to
+ *  get the URL wrong. */
+export function loadPdfjs(): Promise<typeof PdfjsModule> {
   if (!pdfjsPromise) {
     pdfjsPromise = import("pdfjs-dist").then((pdfjs) => {
       pdfjs.GlobalWorkerOptions.workerSrc = new URL(

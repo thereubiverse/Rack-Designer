@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
+import { PlanVectorLayer } from "./PlanVectorLayer";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
@@ -489,6 +490,12 @@ export interface FloorPlanCanvasHandle {
 interface FloorPlanCanvasProps {
   plan: FloorPlanRow;
   planUrl: string;
+  /** Signed URL of the RETAINED SOURCE PDF, when there is one. Present → the plan is drawn as live
+   *  vector at the current zoom (`PlanVectorLayer`) instead of stretching the fixed-size PNG.
+   *  Absent (image uploads, PDFs whose retention failed) → exactly the `<image>` path as before. */
+  pdfUrl?: string | null;
+  /** 0-based page the plan came from. Ignored without `pdfUrl`; defaults to the first page. */
+  pdfPage?: number | null;
   rooms: RoomRow[];
   devices: FloorDeviceRow[];
   racks: SiteRackRow[];
@@ -520,6 +527,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     {
       plan,
       planUrl,
+      pdfUrl,
+      pdfPage,
       rooms,
       devices,
       racks,
@@ -535,6 +544,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   ) {
   const imgW = plan.width_px;
   const imgH = plan.height_px;
+
+  // A PDF that failed to load or render (dead signed URL, corrupt file) drops back to the PNG for
+  // the rest of this URL's life — a slightly soft plan is recoverable, a blank one is not. Keyed by
+  // URL rather than a boolean so a refreshed signed URL gets a clean try.
+  const [failedPdfUrl, setFailedPdfUrl] = useState<string | null>(null);
+  const useVectorPlan = !!pdfUrl && failedPdfUrl !== pdfUrl;
 
   const paneRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -2135,7 +2150,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           }}
         >
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
-            <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
+            {/* The plan itself: live vector when the source PDF survived upload (sharp at any
+                magnification), otherwise the flattened PNG. Both occupy the SAME (0,0,imgW,imgH)
+                box in image-pixel space, so nothing below them moves either way. */}
+            {useVectorPlan && pdfUrl ? (
+              <PlanVectorLayer
+                pdfUrl={pdfUrl}
+                pageIndex={pdfPage ?? 0}
+                imgW={imgW}
+                imgH={imgH}
+                zoom={view.zoom}
+                onError={() => setFailedPdfUrl(pdfUrl)}
+              />
+            ) : (
+              <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
+            )}
             {/* Extracted walls — drawn straight after the image and BEFORE every room, pin and
                 rack, because they are context the floor sits on, not content on the floor. Same
                 IMAGE-PIXEL space as everything else (identityView), stroke divided by the live zoom
