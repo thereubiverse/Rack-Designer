@@ -50,8 +50,17 @@ export async function extractPlanGeometry(
     else if (fn === OPS.transform) ctm = mul(ctm, args as unknown as number[]);
     else if (fn === OPS.setStrokeRGBColor) colour = String((args as unknown as unknown[])[0]);
     else if (fn === OPS.constructPath) {
+      // args = [paintOp, [flatArray], minMax]. paintOp === OPS.endPath means this path is
+      // clip-only geometry (never stroked or filled) — overlay exports use clipping for masking,
+      // so without this check invisible clip regions get treated as walls.
+      const paintOp = (args as unknown as unknown[])[0];
+      if (paintOp === OPS.endPath) continue;
       const flat = (args as unknown as [unknown, ArrayLike<number>[]])[1]?.[0];
       if (!flat) continue;
+      // Fill colour is intentionally NOT tracked alongside stroke colour: wall outlines on these
+      // sheets are stroked, not filled (94.9% coverage proves it), and picking up filled regions
+      // would pull in hatching noise. A grey-filled/black-stroked region is classified by the
+      // stale stroke colour — that's accepted, not a bug to "fix" here.
       const grey = isScreenedBack(colour);
       const n = flat.length ?? 0;
       let j = 0;
@@ -66,7 +75,12 @@ export async function extractPlanGeometry(
           cur = p;
         }
         else if (op === 2) { j += 4; cur = apply(ctm, flat[j++], flat[j++]); }
-        else if (op === 3) { j += 2; cur = apply(ctm, flat[j++], flat[j++]); }
+        // No opcode-3 case: pdf.js's buildPath (pdf.worker.mjs) emits BOTH curveTo variants (PDF
+        // `v`/`y`) as opcode 2 with 6 coords, duplicating the implicit control point. The
+        // "quadraticCurveTo, 4 coords" opcode is only emitted by a font-glyph-outline routine that
+        // never appears in getOperatorList()'s content-stream array, so this branch would be dead
+        // code with an unverified "skip 2, read 2" formula. `else break` below safely bails out on
+        // any opcode this decoder doesn't recognise, rather than guessing and desyncing `j`.
         else if (op === 4) { if (cur && start) segs.push({ a: toPx(cur), b: toPx(start), grey }); cur = start; }
         else break;
       }
