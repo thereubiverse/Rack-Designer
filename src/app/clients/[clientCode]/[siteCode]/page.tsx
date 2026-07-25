@@ -43,7 +43,12 @@ export default async function SitePage({ params }: { params: Promise<{ clientCod
     plans.map(async (plan) => {
       const [url, pdfUrl] = await Promise.all([
         createPlanSignedUrl(db, plan.storage_path),
-        plan.pdf_storage_path ? createPlanSignedUrl(db, plan.pdf_storage_path) : null,
+        // Swallowed, unlike the PNG's: a plan row whose retained PDF was deleted from storage
+        // would otherwise reject this Promise.all and 500 the whole site page. The vector layer
+        // exists to degrade to the PNG, so a missing PDF must degrade, not fail.
+        plan.pdf_storage_path
+          ? createPlanSignedUrl(db, plan.pdf_storage_path).catch(() => null)
+          : null,
       ]);
       if (url) planUrls[plan.floor_id] = url;
       if (pdfUrl) planPdfUrls[plan.floor_id] = pdfUrl;

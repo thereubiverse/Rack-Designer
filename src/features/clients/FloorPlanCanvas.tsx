@@ -2150,10 +2150,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           }}
         >
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
-            {/* The plan itself: live vector when the source PDF survived upload (sharp at any
-                magnification), otherwise the flattened PNG. Both occupy the SAME (0,0,imgW,imgH)
-                box in image-pixel space, so nothing below them moves either way. */}
-            {useVectorPlan && pdfUrl ? (
+            {/* The plan itself, in two layers occupying the SAME (0,0,imgW,imgH) box in image-pixel
+                space — so nothing below them moves whichever is on top.
+
+                The flattened PNG is ALWAYS the base. It is already decoded and paints instantly,
+                which matters because the vector layer cannot: it has to download, parse and
+                rasterise an 84k-path sheet first, and it clears its own canvas on every
+                re-rasterisation. Without the PNG underneath, the plan area would be empty on every
+                page load and floor switch (rooms and pins floating over nothing) and would flash
+                empty again at each zoom bucket. A soft plan beats a blank one — the same argument
+                that governs the hard-failure fallback, applied to the waiting states too.
+
+                The vector canvas is opaque once drawn (pdf.js paints a white page background), so
+                it simply covers the PNG the moment it has something better to show. */}
+            <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
+            {useVectorPlan && pdfUrl && (
               <PlanVectorLayer
                 pdfUrl={pdfUrl}
                 pageIndex={pdfPage ?? 0}
@@ -2162,8 +2173,6 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 zoom={view.zoom}
                 onError={() => setFailedPdfUrl(pdfUrl)}
               />
-            ) : (
-              <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
             )}
             {/* Extracted walls — drawn straight after the image and BEFORE every room, pin and
                 rack, because they are context the floor sits on, not content on the floor. Same

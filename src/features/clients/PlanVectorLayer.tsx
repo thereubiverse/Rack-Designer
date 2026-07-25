@@ -91,7 +91,15 @@ export function PlanVectorLayer({
   const [page, setPage] = useState<PDFPageProxy | null>(null);
 
   // Read by the effects but deliberately NOT an effect dependency: `onError` is typically a fresh
-  // closure on every parent render, and re-running a rasterisation for that would defeat the point.
+  // closure on every parent render, and re-rasterising 84k paths because a callback's identity
+  // changed would defeat the whole point of the bucketing below.
+  //
+  // Assigning a ref during render is a deliberate trade, not an oversight: it is technically a
+  // side effect in the render body (React reserves the right to discard a render pass, which would
+  // leave this ref ahead of the committed tree). The alternative — an effect that syncs it — costs
+  // an extra commit per parent render for a value only ever read from an async callback, and the
+  // failure mode here is at worst calling a slightly newer `onError` than the committed one, which
+  // is idempotent by contract.
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
@@ -181,6 +189,8 @@ export function PlanVectorLayer({
           task = page.render({ canvas, viewport });
           renderTaskRef.current = task;
           await task.promise;
+          // Finished: there is no longer anything in flight to cancel, and the ref should say so.
+          if (renderTaskRef.current === task) renderTaskRef.current = null;
         } catch {
           // A CANCELLED render rejects here exactly like a failed one, and must not be mistaken for
           // a broken PDF — that would drop the whole plan back to the PNG for good the first time

@@ -2128,11 +2128,19 @@ describe("FloorPlanCanvas (vector plan rendering)", () => {
     vi.useRealTimers();
   });
 
-  it("renders the vector layer INSTEAD of the raster <image> when a source PDF is available", () => {
+  it("composites the vector layer OVER the raster <image>, which stays as the instant base", () => {
     renderWithPdf();
     const svg = screen.getByTestId("floor-plan-canvas");
-    expect(screen.getByTestId("plan-vector-layer")).toBeInTheDocument();
-    expect(svg.querySelector("image")).toBeNull();
+    const image = svg.querySelector("image")!;
+    const layer = screen.getByTestId("plan-vector-layer");
+
+    // The PNG is still there and still points at the same URL. It is what the user sees while the
+    // PDF downloads, parses and rasterises, and during each re-rasterisation (which clears the
+    // canvas) — without it the plan area is blank on every page load and floor switch.
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("href")).toBe(PLAN_URL);
+    // ...and the vector layer paints ON TOP of it: SVG has no z-index, only document order.
+    expect(image.compareDocumentPosition(layer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("sizes the vector layer to exactly the imgW x imgH box the <image> occupied", () => {
@@ -2167,19 +2175,16 @@ describe("FloorPlanCanvas (vector plan rendering)", () => {
     expect(screen.queryByTestId("plan-vector-layer")).toBeNull();
   });
 
-  it("falls back to the raster <image> if the PDF cannot be rendered", async () => {
-    // A blank plan would be far worse than a slightly soft one, so a dead signed URL / corrupt PDF
-    // must land back on the PNG rather than on nothing.
+  it("tears the vector layer back down if the PDF cannot be rendered, leaving the PNG alone", async () => {
+    // A dead signed URL / corrupt PDF must stop trying, rather than sit as an empty canvas over
+    // the perfectly good PNG underneath.
     vi.useRealTimers();
     vi.mocked(pdfjsGetDocument).mockImplementationOnce(() => {
       throw new Error("signed URL expired");
     });
     renderWithPdf();
-    await waitFor(() =>
-      expect(screen.getByTestId("floor-plan-canvas").querySelector("image")).not.toBeNull()
-    );
+    await waitFor(() => expect(screen.queryByTestId("plan-vector-layer")).toBeNull());
     const svg = screen.getByTestId("floor-plan-canvas");
     expect(svg.querySelector("image")?.getAttribute("href")).toBe(PLAN_URL);
-    expect(screen.queryByTestId("plan-vector-layer")).toBeNull();
   });
 });

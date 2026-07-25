@@ -8,15 +8,14 @@ import { PlanVectorLayer } from "./PlanVectorLayer";
 // pixels. `vi.hoisted` because a vi.mock factory is hoisted above every const in this file.
 const pdfMocks = vi.hoisted(() => {
   const cancel = vi.fn();
-  // A render whose promise never settles unless the test settles it, so "unmount mid-render" is an
-  // actual mid-render and not a race. cancel() REJECTS it, exactly as pdf.js does (with a
-  // RenderingCancelledException) — that rejection is indistinguishable from a real failure at the
-  // catch site, which is the whole reason the component has to disambiguate it.
-  let settleRender: (() => void) | null = null;
+  // A render whose promise stays pending until something CANCELS it, so every test that asks "was
+  // the in-flight render killed?" is looking at a genuinely in-flight render. cancel() rejects it,
+  // exactly as pdf.js does (with a RenderingCancelledException) — that rejection is
+  // indistinguishable from a real failure at the catch site, which is the whole reason the
+  // component has to disambiguate the two.
   const render = vi.fn(() => {
     let reject: (reason: unknown) => void = () => {};
-    const promise = new Promise<void>((res, rej) => {
-      settleRender = res;
+    const promise = new Promise<void>((_resolve, rej) => {
       reject = rej;
     });
     // Nothing awaits the rejection until the component does; keep Node quiet in the meantime.
@@ -35,10 +34,20 @@ const pdfMocks = vi.hoisted(() => {
   }));
   const getPage = vi.fn(async () => ({ getViewport, render }));
   const destroy = vi.fn(async () => {});
-  const getDocument = vi.fn(() => ({
-    promise: Promise.resolve({ getPage, numPages: 3 }),
-    destroy,
-  }));
+  // The document load is GATED, not immediate: a real one downloads and parses an 84k-path sheet,
+  // and a test needs to be able to unmount while that is still in the air. `flush` opens the gate;
+  // a test that wants a load still in flight simply doesn't. The gate LATCHES, so it does not
+  // matter whether `releaseDocument` is called before or after `getDocument` (which only runs once
+  // the lazy `import("pdfjs-dist")` has settled).
+  let gateOpen = false;
+  let openGate: (() => void) | null = null;
+  const getDocument = vi.fn(() => {
+    const gate = new Promise<void>((resolve) => {
+      if (gateOpen) resolve();
+      else openGate = resolve;
+    });
+    return { promise: gate.then(() => ({ getPage, numPages: 3 })), destroy };
+  });
   return {
     cancel,
     render,
@@ -46,7 +55,14 @@ const pdfMocks = vi.hoisted(() => {
     getPage,
     destroy,
     getDocument,
-    settle: () => settleRender?.(),
+    releaseDocument: () => {
+      gateOpen = true;
+      openGate?.();
+    },
+    resetGate: () => {
+      gateOpen = false;
+      openGate = null;
+    },
   };
 });
 
@@ -82,14 +98,17 @@ function renderLayer(zoom: number, onError?: () => void) {
   };
 }
 
-/** Runs the promise chain (getDocument -> getPage) AND the debounce timer behind it.
+/** Lets the document load finish, then runs the promise chain (getDocument -> getPage) AND the
+ *  debounce timer behind it.
  *
  *  Two passes, deliberately: React's `act` queues state updates and only flushes effects when the
  *  scope EXITS, so the first pass settles the document load and lets the render effect mount its
  *  debounce timer, and the second pass actually runs that timer. The first advances the clock by
  *  zero so `ms` stays an honest measure of how much time the test let pass. */
 async function flush(ms = 500) {
+  await settleImport();
   await act(async () => {
+    pdfMocks.releaseDocument();
     await vi.advanceTimersByTimeAsync(0);
   });
   await act(async () => {
@@ -97,11 +116,21 @@ async function flush(ms = 500) {
   });
 }
 
+/** Lets the lazy `import("pdfjs-dist")` settle — so `getDocument` has actually been called — while
+ *  leaving the document itself still loading behind the gate. */
+async function settleImport() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
+  pdfMocks.resetGate();
   pdfMocks.render.mockClear();
   pdfMocks.cancel.mockClear();
   pdfMocks.getDocument.mockClear();
+  pdfMocks.getPage.mockClear();
   pdfMocks.destroy.mockClear();
 });
 
@@ -128,6 +157,19 @@ describe("PlanVectorLayer", () => {
     expect(pdfMocks.render).toHaveBeenCalledTimes(1);
     // pdf.js pages are 1-indexed; pageIndex is 0-based (same convention as planUpload.ts).
     expect(pdfMocks.getPage).toHaveBeenCalledWith(1);
+  });
+
+  it("rasterises the page the plan was actually taken from, not always the first", async () => {
+    // A multi-sheet drawing set: the plan came from sheet index 2, so pdf.js must be asked for
+    // page 3. Getting this wrong silently renders a different floor under the right pins.
+    render(
+      <svg>
+        <PlanVectorLayer pdfUrl={PDF_URL} pageIndex={2} imgW={IMG_W} imgH={IMG_H} zoom={1} />
+      </svg>
+    );
+    await flush();
+    expect(pdfMocks.getPage).toHaveBeenCalledWith(3);
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT re-rasterise for a zoom change inside the same power-of-root-2 bucket", async () => {
@@ -218,6 +260,13 @@ describe("PlanVectorLayer", () => {
     // mid-render the DOCUMENT is torn down, which cancels that render while the render effect
     // itself has not been torn down — so "am I unmounted?" is not enough to tell the two apart.
     // Getting this wrong drops the plan back to the PNG permanently.
+    //
+    // CAVEAT, read before deleting the `renderTaskRef.current !== task` guard this describes: this
+    // test passes with AND without that guard. `act()` flushes the intervening `setPage(null)`
+    // re-render synchronously, so the render effect's own `cancelled` flag is already set by the
+    // time the rejection microtask runs, and it short-circuits first. In a real browser React
+    // SCHEDULES that update, the ordering is not guaranteed, and the guard is what holds. This
+    // asserts the end-to-end behaviour and documents the intent; it does not prove the guard.
     const onError = vi.fn();
     const { rerenderWithUrl } = renderLayer(1, onError);
     await flush(1);
@@ -229,22 +278,22 @@ describe("PlanVectorLayer", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("tolerates unmount mid-render: cancels the task and never sets state afterwards", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("stops walking the pdf.js chain when unmounted mid-load", async () => {
+    // Switching floor tabs unmounts this component while the document is still downloading and
+    // parsing. Every step after that await — getting the page, sizing the canvas, rasterising —
+    // is work for a component that no longer exists, on a sheet with 84k path operations.
     const { unmount } = renderLayer(1);
-    await flush();
-    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+    // The document has been asked for but the gate is still shut: the load is genuinely in flight.
+    await settleImport();
+    expect(pdfMocks.getDocument).toHaveBeenCalledTimes(1);
+    expect(pdfMocks.getPage).not.toHaveBeenCalled();
 
     unmount();
-    expect(pdfMocks.cancel).toHaveBeenCalled();
+    // The document load is torn down, and releasing it now must wake nothing up.
+    expect(pdfMocks.destroy).toHaveBeenCalled();
+    await flush();
 
-    // Let the (still pending) render settle AFTER the component is gone.
-    await act(async () => {
-      pdfMocks.settle();
-      await vi.advanceTimersByTimeAsync(200);
-    });
-    // A setState on an unmounted component logs a React error; none must appear.
-    expect(errorSpy).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
+    expect(pdfMocks.getPage).not.toHaveBeenCalled();
+    expect(pdfMocks.render).not.toHaveBeenCalled();
   });
 });
