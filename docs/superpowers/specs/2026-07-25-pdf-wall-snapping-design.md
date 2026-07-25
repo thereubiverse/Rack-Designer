@@ -103,7 +103,9 @@ keep only their endpoint — a floor plan's walls are straight, and curve interi
 These PDFs carry **no optional content groups**, so layer-name filtering is unavailable. But stroke
 colour and line width separate content classes cleanly, and far more meaningfully than orientation:
 
-| class | count on the probed sheet | what it actually is |
+**On the REFLECTED-CEILING sheet** (probed first — NOT the user's working sheet type):
+
+| class | count | what it actually is |
 |---|---|---|
 | grey `#aaaaaa`, thin | 186,961 | hatching / screened background fill |
 | black, thin (<5) | 61,653 | architecture, ceiling grid, dimensions, leaders |
@@ -114,10 +116,16 @@ Two consequences:
 
 1. **Dropping grey removes 74% of all geometry** on a principled basis, before any geometric
    heuristic runs. This should be the first filter stage.
-2. **Stroke weight cannot be mapped to meaning globally.** On a reflected-ceiling plan heavy black is
-   light fixtures; on an electrical sheet it may be conduit; on an architectural sheet it is likely
-   walls. The filter must not hardcode "heavy = wall" — it must be tuned per sheet type, or fall back
-   to geometry (long, orthogonal, forming closed regions) within the thin-black class.
+2. **Class-to-meaning is INVERTED between sheet types — do not hardcode it.** On the user's actual
+   ELECTRICAL sheet (`Cellar.pdf`) the mapping is the other way round: the architecture is screened
+   back to **grey (#cdcdcd, #ababab — 75,886 segments) and CONTAINS THE WALLS**, while black
+   (19,710) is the electrical content — devices, conduit, leaders. On the reflected-ceiling sheet
+   grey was hatching and heavy black was light fixtures.
+
+   The rule that generalises: **the screened-back class is the architectural base.** On any overlay
+   discipline (electrical, mechanical, telecom, ceiling) the base building is greyed and the sheet's
+   own subject is drawn prominently. Walls therefore live in the SCREENED class, not the prominent
+   one. §5.4 confirms this empirically — grey-only extraction reaches 94.9% edge coverage.
 
 ### 5.4 TUNED against the real sheet (Cellar.pdf, 2026-07-25)
 
