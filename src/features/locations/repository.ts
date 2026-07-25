@@ -9,6 +9,8 @@ import type {
   RackRow,
   FloorDeviceRow,
   FloorPlanRow,
+  WallRun,
+  PlanLabel,
 } from "@/lib/supabase/types";
 
 export async function createSite(
@@ -325,4 +327,22 @@ export async function clearRoomPolygon(db: SupabaseClient, roomId: string): Prom
   const { error } = await db.from("rooms")
     .update({ plan_polygon: null }).eq("id", roomId);
   if (error) throw new Error(`clearRoomPolygon: ${error.message}`);
+}
+
+/** Persists the geometry Slice D's PDF extraction pass produced (Task 3), and stamps
+ *  geometry_extracted_at so callers can tell an extracted plan from one still awaiting it. */
+export async function saveFloorPlanGeometry(
+  db: SupabaseClient,
+  floorId: string,
+  input: { walls: WallRun[]; labels: PlanLabel[] }
+): Promise<void> {
+  const { error } = await db
+    .from("floor_plans")
+    .update({
+      wall_runs: input.walls,
+      plan_labels: input.labels,
+      geometry_extracted_at: new Date().toISOString(),
+    })
+    .eq("floor_id", floorId);
+  if (error) throw new Error(`saveFloorPlanGeometry: ${error.message}`);
 }
