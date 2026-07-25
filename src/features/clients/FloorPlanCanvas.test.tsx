@@ -1887,6 +1887,15 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     // A run parallel to, and 5.6 screen px below, that same bottom edge — so a click between the
     // two is NEARER this line than the room's, for the "room edge beats wall line" ordering test.
     { x1: 0.05, y1: 0.31, x2: 0.25, y2: 0.31 },
+    // Two runs whose endpoints both fall inside the 12px radius of one click, the FARTHER one
+    // listed FIRST — so "nearest wins" and "first hit wins" give different answers. Endpoint
+    // (653.4, 364) is 8.4px from the click; (642.9, 364) is 2.1px.
+    { x1: 0.76, y1: 0.65, x2: 0.76, y2: 0.72 },
+    { x1: 0.7475, y1: 0.65, x2: 0.68, y2: 0.65 },
+    // The same trap for LINE snapping: two parallel runs straddling one click, no endpoint of
+    // either in range, the FARTHER line (8.96px) listed before the nearer one (2.8px).
+    { x1: 0.8, y1: 0.516, x2: 0.95, y2: 0.516 },
+    { x1: 0.8, y1: 0.505, x2: 0.95, y2: 0.505 },
   ];
 
   function renderWithWalls(props: {
@@ -1946,6 +1955,22 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     const polygon = await traceFrom({ x: sx(0.4), y: sy(0.8) + 3 });
     expect(polygon[0][1]).toBeCloseTo(0.8, 10); // perpendicular distance to the run is 0
     expect(polygon[0][0]).toBeCloseTo(0.4, 10); // projected, not pulled to 0.2 or 0.6
+  });
+
+  it("picks the NEAREST wall corner when several are in range, not the first one found", async () => {
+    // Both corners are inside the radius of (645, 364) and the FARTHER one comes first in
+    // wallRuns — so a scan that returned its first hit would answer 0.76.
+    const polygon = await traceFrom({ x: 645, y: 364 });
+    expect(polygon[0][0]).toBeCloseTo(0.7475, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.65, 10);
+  });
+
+  it("picks the NEAREST wall line when several are in range, not the first one found", async () => {
+    // (729, 280) sits between two parallel runs, 2.8px from the second and 8.96px from the first,
+    // with no endpoint of either in range. First-hit would answer y = 0.516.
+    const polygon = await traceFrom({ x: 729, y: 280 });
+    expect(polygon[0][1]).toBeCloseTo(0.505, 10);
+    expect(polygon[0][0]).toBeCloseTo(0.85, 10); // (729 - 15) / 840, projected along the run
   });
 
   it("keeps an existing ROOM vertex ahead of a NEARER wall corner", async () => {
@@ -2017,6 +2042,28 @@ describe("FloorPlanCanvas (wall snapping)", () => {
 
     fireEvent.click(screen.getByTestId("toggle-walls"));
     expect(screen.queryByTestId("wall-overlay")).toBeNull();
+  });
+
+  it("draws the walls in sky-500 at half opacity, with a stroke that counter-scales the live zoom", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref });
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+
+    // Ink lives on the overlay GROUP and is inherited by every line — see the render comment for
+    // why (one attribute write per zoom frame, and one composited opacity).
+    const overlay = screen.getByTestId("wall-overlay");
+    expect(overlay.getAttribute("stroke")).toBe("#0ea5e9");
+    expect(overlay.getAttribute("opacity")).toBe("0.5");
+    // The jsdom fit zoom is 0.7, so a 1px-on-screen hairline is 1/0.7 image px inside the live <g>.
+    // A fixed strokeWidth={1} — the classic bug in a scaled group — would read "1" here.
+    expect(overlay.getAttribute("stroke-width")).toBe(String(1 / 0.7));
+
+    // And it tracks the zoom, while the line's own coordinates do NOT move: they are image-pixel
+    // space, and only the one live <g> transform ever carries the zoom.
+    fireEvent.click(screen.getByTestId("plan-zoom-in"));
+    const zoomed = screen.getByTestId("wall-overlay");
+    expect(zoomed.getAttribute("stroke-width")).toBe(String(1 / (0.7 * 1.25)));
+    expect(zoomed.querySelector("line")!.getAttribute("x1")).toBe("240");
   });
 
   it("offers no wall toggle at all when the plan has no extracted walls", () => {

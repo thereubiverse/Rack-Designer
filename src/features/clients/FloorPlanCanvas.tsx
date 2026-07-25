@@ -111,9 +111,9 @@ const POLYGON_DEDUPE_EPSILON = 1e-3;
 // vertex jumps to it exactly, so rooms that share a wall meet on the same corners at any zoom.
 const SNAP_PX = 12;
 
-// A stable identity for "this plan has no extracted geometry" — an inline `[]` default would be a
-// fresh array on every render, which is exactly the kind of churn the memo-free render path here
-// doesn't need.
+// The default for "this plan has no extracted geometry", shared rather than written inline so a
+// caller that omits the prop doesn't allocate a throwaway array on every render. (Nothing here
+// depends on its IDENTITY — the component isn't memoised, and SiteDetail passes its own literal.)
 const NO_WALL_RUNS: WallRun[] = [];
 // The wall overlay's ink: sky-500, half-opaque. Deliberately NOT the rooms' blue — an extracted
 // wall is context the user traces ONTO, never a committed shape on the floor.
@@ -2139,7 +2139,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             {/* Extracted walls — drawn straight after the image and BEFORE every room, pin and
                 rack, because they are context the floor sits on, not content on the floor. Same
                 IMAGE-PIXEL space as everything else (identityView), stroke divided by the live zoom
-                so it stays hairline-thin at any magnification. Never a pointer target. */}
+                so it stays hairline-thin at any magnification. Never a pointer target.
+
+                Ink lives on the GROUP and is inherited, not repeated per line: a zoom frame then
+                rewrites ONE stroke-width instead of 1,014, and a single composited opacity keeps
+                overlapping runs from darkening at every wall junction. */}
             {showWalls && wallRuns.length > 0 && (
               <g
                 data-testid="wall-overlay"
@@ -2148,11 +2152,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 opacity={0.5}
                 style={{ pointerEvents: "none" }}
               >
-                {wallRuns.map((w, i) => {
-                  const a = normToScreen([w.x1, w.y1], identityView(imgW, imgH));
-                  const b = normToScreen([w.x2, w.y2], identityView(imgW, imgH));
-                  return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
-                })}
+                {(() => {
+                  // Hoisted: one identity view for the whole layer, not two per run — at 1,014 runs
+                  // that was ~2k throwaway objects per frame while panning with the overlay on.
+                  const view0 = identityView(imgW, imgH);
+                  return wallRuns.map((w, i) => {
+                    const a = normToScreen([w.x1, w.y1], view0);
+                    const b = normToScreen([w.x2, w.y2], view0);
+                    return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+                  });
+                })()}
               </g>
             )}
             {rooms.map((room) => (
