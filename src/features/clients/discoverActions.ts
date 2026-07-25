@@ -1,0 +1,61 @@
+"use server";
+
+import { createServiceClient } from "@/lib/supabase/server";
+import { getFloorPlan } from "@/features/locations/repository";
+import { downloadPlanObject } from "./planStorage";
+import { geminiPlanBackend } from "./ai/planVisionBackend";
+import { resolveGeminiKey } from "@/features/settings/deviceWizardSettings";
+import { dbSettingsStore } from "@/features/settings/store";
+import {
+  validateRoomDiscovery, validateDeviceDiscovery,
+  type RoomProposal, type DeviceProposal,
+} from "./planDetect";
+
+export type DiscoverRoomsResult = { ok: true; proposals: RoomProposal[] } | { ok: false; error: string };
+export type DiscoverDevicesResult = { ok: true; proposals: DeviceProposal[] } | { ok: false; error: string };
+
+const BUSY = /\b(503|429|500|overloaded|high demand|Service Unavailable)\b/i;
+const friendly = (e: unknown) => {
+  const d = e instanceof Error ? e.message : String(e);
+  return BUSY.test(d)
+    ? "The vision model is busy right now — please try again in a moment."
+    : "Couldn't read this plan. Try again or use a clearer image.";
+};
+
+// Shared setup: derive the plan from the floor (server-side), fetch its bytes, resolve the key.
+// Returns either the ready-to-send image payload or a caller-facing error.
+async function prepare(floorId: string):
+  Promise<{ ok: true; imageBase64: string; mimeType: string; apiKey: string } | { ok: false; error: string }> {
+  const db = createServiceClient();
+  const plan = await getFloorPlan(db, floorId);
+  if (!plan) return { ok: false, error: "Upload a plan first." };
+  const apiKey = await resolveGeminiKey(dbSettingsStore);
+  if (!apiKey) return { ok: false, error: "no-key" };
+  const bytes = await downloadPlanObject(db, plan.storage_path);
+  const imageBase64 = Buffer.from(bytes).toString("base64");
+  return { ok: true, imageBase64, mimeType: "image/png", apiKey };
+}
+
+export async function discoverRoomsAction(floorId: string): Promise<DiscoverRoomsResult> {
+  const ready = await prepare(floorId);
+  if (!ready.ok) return ready;
+  try {
+    const raw = await geminiPlanBackend.discoverRooms(ready);
+    return { ok: true, proposals: validateRoomDiscovery(raw) };
+  } catch (e) {
+    console.error("[discoverRooms]", e);
+    return { ok: false, error: friendly(e) };
+  }
+}
+
+export async function discoverDevicesAction(floorId: string): Promise<DiscoverDevicesResult> {
+  const ready = await prepare(floorId);
+  if (!ready.ok) return ready;
+  try {
+    const raw = await geminiPlanBackend.discoverDevices(ready);
+    return { ok: true, proposals: validateDeviceDiscovery(raw) };
+  } catch (e) {
+    console.error("[discoverDevices]", e);
+    return { ok: false, error: friendly(e) };
+  }
+}
