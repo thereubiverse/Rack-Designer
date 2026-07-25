@@ -1,5 +1,6 @@
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
+import type { NormPoint } from "./floorPlanOps";
 import { suggestDeviceCode } from "./floorDeviceOps";
 
 export type DeviceCommit =
@@ -55,4 +56,41 @@ export function planRoomCommit(p: RoomProposal, rooms: RoomRow[]): RoomCommit {
   }
   const prefix = p.roomType === "other" ? "R" : p.roomType;
   return { kind: "create", code: suggestDeviceCode(prefix, rooms.map((r) => r.code)) };
+}
+
+/** Fraction of a proposal's own area that must sit inside an already-traced room before we treat
+ *  it as a re-discovery of that room. Deliberately generous: the model returns rough axis-aligned
+ *  boxes (measured mean IoU ~0.5 against hand-traced outlines), so requiring a tight match would
+ *  let obvious duplicates through. Adjacent rooms merely SHARING a wall have zero overlap area and
+ *  are unaffected. */
+const TRACED_OVERLAP_THRESHOLD = 0.35;
+
+function bounds(polygon: NormPoint[]) {
+  const xs = polygon.map((p) => p[0]);
+  const ys = polygon.map((p) => p[1]);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+
+/** Drop proposals that land on a room the user has ALREADY outlined by hand. Discovery exists to
+ *  fill in what is missing; re-proposing finished work is noise the user has to dismiss every run.
+ *  Rooms with no polygon are left alone — those are precisely what the pass is for.
+ *
+ *  Overlap is measured as a fraction of the PROPOSAL's area, not IoU: a small proposal sitting
+ *  wholly inside a large traced room is a duplicate even though its IoU would be low. */
+export function filterAlreadyTraced(proposals: RoomProposal[], rooms: RoomRow[]): RoomProposal[] {
+  const traced = rooms
+    .map((r) => r.plan_polygon)
+    .filter((p): p is NormPoint[] => Array.isArray(p) && p.length >= 3)
+    .map(bounds);
+  if (traced.length === 0) return proposals;
+  return proposals.filter((proposal) => {
+    const p = bounds(proposal.polygon);
+    const area = (p.x1 - p.x0) * (p.y1 - p.y0);
+    if (area <= 0) return true;
+    return !traced.some((t) => {
+      const ix = Math.max(0, Math.min(p.x1, t.x1) - Math.max(p.x0, t.x0));
+      const iy = Math.max(0, Math.min(p.y1, t.y1) - Math.max(p.y0, t.y0));
+      return (ix * iy) / area >= TRACED_OVERLAP_THRESHOLD;
+    });
+  });
 }

@@ -99,6 +99,15 @@ export async function listRoomsForSite(db: SupabaseClient, siteId: string): Prom
   return (data ?? []) as RoomRow[];
 }
 
+/** One floor's rooms. Used by AI discovery to skip rooms the user has already outlined — the
+ *  floor is derived server-side from the id the client passed, never from client-supplied geometry. */
+export async function listRoomsForFloor(db: SupabaseClient, floorId: string): Promise<RoomRow[]> {
+  const { data, error } = await db.from("rooms").select("*")
+    .eq("floor_id", floorId).order("code", { ascending: true });
+  if (error) throw new Error(`listRoomsForFloor: ${error.message}`);
+  return (data ?? []) as RoomRow[];
+}
+
 export async function renameFloor(db: SupabaseClient, id: string, input: { code: string; name?: string | null }): Promise<void> {
   const { error } = await db.from("floors")
     .update({ code: normaliseCode(input.code), name: input.name ?? null }).eq("id", id);

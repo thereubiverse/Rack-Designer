@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
-import { planDeviceCommit, planRoomCommit } from "./planProposals";
+import { planDeviceCommit, planRoomCommit, filterAlreadyTraced } from "./planProposals";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 function dev(over: Partial<FloorDeviceRow>): FloorDeviceRow {
@@ -112,5 +112,48 @@ describe("planRoomCommit", () => {
   it("trims whitespace around proposal name before matching", () => {
     const rooms = [room({ id: "a", code: "MDF", name: "Main Dist Frame" })];
     expect(planRoomCommit(rprop({ name: "  MDF  " }), rooms)).toEqual({ kind: "attach", roomId: "a" });
+  });
+});
+
+describe("filterAlreadyTraced", () => {
+  const prop = (id: string, poly: [number, number][]): RoomProposal =>
+    ({ id, name: "X", roomType: "other", polygon: poly, confidence: "high" });
+  // A room the user has already outlined by hand, occupying the top-left quarter.
+  const tracedRoom = room({
+    id: "traced", code: "MO", plan_polygon: [[0.1, 0.1], [0.4, 0.1], [0.4, 0.4], [0.1, 0.4]],
+  });
+
+  it("drops a proposal that lands on an already-traced room", () => {
+    const p = prop("room-0", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
+    expect(filterAlreadyTraced([p], [tracedRoom])).toEqual([]);
+  });
+
+  it("keeps a proposal somewhere else entirely", () => {
+    const p = prop("room-0", [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]);
+    expect(filterAlreadyTraced([p], [tracedRoom]).map((r) => r.id)).toEqual(["room-0"]);
+  });
+
+  it("keeps a proposal that merely abuts a traced room (shared wall, no real overlap)", () => {
+    // Sits immediately to the right, sharing the x=0.4 wall.
+    const p = prop("room-0", [[0.4, 0.1], [0.7, 0.1], [0.7, 0.4], [0.4, 0.4]]);
+    expect(filterAlreadyTraced([p], [tracedRoom]).map((r) => r.id)).toEqual(["room-0"]);
+  });
+
+  it("ignores rooms that have NO polygon — those are exactly what discovery is for", () => {
+    const untraced = room({ id: "untraced", code: "NEW", plan_polygon: null });
+    const p = prop("room-0", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
+    expect(filterAlreadyTraced([p], [untraced]).map((r) => r.id)).toEqual(["room-0"]);
+  });
+
+  it("drops only the overlapping proposals, keeping the rest (non-first fixture)", () => {
+    const a = prop("room-0", [[0.6, 0.6], [0.9, 0.6], [0.9, 0.9], [0.6, 0.9]]);
+    const b = prop("room-1", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
+    const c = prop("room-2", [[0.5, 0.05], [0.6, 0.05], [0.6, 0.15], [0.5, 0.15]]);
+    expect(filterAlreadyTraced([a, b, c], [tracedRoom]).map((r) => r.id)).toEqual(["room-0", "room-2"]);
+  });
+
+  it("returns everything when there are no traced rooms at all", () => {
+    const p = prop("room-0", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
+    expect(filterAlreadyTraced([p], []).map((r) => r.id)).toEqual(["room-0"]);
   });
 });

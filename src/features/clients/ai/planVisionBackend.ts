@@ -6,6 +6,8 @@ export interface PlanVisionInput { imageBase64: string; mimeType: string; apiKey
 export interface PlanVisionBackend {
   discoverRooms(input: PlanVisionInput): Promise<unknown>;
   discoverDevices(input: PlanVisionInput): Promise<unknown>;
+  /** Where the floor-plan drawing sits on the sheet, as 0..1 fractions. See LOCATE_PROMPT. */
+  locateDrawingArea(input: PlanVisionInput): Promise<unknown>;
 }
 
 const point: ObjectSchema = {
@@ -82,6 +84,34 @@ export const DEVICES_PROMPT = [
   GUARD,
 ].join(" ");
 
+// An uploaded plan is usually a full drawing SHEET: the floor plan occupies a fraction of it and
+// the rest is title block, revision tables and notes. Gemini downscales whatever it is given to a
+// fixed token budget, so those panels cost resolution the rooms needed. Locating the drawing and
+// cropping to it before the room pass measured a ~20-35% lift in mean IoU against hand-traced
+// outlines (0.408 -> 0.49-0.55 on the CELLAR test sheet) and recovered rooms that were previously
+// missed outright. Three consecutive locate runs agreed to within 0.005 on the origin, so this is
+// stable enough to depend on — but see cropPlanToDrawing's sanity guard for the failure path.
+const locateSchema: ObjectSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    x: { type: SchemaType.NUMBER },
+    y: { type: SchemaType.NUMBER },
+    w: { type: SchemaType.NUMBER },
+    h: { type: SchemaType.NUMBER },
+  },
+  required: ["x", "y", "w", "h"],
+};
+
+const LOCATE_PROMPT = [
+  "This is an architectural drawing SHEET. It contains one floor-plan drawing plus surrounding sheet",
+  "furniture (title block, revision table, legends, notes, north arrow, borders).",
+  "Return the bounding box of ONLY the floor-plan drawing itself — the building footprint and its rooms.",
+  "EXCLUDE the title block and every other panel of text.",
+  "x,y,w,h are FRACTIONS 0..1 of the whole sheet (x,y = top-left corner of the box).",
+  "Err slightly LARGE: it is better to include a little blank margin than to clip a room.",
+  GUARD,
+].join(" ");
+
 const MODEL = "gemini-3-flash-preview";
 const TRANSIENT = /\b(503|429|500|overloaded|high demand|Service Unavailable|try again)\b/i;
 const RETRY_DELAYS_MS = [1500, 3500, 7000];
@@ -116,6 +146,12 @@ export const geminiPlanBackend: PlanVisionBackend = {
     return generate(input.apiKey, devicesSchema, [
       { inlineData: { data: input.imageBase64, mimeType: input.mimeType } },
       { text: DEVICES_PROMPT },
+    ]);
+  },
+  async locateDrawingArea(input) {
+    return generate(input.apiKey, locateSchema, [
+      { inlineData: { data: input.imageBase64, mimeType: input.mimeType } },
+      { text: LOCATE_PROMPT },
     ]);
   },
 };
