@@ -26,3 +26,10 @@ export async function removePlanObject(db: SupabaseClient, path: string): Promis
   const { error } = await db.storage.from(BUCKET).remove([path]);
   if (error) throw new Error(`removePlanObject: ${error.message}`);
 }
+
+/** Server-side fetch of a stored plan's bytes (for the AI discovery pass). */
+export async function downloadPlanObject(db: SupabaseClient, path: string): Promise<Uint8Array> {
+  const { data, error } = await db.storage.from(BUCKET).download(path);
+  if (error || !data) throw new Error(`downloadPlanObject: ${error?.message ?? "no data"}`);
+  return new Uint8Array(await data.arrayBuffer());
+}
