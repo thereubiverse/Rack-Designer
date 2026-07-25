@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
 import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
@@ -35,6 +36,8 @@ import {
   setRoomPolygonAction,
   clearRoomPolygonAction,
 } from "./actions";
+import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import type { RoomProposal, DeviceProposal } from "./planDetect";
 
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
 // pointer drift every physical click carries, small enough that a deliberate pan never selects.
@@ -105,6 +108,11 @@ const SNAP_PX = 12;
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
+
+// AI proposals are drawn in amber, dashed — deliberately NOT the committed blue, so a glance at the
+// plan separates "this is on the floor" from "the model thinks this is on the floor".
+const PROPOSAL_FILL = "rgb(245 158 11 / 0.12)";
+const PROPOSAL_STROKE = "#d97706";
 
 /** The view every child shape is positioned with: zero pan, unit zoom, so normToScreen(p, this)
  *  collapses to (nx * imgW, ny * imgH) — plain IMAGE-PIXEL space. See the coordinate-model
@@ -679,6 +687,48 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [vertexPreview, setVertexPreview] = useState<
     { roomId: string; index: number; point: NormPoint } | null
   >(null);
+
+  // ---- AI discovery (read the plan image, propose rooms/devices) ----
+  // Proposals live ONLY here: nothing below writes them to the database. They are ghosts drawn over
+  // the committed layer until the user accepts one.
+  const [proposals, setProposals] = useState<{ rooms: RoomProposal[]; devices: DeviceProposal[] }>({
+    rooms: [],
+    devices: [],
+  });
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [discovering, setDiscovering] = useState<null | "rooms" | "devices">(null);
+  // Either a pass-outcome sentinel the notice renders specially ("no-key" from the action, or the
+  // local "none-found"), or an error string to show verbatim.
+  const [wizardNotice, setWizardNotice] = useState<string | null>(null);
+
+  /** Run one discovery pass and park its proposals in state. Never throws: the actions return
+   *  `{ ok: false, error }` for every failure, including the "no-key" sentinel. */
+  async function runDiscovery(kind: "rooms" | "devices") {
+    setWizardOpen(false);
+    setWizardNotice(null);
+    setDiscovering(kind);
+    try {
+      if (kind === "rooms") {
+        const res = await discoverRoomsAction(plan.floor_id);
+        if (!res.ok) {
+          setWizardNotice(res.error);
+          return;
+        }
+        setProposals((p) => ({ ...p, rooms: res.proposals }));
+        if (res.proposals.length === 0) setWizardNotice("none-found");
+      } else {
+        const res = await discoverDevicesAction(plan.floor_id);
+        if (!res.ok) {
+          setWizardNotice(res.error);
+          return;
+        }
+        setProposals((p) => ({ ...p, devices: res.proposals }));
+        if (res.proposals.length === 0) setWizardNotice("none-found");
+      }
+    } finally {
+      setDiscovering(null);
+    }
+  }
 
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
   // even if the cursor leaves the SVG mid-gesture.
@@ -1518,6 +1568,85 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 onPointerDownRack={onRackPointerDown}
               />
             ))}
+            {/* AI proposals — ghosts, drawn AFTER every committed shape so they read as an overlay
+                on top of the floor rather than another layer of it. Positioned in the same
+                IMAGE-PIXEL space as everything else (identityView), with stroke widths divided by
+                the live zoom and labels counter-scaled, so they hold their look at any zoom.
+                Read-only here: accepting or editing one is Task 6. */}
+            {proposals.rooms.map((rp) => {
+              const centroid = normToScreen(polygonCentroid(rp.polygon), identityView(imgW, imgH));
+              return (
+                <g key={rp.id} data-testid={`proposal-room-${rp.id}`} className="plan-proposal-room">
+                  <polygon
+                    points={rp.polygon
+                      .map((pt) => {
+                        const s = normToScreen(pt, identityView(imgW, imgH));
+                        return `${s.x},${s.y}`;
+                      })
+                      .join(" ")}
+                    fill={PROPOSAL_FILL}
+                    stroke={PROPOSAL_STROKE}
+                    strokeWidth={2 / view.zoom}
+                    strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
+                  />
+                  {/* Always shown (unlike the hover-gated committed room labels) — a proposal only
+                      exists while it's being reviewed, and its name is what's under review. */}
+                  <g transform={`translate(${centroid.x} ${centroid.y})`}>
+                    <g transform={`scale(${1 / view.zoom})`}>
+                      <text
+                        data-testid={`proposal-room-label-${rp.id}`}
+                        x={0}
+                        y={4}
+                        textAnchor="middle"
+                        fontSize={12}
+                        fontWeight={700}
+                        fill={PROPOSAL_STROKE}
+                        stroke="#ffffff"
+                        strokeWidth={3}
+                        paintOrder="stroke"
+                        style={{ pointerEvents: "none" }}
+                      >
+                        {rp.name || "Room"}
+                      </text>
+                    </g>
+                  </g>
+                </g>
+              );
+            })}
+            {proposals.devices.map((dp) => {
+              const anchor = normToScreen(dp.point, identityView(imgW, imgH));
+              return (
+                <g
+                  key={dp.id}
+                  data-testid={`proposal-pin-${dp.id}`}
+                  transform={`translate(${anchor.x} ${anchor.y})`}
+                >
+                  {/* pinScale, not 1/zoom: a ghost pin has to sit at the same size as the committed
+                      pins it will become. */}
+                  <g transform={`scale(${pinScale})`}>
+                    <circle r={14} fill="none" stroke={PROPOSAL_STROKE} strokeWidth={1.5} strokeDasharray="3 2" />
+                    <circle r={10} fill={PROPOSAL_STROKE} opacity={0.85} />
+                    {/* No `plan-pin-label` class: that class is the declutter toggle's hover-gate,
+                        and this group isn't a `plan-pin-group`, so it would hide the label with no
+                        way to reveal it. A proposal's label is always shown — it's under review. */}
+                    <text
+                      x={0}
+                      y={-19}
+                      textAnchor="middle"
+                      fontSize={11}
+                      fontWeight={600}
+                      fill={PROPOSAL_STROKE}
+                      stroke="#ffffff"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                      style={{ pointerEvents: "none" }}
+                    >
+                      {dp.label || dp.typeCode}
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
             {(drawingRoomId || creatingRoom) && (
               <g>
                 {drawPoints.map((p, i) => {
@@ -1598,6 +1727,47 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 onClick={fitToArea}
               />
             </span>
+            {/* AI discovery: one button, a two-item menu (rooms / devices). The menu is anchored to
+                this span (relative) so it opens beside the stack rather than pushing it around. */}
+            <span className="pointer-events-auto relative">
+              <IconButton
+                data-testid="plan-wizard"
+                icon="tabler:wand"
+                tip="AI discovery"
+                tipSide="right"
+                variant={wizardOpen ? "floatingActive" : "floating"}
+                aria-expanded={wizardOpen}
+                onClick={() => {
+                  setWizardOpen((o) => !o);
+                  setWizardNotice(null);
+                }}
+              />
+              {wizardOpen && (
+                <div
+                  data-testid="plan-wizard-menu"
+                  className="absolute left-11 top-0 z-40 w-44 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    data-testid="discover-rooms"
+                    disabled={discovering != null}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                    onClick={() => void runDiscovery("rooms")}
+                  >
+                    <Icon icon="tabler:vector" width={16} height={16} /> Discover rooms
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="discover-devices"
+                    disabled={discovering != null}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                    onClick={() => void runDiscovery("devices")}
+                  >
+                    <Icon icon="tabler:circle-plus" width={16} height={16} /> Discover devices
+                  </button>
+                </div>
+              )}
+            </span>
             {planTools && (
               <span className="pointer-events-auto flex flex-col items-start gap-1.5">{planTools}</span>
             )}
@@ -1606,23 +1776,57 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
         {/* Transient status: an error, or the click-to-place / click-to-draw instructions. Floated
             top-center so it reads as part of the plan rather than adding a row of chrome above it. */}
-        {(error || placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice) && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2">
-            {error ? (
+        {(error ||
+          placingDeviceId ||
+          placingRackId ||
+          drawingRoomId ||
+          creatingRoom ||
+          creatingDevice ||
+          discovering != null ||
+          wizardNotice) && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-30 flex -translate-x-1/2 flex-col items-center gap-1.5">
+            {error && (
               <p
                 data-testid="canvas-error"
                 className="rounded-lg bg-red-50 px-3 py-1 text-sm font-medium text-red-700 shadow-sm"
               >
                 {error}
               </p>
-            ) : (
-              <p className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm">
-                {(placingDeviceId || creatingDevice) && "Click on the plan to place the device. Esc to cancel."}
-                {placingRackId && "Click on the plan to place the rack. Esc to cancel."}
-                {(drawingRoomId || creatingRoom) &&
-                  `Click to add points${
-                    drawPoints.length >= 3 ? " — Enter or double-click to finish" : ` (${drawPoints.length}/3 minimum)`
-                  }. Esc to cancel.`}
+            )}
+            {!error &&
+              (placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice) && (
+                <p className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm">
+                  {(placingDeviceId || creatingDevice) && "Click on the plan to place the device. Esc to cancel."}
+                  {placingRackId && "Click on the plan to place the rack. Esc to cancel."}
+                  {(drawingRoomId || creatingRoom) &&
+                    `Click to add points${
+                      drawPoints.length >= 3 ? " — Enter or double-click to finish" : ` (${drawPoints.length}/3 minimum)`
+                    }. Esc to cancel.`}
+                </p>
+              )}
+            {/* Discovery's own line, so a pass can report while a placement gesture is still live.
+                `no-key` and `none-found` are SENTINELS, not prose — each gets its own copy; anything
+                else is already a caller-facing message from the action, shown verbatim. */}
+            {(discovering != null || wizardNotice) && (
+              <p
+                data-testid="wizard-notice"
+                className="pointer-events-auto rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
+              >
+                {discovering != null ? (
+                  "Reading the plan…"
+                ) : wizardNotice === "no-key" ? (
+                  <>
+                    Add a Gemini API key in{" "}
+                    <Link href="/settings" className="underline">
+                      Settings
+                    </Link>{" "}
+                    to use AI discovery.
+                  </>
+                ) : wizardNotice === "none-found" ? (
+                  "Nothing found — fine-tune by hand or try a clearer plan."
+                ) : (
+                  wizardNotice
+                )}
               </p>
             )}
           </div>

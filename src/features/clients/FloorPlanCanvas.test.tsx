@@ -14,6 +14,7 @@ import {
   setRoomPolygonAction,
   clearRoomPolygonAction,
 } from "./actions";
+import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
 
 const refreshMock = vi.fn();
 const pushMock = vi.fn();
@@ -25,6 +26,34 @@ vi.mock("./actions", () => ({
   clearRackPlacementAction: vi.fn(async () => ({ ok: true })),
   setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
   clearRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+}));
+// The discovery actions are server actions (Supabase + Gemini); the canvas only ever awaits their
+// result shape, so a module mock is the whole contract this file needs.
+vi.mock("./discoverActions", () => ({
+  discoverRoomsAction: vi.fn(async () => ({
+    ok: true,
+    proposals: [
+      {
+        id: "room-0",
+        name: "MDF",
+        roomType: "other",
+        polygon: [
+          [0.1, 0.1],
+          [0.3, 0.1],
+          [0.3, 0.3],
+          [0.1, 0.3],
+        ],
+        confidence: "high",
+      },
+    ],
+  })),
+  discoverDevicesAction: vi.fn(async () => ({
+    ok: true,
+    proposals: [
+      { id: "dev-0", label: "CAM01", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+      { id: "dev-1", label: "AP02", typeCode: "AP", point: [0.7, 0.2], confidence: "low" },
+    ],
+  })),
 }));
 
 // jsdom has no ResizeObserver, so FloorPlanCanvas falls back to a fixed 870px pane width for its
@@ -888,5 +917,96 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
     expect(polygon[0][1]).toBeCloseTo(0.1, 5); // pinned onto the wall's y
     expect(polygon[0][0]).toBeGreaterThan(0.1); // strictly between the two corners
     expect(polygon[0][0]).toBeLessThan(0.3);
+  });
+});
+
+describe("FloorPlanCanvas (AI discovery wizard)", () => {
+  /** Open the wizard menu and run one discovery pass, flushing the action's promise. */
+  async function runDiscovery(which: "discover-rooms" | "discover-devices") {
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(which));
+    });
+  }
+
+  it("hides the wizard button when editable is false", () => {
+    renderCanvas(false);
+    expect(screen.queryByTestId("plan-wizard")).toBeNull();
+  });
+
+  it("opens a menu with both discovery passes", () => {
+    renderCanvas(true);
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    expect(screen.getByTestId("plan-wizard-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("discover-rooms")).toBeInTheDocument();
+    expect(screen.getByTestId("discover-devices")).toBeInTheDocument();
+  });
+
+  it("renders a ghost pin for every discovered device", async () => {
+    renderCanvas(true);
+    await runDiscovery("discover-devices");
+
+    expect(discoverDevicesAction).toHaveBeenCalledWith("floor-1");
+    // Positioned in IMAGE-PIXEL space like every committed pin: [0.5,0.5] on a 1200x800 plan.
+    expect(screen.getByTestId("proposal-pin-dev-0").getAttribute("transform")).toBe("translate(600 400)");
+    expect(screen.getByTestId("proposal-pin-dev-1")).toBeInTheDocument();
+    // The menu closes as the pass starts, so the plan isn't obscured while reviewing.
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+  });
+
+  it("renders a ghost polygon with the discovered vertex count", async () => {
+    const { container } = renderCanvas(true);
+    await runDiscovery("discover-rooms");
+
+    const group = screen.getByTestId("proposal-room-room-0");
+    const polygon = group.querySelector("polygon")!;
+    expect(polygon.getAttribute("points")!.trim().split(/\s+/)).toHaveLength(4);
+    // Rooms-only pass: no device ghosts leak in.
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("draws proposals ON TOP of the committed shapes", async () => {
+    const { container } = renderCanvas(true);
+    await runDiscovery("discover-devices");
+
+    const live = container.querySelector('[data-testid="floor-plan-canvas"] > g')!;
+    const nodes = Array.from(live.querySelectorAll("*"));
+    const committed = nodes.indexOf(screen.getByTestId("plan-pin-CAM01"));
+    const proposed = nodes.indexOf(screen.getByTestId("proposal-pin-dev-0"));
+    expect(committed).toBeGreaterThanOrEqual(0);
+    expect(proposed).toBeGreaterThan(committed);
+  });
+
+  it("points a missing Gemini key at Settings instead of printing the sentinel", async () => {
+    vi.mocked(discoverDevicesAction).mockResolvedValueOnce({ ok: false, error: "no-key" });
+    const { container } = renderCanvas(true);
+    await runDiscovery("discover-devices");
+
+    const notice = screen.getByTestId("wizard-notice");
+    expect(notice.textContent).toContain("Settings");
+    expect(notice.textContent).not.toContain("no-key");
+    expect(notice.querySelector('a[href="/settings"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("says so when a pass finds nothing", async () => {
+    vi.mocked(discoverRoomsAction).mockResolvedValueOnce({ ok: true, proposals: [] });
+    renderCanvas(true);
+    await runDiscovery("discover-rooms");
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("Nothing found");
+  });
+
+  it("surfaces any other action error verbatim", async () => {
+    vi.mocked(discoverRoomsAction).mockResolvedValueOnce({
+      ok: false,
+      error: "The vision model is busy right now — please try again in a moment.",
+    });
+    renderCanvas(true);
+    await runDiscovery("discover-rooms");
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("busy right now");
   });
 });
