@@ -23,7 +23,9 @@ const friendly = (e: unknown) => {
 };
 
 // Shared setup: derive the plan from the floor (server-side), fetch its bytes, resolve the key.
-// Returns either the ready-to-send image payload or a caller-facing error.
+// Returns either the ready-to-send image payload or a caller-facing error. NOTE: getFloorPlan and
+// downloadPlanObject can both throw on unexpected DB/storage errors — callers MUST await this
+// inside their own try/catch so those propagate as `{ ok: false, error }`, never as a rejection.
 async function prepare(floorId: string):
   Promise<{ ok: true; imageBase64: string; mimeType: string; apiKey: string } | { ok: false; error: string }> {
   const db = createServiceClient();
@@ -37,25 +39,29 @@ async function prepare(floorId: string):
 }
 
 export async function discoverRoomsAction(floorId: string): Promise<DiscoverRoomsResult> {
-  const ready = await prepare(floorId);
-  if (!ready.ok) return ready;
   try {
-    const raw = await geminiPlanBackend.discoverRooms(ready);
+    const ready = await prepare(floorId);
+    if (!ready.ok) return ready;
+    const { imageBase64, mimeType, apiKey } = ready;
+    const raw = await geminiPlanBackend.discoverRooms({ imageBase64, mimeType, apiKey });
     return { ok: true, proposals: validateRoomDiscovery(raw) };
   } catch (e) {
-    console.error("[discoverRooms]", e);
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error("[discoverRooms]", detail);
     return { ok: false, error: friendly(e) };
   }
 }
 
 export async function discoverDevicesAction(floorId: string): Promise<DiscoverDevicesResult> {
-  const ready = await prepare(floorId);
-  if (!ready.ok) return ready;
   try {
-    const raw = await geminiPlanBackend.discoverDevices(ready);
+    const ready = await prepare(floorId);
+    if (!ready.ok) return ready;
+    const { imageBase64, mimeType, apiKey } = ready;
+    const raw = await geminiPlanBackend.discoverDevices({ imageBase64, mimeType, apiKey });
     return { ok: true, proposals: validateDeviceDiscovery(raw) };
   } catch (e) {
-    console.error("[discoverDevices]", e);
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error("[discoverDevices]", detail);
     return { ok: false, error: friendly(e) };
   }
 }
