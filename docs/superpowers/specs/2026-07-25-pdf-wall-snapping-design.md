@@ -98,7 +98,28 @@ lies on a hand-traced room's edge.
 opcodes with coordinates: **`0`=moveTo(2), `1`=lineTo(2), `2`=curveTo(6), `4`=closePath(0)**. Curves
 keep only their endpoint — a floor plan's walls are straight, and curve interiors are furniture.
 
-### 5.3 The filtering pipeline (pure, testable)
+### 5.3 Stroke class is a better signal than geometry (probed 2026-07-25)
+
+These PDFs carry **no optional content groups**, so layer-name filtering is unavailable. But stroke
+colour and line width separate content classes cleanly, and far more meaningfully than orientation:
+
+| class | count on the probed sheet | what it actually is |
+|---|---|---|
+| grey `#aaaaaa`, thin | 186,961 | hatching / screened background fill |
+| black, thin (<5) | 61,653 | architecture, ceiling grid, dimensions, leaders |
+| black, heavy (≥5) | 5,051 | **light fixtures** — NOT walls |
+| red `#ee1d24` | 52 | as-built markup annotations |
+
+Two consequences:
+
+1. **Dropping grey removes 74% of all geometry** on a principled basis, before any geometric
+   heuristic runs. This should be the first filter stage.
+2. **Stroke weight cannot be mapped to meaning globally.** On a reflected-ceiling plan heavy black is
+   light fixtures; on an electrical sheet it may be conduit; on an architectural sheet it is likely
+   walls. The filter must not hardcode "heavy = wall" — it must be tuned per sheet type, or fall back
+   to geometry (long, orthogonal, forming closed regions) within the thin-black class.
+
+### 5.4 The filtering pipeline (pure, testable)
 
 ```
 decode paths
@@ -115,7 +136,7 @@ Each stage is a pure function so the heuristic is tuned against fixtures, not by
 stored as `{ vertical: boolean, pos: number, start: number, end: number }[]` in normalized units —
 compact (~1,400 runs ≈ 25KB JSON) and directly usable by the snapper without re-deriving anything.
 
-### 5.4 Labels
+### 5.5 Labels
 
 `page.getTextContent()` gives items with a transform. Each becomes
 `{ text, x, y }` normalized the same way. No OCR, no model, no transcription error.
@@ -183,10 +204,12 @@ asking clients to supply, and worth its own slice if they can.
 
 ## 10. Open questions for the builder
 
-1. **The real CELLAR PDF is required to tune the wall filter honestly.** The spike ran against
-   `As Built - Reflected Ceiling Cellar.pdf`, a different sheet whose ceiling grid survives filtering.
-   The uploaded sheet is *ELECTRICAL POWER — CELLAR PLAN (E-100P.00)*. Without it the filter is tuned
-   against the wrong drawing.
+1. **BLOCKING: the real CELLAR PDF is required to tune the wall filter.** Everything probed so far
+   ran against `As Built - Reflected Ceiling Cellar.pdf` — a *reflected ceiling* plan, the worst case
+   for this filter (dominated by ceiling grid, and its heavy strokes are light fixtures). The uploaded
+   sheet is *ELECTRICAL POWER — CELLAR PLAN (E-100P.00)*. Tuning stroke-class thresholds against an
+   RCP would fit a sheet type the user does not actually work from. The coordinate mapping is proven
+   and sheet-independent; the FILTER is not, and cannot be finished without the real file.
 2. **Extraction cost at upload is unmeasured** on a 253k-segment sheet. If it is slow enough to hurt
    the upload, move it behind the same lazy path the signed URL already uses and show a one-time
    loading state.
