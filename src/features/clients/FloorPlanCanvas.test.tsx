@@ -13,8 +13,11 @@ import {
   clearRackPlacementAction,
   setRoomPolygonAction,
   clearRoomPolygonAction,
+  createFloorDeviceAction,
+  createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 const refreshMock = vi.fn();
 const pushMock = vi.fn();
@@ -26,6 +29,10 @@ vi.mock("./actions", () => ({
   clearRackPlacementAction: vi.fn(async () => ({ ok: true })),
   setRoomPolygonAction: vi.fn(async () => ({ ok: true })),
   clearRoomPolygonAction: vi.fn(async () => ({ ok: true })),
+  // Accepting a proposal with no inventory match creates the row first, then places it — both
+  // creates hand back the new id the placement is chained on.
+  createFloorDeviceAction: vi.fn(async () => ({ ok: true, id: "new-device" })),
+  createRoomAction: vi.fn(async () => ({ ok: true, id: "new-room" })),
 }));
 // The discovery actions are server actions (Supabase + Gemini); the canvas only ever awaits their
 // result shape, so a module mock is the whole contract this file needs.
@@ -1008,5 +1015,399 @@ describe("FloorPlanCanvas (AI discovery wizard)", () => {
     await runDiscovery("discover-rooms");
 
     expect(screen.getByTestId("wizard-notice").textContent).toContain("busy right now");
+  });
+});
+
+describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
+  // The jsdom fallback view (no ResizeObserver): fit zoom 0.7, panX 15, panY 0 on this 1200x800
+  // plan — the same derivation the placement test above spells out. A pointer at (cx, cy) is
+  // therefore this normalized point, which is what an accepted proposal must commit.
+  const normX = (cx: number) => (cx - 15) / 840;
+  const normY = (cy: number) => cy / 560;
+
+  function deviceProposal(over: Partial<DeviceProposal> = {}): DeviceProposal {
+    return { id: "dev-0", label: "CAM09", typeCode: "CAM", point: [0.5, 0.5], confidence: "high", ...over };
+  }
+  function roomProposal(over: Partial<RoomProposal> = {}): RoomProposal {
+    return {
+      id: "room-0",
+      name: "Server room",
+      roomType: "IDF",
+      polygon: [
+        [0.1, 0.1],
+        [0.3, 0.1],
+        [0.3, 0.3],
+        [0.1, 0.3],
+      ],
+      confidence: "high",
+      ...over,
+    };
+  }
+
+  /** Render the canvas and stage exactly these device proposals through a real discovery pass. */
+  async function stageDevices(proposals: DeviceProposal[]) {
+    vi.mocked(discoverDevicesAction).mockResolvedValueOnce({ ok: true, proposals });
+    renderCanvas(true);
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("discover-devices"));
+    });
+  }
+  async function stageRooms(proposals: RoomProposal[]) {
+    vi.mocked(discoverRoomsAction).mockResolvedValueOnce({ ok: true, proposals });
+    renderCanvas(true);
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("discover-rooms"));
+    });
+  }
+
+  async function clickAsync(testId: string) {
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(testId));
+    });
+  }
+
+  const lastFormData = (mock: unknown) =>
+    (vi.mocked(mock as (fd: FormData) => Promise<unknown>).mock.calls.at(-1)![0]) as FormData;
+
+  it("shows no panel while there is nothing to review", () => {
+    renderCanvas(true);
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+  });
+
+  it("shows a panel row per proposal once a pass returns", async () => {
+    await stageDevices([deviceProposal(), deviceProposal({ id: "dev-1", label: "AP02", typeCode: "AP" })]);
+    expect(screen.getByTestId("proposal-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-dev-0")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-dev-1")).toBeInTheDocument();
+  });
+
+  it("accepts a device matching an EXISTING UNPLACED device: places THAT id, creates nothing", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    // TO02 is the SECOND unplaced device in the fixture — never "the first row".
+    await stageDevices([deviceProposal({ label: "TO02", typeCode: "TO", point: [0.25, 0.75] })]);
+
+    await clickAsync("accept-dev-0");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore);
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 1);
+    const fd = lastFormData(placeFloorDeviceAction);
+    expect(fd.get("id")).toBe("dev-to02");
+    expect(Number(fd.get("x"))).toBeCloseTo(0.25, 10);
+    expect(Number(fd.get("y"))).toBeCloseTo(0.75, 10);
+    // Accepted proposals leave the panel; this was the only one, so the panel goes with it.
+    expect(screen.queryByTestId("proposal-item-dev-0")).toBeNull();
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("accepts an UNMATCHED device by creating it with the label as its code, then placing the NEW id", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    await stageDevices([deviceProposal({ label: "CAM09", typeCode: "CAM", point: [0.2, 0.4] })]);
+
+    await clickAsync("accept-dev-0");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore + 1);
+    const cfd = lastFormData(createFloorDeviceAction);
+    expect(cfd.get("floorId")).toBe("floor-1");
+    expect(cfd.get("code")).toBe("CAM09");
+    // The proposal carries a type CODE; the action needs the type's ID.
+    expect(cfd.get("deviceTypeId")).toBe("type-cam");
+    expect(cfd.get("status")).toBe("planned");
+    expect(cfd.get("roomId")).toBe("");
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 1);
+    const pfd = lastFormData(placeFloorDeviceAction);
+    expect(pfd.get("id")).toBe("dev-fresh");
+    expect(Number(pfd.get("x"))).toBeCloseTo(0.2, 10);
+    expect(Number(pfd.get("y"))).toBeCloseTo(0.4, 10);
+    // Create STRICTLY before place — the placement is chained on the id the create returned.
+    expect(vi.mocked(createFloorDeviceAction).mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      vi.mocked(placeFloorDeviceAction).mock.invocationCallOrder.at(-1)!
+    );
+    expect(screen.queryByTestId("proposal-item-dev-0")).toBeNull();
+  });
+
+  it("refuses a device whose label is ALREADY on the plan: no action at all, proposal dropped, error shown", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    // CAM01 exists AND is placed (x/y set) — device codes are site-unique, so this is a duplicate.
+    await stageDevices([deviceProposal({ label: "CAM01", typeCode: "CAM" })]);
+
+    await clickAsync("accept-dev-0");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore);
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore);
+    expect(screen.queryByTestId("proposal-item-dev-0")).toBeNull();
+    expect(screen.getByTestId("canvas-error").textContent).toContain("CAM01");
+  });
+
+  it("refuses to create a device for an unknown type code rather than sending a bad type id", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal({ label: "XX01", typeCode: "ZZZ" })]);
+
+    await clickAsync("accept-dev-0");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore);
+    expect(screen.getByTestId("canvas-error").textContent).toContain("ZZZ");
+    // Nothing was committed, so the proposal stays staged for a type fix.
+    expect(screen.getByTestId("proposal-item-dev-0")).toBeInTheDocument();
+  });
+
+  it("accepts a room matching a POLYGON-LESS room by name: outlines THAT room, creates nothing", async () => {
+    const setBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    const createBefore = vi.mocked(createRoomAction).mock.calls.length;
+    // "No polygon yet" is the fixture's third room (code NOPLAN) and the only one without a polygon.
+    await stageRooms([roomProposal({ name: "No polygon yet" })]);
+
+    await clickAsync("accept-room-0");
+
+    expect(createRoomAction).toHaveBeenCalledTimes(createBefore);
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(setBefore + 1);
+    const fd = lastFormData(setRoomPolygonAction);
+    expect(fd.get("roomId")).toBe("room-none");
+    expect(JSON.parse(String(fd.get("polygon")))).toEqual([
+      [0.1, 0.1],
+      [0.3, 0.1],
+      [0.3, 0.3],
+      [0.1, 0.3],
+    ]);
+    expect(screen.queryByTestId("proposal-item-room-0")).toBeNull();
+  });
+
+  it("accepts an UNMATCHED room by creating it, then outlining the NEW id", async () => {
+    const createBefore = vi.mocked(createRoomAction).mock.calls.length;
+    const setBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-fresh" });
+    await stageRooms([roomProposal({ name: "Server room", roomType: "IDF" })]);
+
+    await clickAsync("accept-room-0");
+
+    expect(createRoomAction).toHaveBeenCalledTimes(createBefore + 1);
+    const cfd = lastFormData(createRoomAction);
+    expect(cfd.get("floorId")).toBe("floor-1");
+    expect(cfd.get("name")).toBe("Server room");
+    expect(cfd.get("type")).toBe("IDF");
+    // Generated from the room type prefix against the existing codes (MDF / TRI / NOPLAN).
+    expect(cfd.get("code")).toBe("IDF01");
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(setBefore + 1);
+    const sfd = lastFormData(setRoomPolygonAction);
+    expect(sfd.get("roomId")).toBe("room-fresh");
+    expect(vi.mocked(createRoomAction).mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      vi.mocked(setRoomPolygonAction).mock.invocationCallOrder.at(-1)!
+    );
+    expect(screen.queryByTestId("proposal-item-room-0")).toBeNull();
+  });
+
+  it("dismisses a NON-first proposal with no action call, leaving the others staged", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal(), deviceProposal({ id: "dev-1", label: "AP02", typeCode: "AP" })]);
+
+    await clickAsync("dismiss-dev-1");
+
+    expect(screen.queryByTestId("proposal-item-dev-1")).toBeNull();
+    expect(screen.queryByTestId("proposal-pin-dev-1")).toBeNull();
+    expect(screen.getByTestId("proposal-item-dev-0")).toBeInTheDocument();
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore);
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore);
+  });
+
+  it("dismisses everything at once with no action call", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal(), deviceProposal({ id: "dev-1", label: "AP02", typeCode: "AP" })]);
+
+    await clickAsync("dismiss-all");
+
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore);
+  });
+
+  it("accepts all SEQUENTIALLY, and a failure keeps only its own proposal staged", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    // The FIRST accept fails; the batch must carry on and still place the second.
+    vi.mocked(placeFloorDeviceAction).mockResolvedValueOnce({ ok: false, error: "Placement rejected" });
+    await stageDevices([
+      deviceProposal({ id: "dev-0", label: "TO01", typeCode: "TO", point: [0.1, 0.1] }),
+      deviceProposal({ id: "dev-1", label: "TO02", typeCode: "TO", point: [0.9, 0.9] }),
+    ]);
+
+    await clickAsync("accept-all");
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 2);
+    expect(vi.mocked(placeFloorDeviceAction).mock.calls.at(-2)![0].get("id")).toBe("dev-to01");
+    expect(vi.mocked(placeFloorDeviceAction).mock.calls.at(-1)![0].get("id")).toBe("dev-to02");
+    // The failed one stays for a retry; the succeeded one is gone.
+    expect(screen.getByTestId("proposal-item-dev-0")).toBeInTheDocument();
+    expect(screen.queryByTestId("proposal-item-dev-1")).toBeNull();
+    // The batch's error survives the later success that cleared the canvas error.
+    expect(screen.getByTestId("canvas-error").textContent).toContain("Placement rejected");
+  });
+
+  it("an edited label decides the commit: retyping it onto an existing device places that device", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal({ label: "CAM09", typeCode: "CAM" })]);
+
+    fireEvent.change(screen.getByTestId("proposal-label-dev-0"), { target: { value: "TO02" } });
+    await clickAsync("accept-dev-0");
+
+    // Editing is state-only: nothing was committed until Accept, and then it was a PLACE.
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore);
+    expect(lastFormData(placeFloorDeviceAction).get("id")).toBe("dev-to02");
+  });
+
+  it("an edited type decides which device type is created", async () => {
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    await stageDevices([deviceProposal({ label: "SEN09", typeCode: "CAM" })]);
+
+    fireEvent.change(screen.getByTestId("proposal-type-dev-0"), { target: { value: "SEN" } });
+    await clickAsync("accept-dev-0");
+
+    expect(lastFormData(createFloorDeviceAction).get("deviceTypeId")).toBe("type-sen");
+  });
+
+  it("an edited room name and type flow into the created room", async () => {
+    vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-fresh" });
+    await stageRooms([roomProposal({ name: "Server room", roomType: "IDF" })]);
+
+    fireEvent.change(screen.getByTestId("proposal-name-room-0"), { target: { value: "Comms cupboard" } });
+    fireEvent.change(screen.getByTestId("proposal-roomtype-room-0"), { target: { value: "MDF" } });
+    await clickAsync("accept-room-0");
+
+    const fd = lastFormData(createRoomAction);
+    expect(fd.get("name")).toBe("Comms cupboard");
+    expect(fd.get("type")).toBe("MDF");
+    expect(fd.get("code")).toBe("MDF01");
+  });
+
+  it("dragging a ghost pin moves it, commits nothing, and never pans the canvas", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal({ label: "CAM09", point: [0.5, 0.5] })]);
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const transformBefore = svg.querySelector("g")!.getAttribute("transform");
+    const pin = screen.getByTestId("proposal-pin-dev-0");
+    expect(pin.getAttribute("transform")).toBe("translate(600 400)");
+
+    fireEvent.pointerDown(pin, { clientX: 615, clientY: 400, button: 0, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 500, clientY: 350, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 300, pointerId: 1 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 300, pointerId: 1 });
+    });
+
+    // Moving a ghost is a staged edit — never an action.
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore);
+    const moved = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(
+      screen.getByTestId("proposal-pin-dev-0").getAttribute("transform")!
+    )!;
+    expect(Number(moved[1])).toBeCloseTo(normX(400) * 1200, 6);
+    expect(Number(moved[2])).toBeCloseTo(normY(300) * 800, 6);
+    // The ghost owns its pointer-down, so the plan must not have panned with it — during the drag,
+    // and equally after it: a press that reached the SVG root would leave a pan armed behind it,
+    // and the very next pointer move (button already up) would drag the whole plan.
+    expect(svg.querySelector("g")!.getAttribute("transform")).toBe(transformBefore);
+    fireEvent.pointerMove(svg, { clientX: 250, clientY: 200, pointerId: 1 });
+    expect(svg.querySelector("g")!.getAttribute("transform")).toBe(transformBefore);
+
+    // Accepting afterwards commits the DRAGGED point, not the model's original one.
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    await clickAsync("accept-dev-0");
+    const fd = lastFormData(placeFloorDeviceAction);
+    expect(Number(fd.get("x"))).toBeCloseTo(normX(400), 10);
+    expect(Number(fd.get("y"))).toBeCloseTo(normY(300), 10);
+  });
+
+  it("shows a proposed room's vertex handles only once outline editing is toggled on", async () => {
+    await stageRooms([roomProposal()]);
+    expect(screen.queryByTestId("proposal-vertex-room-0-0")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("proposal-outline-room-0"));
+    // One handle per vertex, in image-pixel space: [0.1,0.1] on a 1200x800 plan.
+    expect(screen.getByTestId("proposal-vertex-room-0-0").getAttribute("cx")).toBe("120");
+    expect(screen.getByTestId("proposal-vertex-room-0-3")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("proposal-outline-room-0"));
+    expect(screen.queryByTestId("proposal-vertex-room-0-0")).toBeNull();
+  });
+
+  it("dragging a proposed room's vertex reshapes it with no action, and Accept commits the new outline", async () => {
+    const setBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    await stageRooms([roomProposal({ name: "No polygon yet" })]);
+    fireEvent.click(screen.getByTestId("proposal-outline-room-0"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const transformBefore = svg.querySelector("g")!.getAttribute("transform");
+    fireEvent.pointerDown(screen.getByTestId("proposal-vertex-room-0-0"), {
+      clientX: 99, clientY: 71, button: 0, pointerId: 1,
+    });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 300, pointerId: 1 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 300, pointerId: 1 });
+    });
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(setBefore);
+    // The handle owns its pointer-down, so no pan was armed by the gesture or left behind it.
+    fireEvent.pointerMove(svg, { clientX: 250, clientY: 200, pointerId: 1 });
+    expect(svg.querySelector("g")!.getAttribute("transform")).toBe(transformBefore);
+
+    await clickAsync("accept-room-0");
+    const polygon = JSON.parse(String(lastFormData(setRoomPolygonAction).get("polygon")));
+    expect(polygon).toHaveLength(4);
+    expect(polygon[0][0]).toBeCloseTo(normX(400), 10);
+    expect(polygon[0][1]).toBeCloseTo(normY(300), 10);
+    // Every other vertex is untouched.
+    expect(polygon[1]).toEqual([0.3, 0.1]);
+  });
+
+  it("inserts a vertex on a proposed room's edge, and Delete removes a selected one", async () => {
+    await stageRooms([roomProposal({ name: "No polygon yet" })]);
+    fireEvent.click(screen.getByTestId("proposal-outline-room-0"));
+
+    fireEvent.click(screen.getByTestId("proposal-vertex-insert-room-0-0"));
+    expect(screen.getByTestId("proposal-vertex-room-0-4")).toBeInTheDocument();
+    // The midpoint of edge 0 ([0.1,0.1] -> [0.3,0.1]) landed at index 1.
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("cx")).toBe("240");
+
+    // Select a vertex (a press with no travel) and delete it.
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(screen.getByTestId("proposal-vertex-room-0-1"), {
+      clientX: 200, clientY: 90, button: 0, pointerId: 1,
+    });
+    fireEvent.pointerUp(svg, { clientX: 200, clientY: 90, pointerId: 1 });
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Delete" });
+    });
+    expect(screen.queryByTestId("proposal-vertex-room-0-4")).toBeNull();
+
+    await clickAsync("accept-room-0");
+    expect(JSON.parse(String(lastFormData(setRoomPolygonAction).get("polygon")))).toEqual([
+      [0.1, 0.1],
+      [0.3, 0.1],
+      [0.3, 0.3],
+      [0.1, 0.3],
+    ]);
+  });
+
+  it("Esc closes the wizard menu", () => {
+    renderCanvas(true);
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    expect(screen.getByTestId("plan-wizard-menu")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+  });
+
+  it("a click outside the wizard menu closes it", () => {
+    renderCanvas(true);
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    expect(screen.getByTestId("plan-wizard-menu")).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByTestId("floor-plan-canvas"), { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
   });
 });

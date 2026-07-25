@@ -35,9 +35,13 @@ import {
   clearRackPlacementAction,
   setRoomPolygonAction,
   clearRoomPolygonAction,
+  createFloorDeviceAction,
+  createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
+import { planDeviceCommit, planRoomCommit } from "./planProposals";
+import { ProposalPanel } from "./ProposalPanel";
 
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
 // pointer drift every physical click carries, small enough that a deliberate pan never selects.
@@ -112,6 +116,8 @@ const ROOM_STROKE = "#2563eb";
 // AI proposals are drawn in amber, dashed — deliberately NOT the committed blue, so a glance at the
 // plan separates "this is on the floor" from "the model thinks this is on the floor".
 const PROPOSAL_FILL = "rgb(245 158 11 / 0.12)";
+// The same amber, deepened, for the proposed room whose outline is being reshaped.
+const PROPOSAL_FILL_ACTIVE = "rgb(245 158 11 / 0.24)";
 const PROPOSAL_STROKE = "#d97706";
 
 /** The view every child shape is positioned with: zero pan, unit zoom, so normToScreen(p, this)
@@ -700,12 +706,64 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Either a pass-outcome sentinel the notice renders specially ("no-key" from the action, or the
   // local "none-found"), or an error string to show verbatim.
   const [wizardNotice, setWizardNotice] = useState<string | null>(null);
+  // The room proposal whose vertex handles are showing — the ghost equivalent of editingRoomId, so
+  // a plain review can't be fumbled into an accidental reshape.
+  const [proposalRoomEditId, setProposalRoomEditId] = useState<string | null>(null);
+  const [selectedProposalVertex, setSelectedProposalVertex] = useState<
+    { roomId: string; index: number } | null
+  >(null);
+  // True for the duration of an accept (single or batch): every commit control disables, so a
+  // double-click can't create the same device twice.
+  const [accepting, setAccepting] = useState(false);
+  // Ghost drags. Unlike the committed pin/vertex drags there is nothing to commit on pointer-up —
+  // a ghost moves in STATE as the pointer moves — so these carry no `moved`/coordinate bookkeeping.
+  const proposalPinDragRef = useRef<{ id: string } | null>(null);
+  const proposalVertexDragRef = useRef<{ roomId: string; index: number } | null>(null);
+  // The wizard menu's anchor, so a press anywhere else can close the menu.
+  const wizardRef = useRef<HTMLSpanElement | null>(null);
+
+  // Proposals are per-floor and must never survive a floor switch. SiteDetail keys this component
+  // by the active floor id, so a switch remounts it and the state is fresh anyway — this makes the
+  // lifecycle explicit here rather than depending on another file's prop for correctness. The ref
+  // guard keeps mount itself a no-op (it only fires when the floor actually CHANGES).
+  const proposalFloorRef = useRef(plan.floor_id);
+  useEffect(() => {
+    if (proposalFloorRef.current === plan.floor_id) return;
+    proposalFloorRef.current = plan.floor_id;
+    setProposals({ rooms: [], devices: [] });
+    setProposalRoomEditId(null);
+    setSelectedProposalVertex(null);
+    setWizardNotice(null);
+  }, [plan.floor_id]);
+
+  // Esc / outside-press closes the wizard menu. Deliberately its OWN effect, not a branch of the
+  // gesture keydown handler below: that one is gated on edit/create mode, and the wizard opens
+  // outside both.
+  useEffect(() => {
+    if (!wizardOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setWizardOpen(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!wizardRef.current?.contains(e.target as Node)) setWizardOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [wizardOpen]);
 
   /** Run one discovery pass and park its proposals in state. Never throws: the actions return
    *  `{ ok: false, error }` for every failure, including the "no-key" sentinel. */
   async function runDiscovery(kind: "rooms" | "devices") {
     setWizardOpen(false);
     setWizardNotice(null);
+    // Proposal ids are per-pass and index-based ("room-0"), so a re-run can hand the SAME id to a
+    // different shape. Drop the geometry selections rather than let them re-point silently.
+    setProposalRoomEditId(null);
+    setSelectedProposalVertex(null);
     setDiscovering(kind);
     try {
       if (kind === "rooms") {
@@ -728,6 +786,199 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     } finally {
       setDiscovering(null);
     }
+  }
+
+  // ---- Proposal editing (state ONLY — nothing below this line touches the database) ----
+  /** The types a floor device can be. A proposal carries a type CODE; the create action needs the
+   *  matching type's ID, and the panel's select offers exactly these. */
+  const floorDeviceTypes = deviceTypes.filter((t) => t.category === "floor");
+
+  function editDeviceProposal(id: string, patch: Partial<DeviceProposal>) {
+    setProposals((p) => ({
+      ...p,
+      devices: p.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)),
+    }));
+  }
+
+  function editRoomProposal(id: string, patch: Partial<RoomProposal>) {
+    setProposals((p) => ({
+      ...p,
+      rooms: p.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+    }));
+  }
+
+  function dropDevice(id: string) {
+    setProposals((p) => ({ ...p, devices: p.devices.filter((d) => d.id !== id) }));
+  }
+
+  function dropRoom(id: string) {
+    setProposals((p) => ({ ...p, rooms: p.rooms.filter((r) => r.id !== id) }));
+    // A dropped room can't stay the one being outline-edited, nor own a selected vertex.
+    setProposalRoomEditId((cur) => (cur === id ? null : cur));
+    setSelectedProposalVertex((cur) => (cur?.roomId === id ? null : cur));
+  }
+
+  function moveProposalVertex(roomId: string, index: number, point: NormPoint) {
+    setProposals((p) => ({
+      ...p,
+      rooms: p.rooms.map((r) =>
+        r.id === roomId ? { ...r, polygon: r.polygon.map((pt, i) => (i === index ? point : pt)) } : r
+      ),
+    }));
+  }
+
+  /** Midpoint insert on a proposed room's edge — the same geometry the committed rooms use, just
+   *  written back into proposal state instead of the database. */
+  function insertProposalVertex(roomId: string, edgeIndex: number) {
+    setProposals((p) => ({
+      ...p,
+      rooms: p.rooms.map((r) =>
+        r.id === roomId ? { ...r, polygon: insertVertexOnEdge(r.polygon, edgeIndex) } : r
+      ),
+    }));
+  }
+
+  function deleteSelectedProposalVertex() {
+    const sel = selectedProposalVertex;
+    if (!sel) return;
+    setProposals((p) => ({
+      ...p,
+      rooms: p.rooms.map((r) => {
+        if (r.id !== sel.roomId) return r;
+        const next = removeVertex(r.polygon, sel.index);
+        // removeVertex hands the SAME array back when it refuses (below 3 vertices) — that
+        // reference equality is how a refusal is told apart from a real removal.
+        return next === r.polygon ? r : { ...r, polygon: next };
+      }),
+    }));
+    setSelectedProposalVertex(null);
+  }
+
+  // ---- Accepting a proposal (the only place a proposal reaches the database) ----
+  /** Returns the error message if this proposal could not be committed, else null. The message is
+   *  also shown immediately; the batch below re-shows the FIRST one at the end, so a later success
+   *  (which clears the error) can't swallow it. */
+  async function acceptDevice(dp: DeviceProposal): Promise<string | null> {
+    const decision = planDeviceCommit(dp, devices);
+    if (decision.kind === "duplicate") {
+      // The code is site-unique and the matched device is already on the plan: there is nothing to
+      // commit, so the proposal just goes away with an explanation.
+      const message = `${dp.label} is already on the plan.`;
+      dropDevice(dp.id);
+      setError(message);
+      return message;
+    }
+    if (decision.kind === "place") {
+      const failure = await commitPlaceDevice(decision.deviceId, dp.point);
+      // A failure keeps the proposal staged — nothing was created, so a retry is harmless.
+      if (!failure) dropDevice(dp.id);
+      return failure;
+    }
+    const type = floorDeviceTypes.find((t) => t.code === dp.typeCode);
+    if (!type) {
+      const message = `No device type "${dp.typeCode}" on this site.`;
+      setError(message);
+      return message;
+    }
+    const fd = new FormData();
+    fd.set("floorId", plan.floor_id);
+    fd.set("roomId", "");
+    fd.set("deviceTypeId", type.id);
+    fd.set("code", decision.code);
+    fd.set("name", "");
+    fd.set("status", "planned");
+    const res = await createFloorDeviceAction(fd);
+    if (!res.ok || !res.id) {
+      const message = res.error ?? "Failed to create device";
+      setError(message);
+      return message;
+    }
+    const failure = await commitPlaceDevice(res.id, dp.point);
+    // The device row EXISTS now, so the proposal is dropped either way: leaving it staged would
+    // invite a second create (the props here are still pre-refresh, so the retry wouldn't match
+    // the row it just made and the site-unique code would reject it). A failed placement instead
+    // leaves an UNPLACED device in the tray and says so.
+    dropDevice(dp.id);
+    if (failure) {
+      const message = `${decision.code} was created but couldn't be placed — drag it on from the tray. (${failure})`;
+      setError(message);
+      router.refresh();
+      return message;
+    }
+    return null;
+  }
+
+  async function acceptRoom(rp: RoomProposal): Promise<string | null> {
+    const decision = planRoomCommit(rp, rooms);
+    if (decision.kind === "attach") {
+      const failure = await commitRoomPolygon(decision.roomId, rp.polygon);
+      if (!failure) dropRoom(rp.id);
+      return failure;
+    }
+    const fd = new FormData();
+    fd.set("floorId", plan.floor_id);
+    fd.set("code", decision.code);
+    fd.set("name", rp.name);
+    fd.set("type", rp.roomType);
+    const res = await createRoomAction(fd);
+    if (!res.ok || !res.id) {
+      const message = res.error ?? "Failed to create room";
+      setError(message);
+      return message;
+    }
+    const failure = await commitRoomPolygon(res.id, rp.polygon);
+    // Same reasoning as acceptDevice: the room row exists, so the proposal always goes.
+    dropRoom(rp.id);
+    if (failure) {
+      const message = `${decision.code} was created but its outline couldn't be saved — trace it from the tray. (${failure})`;
+      setError(message);
+      router.refresh();
+      return message;
+    }
+    return null;
+  }
+
+  /** Accept every staged proposal, one at a time. Sequential, never Promise.all: each accept writes
+   *  rows the next one's matching may depend on, and two placements racing on the same refresh is
+   *  not worth the millisecond. A failure leaves ONLY its own proposal staged and never aborts the
+   *  batch. (The `devices`/`rooms` props stay pre-refresh for the whole batch, so a generated code
+   *  can still collide with one this batch just made — the site-unique constraint rejects that
+   *  create, which surfaces as this proposal's error with the proposal left staged for a retry.) */
+  async function acceptAll() {
+    if (accepting) return;
+    setAccepting(true);
+    let firstError: string | null = null;
+    try {
+      for (const rp of proposals.rooms) {
+        const failure = await acceptRoom(rp);
+        firstError ??= failure;
+      }
+      for (const dp of proposals.devices) {
+        const failure = await acceptDevice(dp);
+        firstError ??= failure;
+      }
+    } finally {
+      setAccepting(false);
+    }
+    // A later success calls setError(null); re-show the first failure so the batch can't end quiet.
+    if (firstError) setError(firstError);
+  }
+
+  /** One-proposal accept: the same guard as the batch, so a double-click can't double-commit. */
+  async function acceptOne(run: () => Promise<string | null>) {
+    if (accepting) return;
+    setAccepting(true);
+    try {
+      await run();
+    } finally {
+      setAccepting(false);
+    }
+  }
+
+  function dismissAll() {
+    setProposals({ rooms: [], devices: [] });
+    setProposalRoomEditId(null);
+    setSelectedProposalVertex(null);
   }
 
   // Pointer-drag panning over empty plan space, via pointer capture so the drag keeps tracking
@@ -849,18 +1100,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   }
 
   // ---- Action commits — each is called exactly once per completed gesture ----
-  async function commitPlaceDevice(id: string, point: NormPoint) {
+  /** Returns the error message on failure (already shown), or null on success — so an accept can
+   *  chain on the outcome. Gesture callers ignore the value and rely on the setError above. */
+  async function commitPlaceDevice(id: string, point: NormPoint): Promise<string | null> {
     const fd = new FormData();
     fd.set("id", id);
     fd.set("x", String(point[0]));
     fd.set("y", String(point[1]));
     const res = await placeFloorDeviceAction(fd);
     if (!res.ok) {
-      setError(res.error ?? "Failed to place device");
-      return;
+      const message = res.error ?? "Failed to place device";
+      setError(message);
+      return message;
     }
     setError(null);
     router.refresh();
+    return null;
   }
 
   async function commitUnplace(id: string) {
@@ -876,17 +1131,20 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     router.refresh();
   }
 
-  async function commitRoomPolygon(roomId: string, polygon: NormPoint[]) {
+  /** Same contract as commitPlaceDevice: the error message, or null on success. */
+  async function commitRoomPolygon(roomId: string, polygon: NormPoint[]): Promise<string | null> {
     const fd = new FormData();
     fd.set("roomId", roomId);
     fd.set("polygon", JSON.stringify(polygon));
     const res = await setRoomPolygonAction(fd);
     if (!res.ok) {
-      setError(res.error ?? "Failed to save room outline");
-      return;
+      const message = res.error ?? "Failed to save room outline";
+      setError(message);
+      return message;
     }
     setError(null);
     router.refresh();
+    return null;
   }
 
   /** Commit a vertex edit, first recording the polygon as it was so a right-click can undo it. */
@@ -1104,6 +1362,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setSelectedRackId(null);
     clearRoomSelection();
     setSelectedVertex(null);
+    setSelectedProposalVertex(null);
     pinDragRef.current = { deviceId, moved: false, clientX: e.clientX, clientY: e.clientY };
   };
 
@@ -1118,9 +1377,28 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     rackDragRef.current = { rackId, moved: false, clientX: e.clientX, clientY: e.clientY };
   };
 
+  // ---- Ghost (proposal) drag start. Same stopPropagation contract as the committed shapes — a
+  // ghost drag must never also pan the canvas — but nothing is ever committed: the drag rewrites
+  // proposal state as it moves, and pointer-up just forgets it.
+  const onProposalPinPointerDown = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    proposalPinDragRef.current = { id };
+  };
+
+  const onProposalVertexPointerDown = (e: React.PointerEvent, roomId: string, index: number) => {
+    if (e.button !== 0) return;
+    // Selections stay mutually exclusive, so Delete can never be ambiguous.
+    setSelectedPinId(null);
+    setSelectedRackId(null);
+    setSelectedVertex(null);
+    setSelectedProposalVertex({ roomId, index });
+    proposalVertexDragRef.current = { roomId, index };
+  };
+
   const onVertexPointerDown = (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => {
     if (e.button !== 0) return;
     setSelectedVertex({ roomId, index });
+    setSelectedProposalVertex(null);
     setSelectedPinId(null);
     vertexDragRef.current = { roomId, index, polygon, moved: false, clientX: e.clientX, clientY: e.clientY };
   };
@@ -1141,6 +1419,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    // Ghost drags first: they write straight to proposal state (no preview layer, no commit).
+    if (proposalPinDragRef.current) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (n) editDeviceProposal(proposalPinDragRef.current.id, { point: n });
+      return;
+    }
+    if (proposalVertexDragRef.current) {
+      const drag = proposalVertexDragRef.current;
+      const n = toNorm(e.clientX, e.clientY);
+      if (n) moveProposalVertex(drag.roomId, drag.index, n);
+      return;
+    }
     if (pinDragRef.current) {
       const drag = pinDragRef.current;
       drag.moved = true;
@@ -1180,6 +1470,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setView((v) => ({ ...v, panX: d.panX + (e.clientX - d.x), panY: d.panY + (e.clientY - d.y) }));
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    // A finished ghost drag has nothing to commit — the proposal already holds its new geometry.
+    if (proposalPinDragRef.current || proposalVertexDragRef.current) {
+      proposalPinDragRef.current = null;
+      proposalVertexDragRef.current = null;
+      return;
+    }
     if (pinDragRef.current) {
       const drag = pinDragRef.current;
       pinDragRef.current = null;
@@ -1295,8 +1591,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Keyboard: Enter closes a ≥3-point draw, Esc cancels the current gesture/selection cleanly,
   // Delete/Backspace un-places a selected pin or removes a selected vertex.
   useEffect(() => {
-    // Active in edit mode AND during a toolbar-started create gesture (which runs outside it).
-    if (!editMode && !creatingRoom && !creatingDevice) return;
+    // Active in edit mode AND during a toolbar-started create gesture (which runs outside it) AND
+    // while a proposal vertex is selected (proposal review also runs outside edit mode).
+    if (!editMode && !creatingRoom && !creatingDevice && !selectedProposalVertex) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setPlacingDeviceId(null);
@@ -1323,6 +1620,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         setPinPreview(null);
         setRackPreview(null);
         setVertexPreview(null);
+        // Ghost drags too: they write to proposal state on every move, so an in-flight one must be
+        // let go rather than continuing to follow the pointer after Esc.
+        proposalPinDragRef.current = null;
+        proposalVertexDragRef.current = null;
+        setSelectedProposalVertex(null);
         return;
       }
       if (e.key === "Enter") {
@@ -1336,6 +1638,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
+        // A selected ghost vertex wins: selecting one clears the committed selections anyway, and
+        // it's the only selection that can exist outside edit mode.
+        if (selectedProposalVertex) {
+          deleteSelectedProposalVertex();
+          return;
+        }
         if (selectedPinId) {
           void commitUnplace(selectedPinId);
           return;
@@ -1351,7 +1659,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     // directly, so it must re-subscribe whenever any of them changes to avoid acting on stale
     // state (mirrors the existing eslint-disable precedent in the fit-on-mount effect above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, creatingRoom, creatingDevice, drawingRoomId, drawPoints, selectedPinId, selectedVertex, rooms]);
+  }, [
+    editMode,
+    creatingRoom,
+    creatingDevice,
+    drawingRoomId,
+    drawPoints,
+    selectedPinId,
+    selectedVertex,
+    selectedProposalVertex,
+    rooms,
+  ]);
 
   const { placed, unplaced } = partitionPlacement(devices);
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
@@ -1572,11 +1890,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 on top of the floor rather than another layer of it. Positioned in the same
                 IMAGE-PIXEL space as everything else (identityView), with stroke widths divided by
                 the live zoom and labels counter-scaled, so they hold their look at any zoom.
-                Read-only here: accepting or editing one is Task 6. */}
+                Editable in place (drag a ghost pin, reshape a proposed outline) — every edit writes
+                to proposal state; only Accept in the panel ever reaches the database. */}
             {proposals.rooms.map((rp) => {
               const centroid = normToScreen(polygonCentroid(rp.polygon), identityView(imgW, imgH));
+              const outlining = proposalRoomEditId === rp.id;
               return (
-                <g key={rp.id} data-testid={`proposal-room-${rp.id}`} className="plan-proposal-room">
+                <g key={rp.id} data-testid={`proposal-room-${rp.id}`}>
                   <polygon
                     points={rp.polygon
                       .map((pt) => {
@@ -1584,11 +1904,62 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                         return `${s.x},${s.y}`;
                       })
                       .join(" ")}
-                    fill={PROPOSAL_FILL}
+                    fill={outlining ? PROPOSAL_FILL_ACTIVE : PROPOSAL_FILL}
                     stroke={PROPOSAL_STROKE}
-                    strokeWidth={2 / view.zoom}
+                    strokeWidth={(outlining ? 3 : 2) / view.zoom}
                     strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
                   />
+                  {/* Vertex handles, only while the panel's outline toggle is on for this room —
+                      the ghost mirror of the committed rooms' select-then-Edit gate. Index `i` is
+                      derived synchronously from the polygon being rendered, never cached. */}
+                  {outlining &&
+                    rp.polygon.map((pt, i) => {
+                      const pos = normToScreen(pt, identityView(imgW, imgH));
+                      const selected =
+                        selectedProposalVertex?.roomId === rp.id && selectedProposalVertex.index === i;
+                      return (
+                        <circle
+                          key={`pv-${i}`}
+                          data-testid={`proposal-vertex-${rp.id}-${i}`}
+                          cx={pos.x}
+                          cy={pos.y}
+                          r={6 / view.zoom}
+                          fill={selected ? PROPOSAL_STROKE : "#ffffff"}
+                          stroke={PROPOSAL_STROKE}
+                          strokeWidth={2 / view.zoom}
+                          // stopPropagation, or this drag would also pan the canvas.
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            onProposalVertexPointerDown(e, rp.id, i);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ cursor: "grab" }}
+                        />
+                      );
+                    })}
+                  {outlining &&
+                    rp.polygon.map((pt, i) => {
+                      const next = rp.polygon[(i + 1) % rp.polygon.length];
+                      const mid: NormPoint = [(pt[0] + next[0]) / 2, (pt[1] + next[1]) / 2];
+                      const pos = normToScreen(mid, identityView(imgW, imgH));
+                      return (
+                        <circle
+                          key={`pm-${i}`}
+                          data-testid={`proposal-vertex-insert-${rp.id}-${i}`}
+                          cx={pos.x}
+                          cy={pos.y}
+                          r={4 / view.zoom}
+                          fill={PROPOSAL_STROKE}
+                          opacity={0.55}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            insertProposalVertex(rp.id, i);
+                          }}
+                          style={{ cursor: "copy" }}
+                        />
+                      );
+                    })}
                   {/* Always shown (unlike the hover-gated committed room labels) — a proposal only
                       exists while it's being reviewed, and its name is what's under review. */}
                   <g transform={`translate(${centroid.x} ${centroid.y})`}>
@@ -1620,6 +1991,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   key={dp.id}
                   data-testid={`proposal-pin-${dp.id}`}
                   transform={`translate(${anchor.x} ${anchor.y})`}
+                  // Owns its pointer-down (stopPropagation) exactly like a committed pin, or
+                  // dragging the ghost would pan the plan underneath it.
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    onProposalPinPointerDown(e, dp.id);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ cursor: "grab" }}
                 >
                   {/* pinScale, not 1/zoom: a ghost pin has to sit at the same size as the committed
                       pins it will become. */}
@@ -1729,7 +2108,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             </span>
             {/* AI discovery: one button, a two-item menu (rooms / devices). The menu is anchored to
                 this span (relative) so it opens beside the stack rather than pushing it around. */}
-            <span className="pointer-events-auto relative">
+            <span ref={wizardRef} className="pointer-events-auto relative">
               <IconButton
                 data-testid="plan-wizard"
                 icon="tabler:wand"
@@ -1907,6 +2286,31 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             );
           })()
         )}
+        {/* The proposal review card: floated top-right, clear of the zoom-control column beside it.
+            Presentational — it holds no proposal state and calls no action; every edit and commit
+            comes back through these callbacks. */}
+        <div className="absolute right-14 top-3 z-20 flex max-h-[calc(100%-1.5rem)]">
+          <ProposalPanel
+            rooms={proposals.rooms}
+            devices={proposals.devices}
+            deviceTypes={floorDeviceTypes}
+            editingRoomId={proposalRoomEditId}
+            busy={accepting}
+            onEditDevice={editDeviceProposal}
+            onEditRoom={editRoomProposal}
+            onToggleRoomOutline={(id) => {
+              setProposalRoomEditId((cur) => (cur === id ? null : id));
+              setSelectedProposalVertex(null);
+            }}
+            onAcceptDevice={(dp) => void acceptOne(() => acceptDevice(dp))}
+            onAcceptRoom={(rp) => void acceptOne(() => acceptRoom(rp))}
+            onDismissDevice={dropDevice}
+            onDismissRoom={dropRoom}
+            onAcceptAll={() => void acceptAll()}
+            onDismissAll={dismissAll}
+          />
+        </div>
+
         <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col gap-1.5">
           <span className="pointer-events-auto">
             <IconButton
