@@ -38,7 +38,11 @@ export function buildWallRuns(segs: RawSeg[], W: number, H: number, opts: WallOp
     let th = Math.atan2(dy, dx);
     if (th < 0) th += Math.PI;
     if (th >= Math.PI - 1e-9) th = 0;
-    const rho = s.a[0] * Math.sin(th) - s.a[1] * Math.cos(th);
+    let rho = s.a[0] * Math.sin(th) - s.a[1] * Math.cos(th);
+    // A line at (θ, ρ) is the same line as (θ−π, −ρ). Without folding, a near-horizontal wall whose
+    // segments have sign-flipping dy noise straddles the [0, π) seam — θ≈179.97° and θ≈0.017° describe
+    // one wall but land 180 buckets apart and can never merge.
+    if (th >= Math.PI - o.thetaBucketRad / 2) { th -= Math.PI; rho = -rho; }
     const key = `${Math.round(th / o.thetaBucketRad)}_${Math.round(rho / o.rhoBucketPx)}`;
     let entry = lines.get(key);
     if (!entry) { entry = { th, rho, spans: [] }; lines.set(key, entry); }
