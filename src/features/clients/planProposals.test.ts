@@ -44,22 +44,48 @@ describe("planDeviceCommit", () => {
 
 describe("planRoomCommit", () => {
   it("attaches to an existing polygon-less room matched by name (case-insensitive)", () => {
-    const rooms = [room({ id: "a", code: "MDF", name: "Main Dist Frame" })];
+    const rooms = [
+      room({ id: "other", code: "STORAGE", name: "Storage Closet" }),
+      room({ id: "a", code: "MDF", name: "Main Dist Frame" }),
+    ];
     expect(planRoomCommit(rprop({ name: "main dist frame" }), rooms)).toEqual({ kind: "attach", roomId: "a" });
   });
   it("also matches a polygon-less room by code", () => {
-    expect(planRoomCommit(rprop({ name: "MDF" }), [room({ id: "a", code: "MDF" })]))
+    const rooms = [
+      room({ id: "other", code: "IDF", name: "Secondary" }),
+      room({ id: "a", code: "MDF" }),
+    ];
+    expect(planRoomCommit(rprop({ name: "MDF" }), rooms))
       .toEqual({ kind: "attach", roomId: "a" });
   });
   it("does NOT attach to a room that already has a polygon", () => {
-    const rooms = [room({ id: "a", code: "MDF", plan_polygon: [[0, 0], [1, 0], [1, 1]] })];
+    const rooms = [
+      room({ id: "a", code: "MDF", name: "Main Dist Frame", plan_polygon: [[0, 0], [1, 0], [1, 1]] }),
+      room({ id: "b", code: "OTHER", name: "Other Room" }),
+    ];
     const res = planRoomCommit(rprop({ name: "MDF", roomType: "other" }), rooms);
     expect(res.kind).toBe("create");
+  });
+  it("prefers a polygon-less room matching by code over a polygon-having room matching by name", () => {
+    const rooms = [
+      room({ id: "a", code: "MDF", name: "Main Dist Frame", plan_polygon: [[0, 0], [1, 0], [1, 1]] }),
+      room({ id: "b", code: "BACKUP", plan_polygon: null }),
+    ];
+    expect(planRoomCommit(rprop({ name: "BACKUP" }), rooms)).toEqual({ kind: "attach", roomId: "b" });
   });
   it("creates with an R-prefixed code for other-type rooms, type prefix otherwise", () => {
     expect(planRoomCommit(rprop({ name: "Community", roomType: "other" }), [room({ code: "R01" })]))
       .toEqual({ kind: "create", code: "R02" });
     expect(planRoomCommit(rprop({ name: "Closet", roomType: "IDF" }), [room({ code: "IDF01" })]))
       .toEqual({ kind: "create", code: "IDF02" });
+  });
+  it("creates when rooms array is empty", () => {
+    const res = planRoomCommit(rprop({ name: "MDF", roomType: "other" }), []);
+    expect(res.kind).toBe("create");
+  });
+  it("creates when proposal name is whitespace-only", () => {
+    const rooms = [room({ id: "a", code: "MDF", name: "Main Dist Frame" })];
+    const res = planRoomCommit(rprop({ name: "   " }), rooms);
+    expect(res.kind).toBe("create");
   });
 });
