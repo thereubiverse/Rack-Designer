@@ -218,7 +218,11 @@ const RACKS: SiteRackRow[] = [
   rack({ id: "rack-un2", code: "RK03" }), // a NON-first unplaced rack to select in the tray
 ];
 
-function renderCanvas(editable = false) {
+// Every code at the SITE — the fixture floor's own, by default. Device codes are unique per SITE,
+// so a test can widen this to prove a generated code dodges another floor's codes too.
+const SITE_CODES = DEVICES.map((d) => d.code);
+
+function renderCanvas(editable = false, allSiteDeviceCodes: string[] = SITE_CODES) {
   return render(
     <FloorPlanCanvas
       plan={PLAN}
@@ -227,6 +231,7 @@ function renderCanvas(editable = false) {
       devices={DEVICES}
       racks={RACKS}
       deviceTypes={DEVICE_TYPES}
+      allSiteDeviceCodes={allSiteDeviceCodes}
       editable={editable}
     />
   );
@@ -807,6 +812,7 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
         devices={DEVICES}
         racks={RACKS}
         deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
         editable
         onRoomTraced={props.onRoomTraced}
         onDevicePlaced={props.onDevicePlaced}
@@ -1044,10 +1050,11 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     };
   }
 
-  /** Render the canvas and stage exactly these device proposals through a real discovery pass. */
-  async function stageDevices(proposals: DeviceProposal[]) {
+  /** Render the canvas and stage exactly these device proposals through a real discovery pass.
+   *  `siteCodes` widens the site-wide code space beyond this floor's own codes. */
+  async function stageDevices(proposals: DeviceProposal[], siteCodes: string[] = SITE_CODES) {
     vi.mocked(discoverDevicesAction).mockResolvedValueOnce({ ok: true, proposals });
-    renderCanvas(true);
+    renderCanvas(true, siteCodes);
     fireEvent.click(screen.getByTestId("plan-wizard"));
     await act(async () => {
       fireEvent.click(screen.getByTestId("discover-devices"));
@@ -1421,6 +1428,114 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     expect(screen.queryByTestId("proposal-panel")).toBeNull();
   });
 
+  it("generates a code that dodges the codes used on OTHER floors of the site", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    // CAM03/CAM04 belong to other floors: free on THIS floor's list, taken at the site — and the
+    // table is `unique (site_id, code)`, so generating either one makes the create fail outright.
+    await stageDevices([deviceProposal({ label: "", typeCode: "CAM" })], [...SITE_CODES, "CAM03", "CAM04"]);
+
+    await clickAsync("accept-dev-0");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore + 1);
+    expect(lastFormData(createFloorDeviceAction).get("code")).toBe("CAM05");
+  });
+
+  it("refuses a plan label already used on ANOTHER floor rather than creating a doomed duplicate", async () => {
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    await stageDevices([deviceProposal({ label: "CAM09", typeCode: "CAM" })], [...SITE_CODES, "CAM09"]);
+
+    await clickAsync("accept-dev-0");
+
+    // Not CAM09 — that code is spoken for at this site, so it falls through to a generated one.
+    expect(lastFormData(createFloorDeviceAction).get("code")).toBe("CAM03");
+  });
+
+  it("records a created code the way the DATABASE stores it, so the next generated code clears it", async () => {
+    vi.mocked(createFloorDeviceAction)
+      .mockResolvedValueOnce({ ok: true, id: "dev-a" })
+      .mockResolvedValueOnce({ ok: true, id: "dev-b" });
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    // CAM01..CAM06 taken, so the next free code is CAM07 — which the first proposal is about to
+    // claim in lowercase. createFloorDeviceAction normalises it to CAM07 on the way in, so the
+    // pending row must say CAM07 too, or suggestDeviceCode's ^CAM(\d+)$ misses it and hands the
+    // second proposal the same code.
+    const siteCodes = ["CAM01", "CAM02", "CAM03", "CAM04", "CAM05", "CAM06"];
+    await stageDevices(
+      [
+        deviceProposal({ id: "dev-0", label: "cam07", typeCode: "CAM" }),
+        deviceProposal({ id: "dev-1", label: "", typeCode: "CAM" }),
+      ],
+      siteCodes
+    );
+
+    await clickAsync("accept-all");
+
+    const codes = vi
+      .mocked(createFloorDeviceAction)
+      .mock.calls.slice(createBefore)
+      .map((c) => String(c[0].get("code")));
+    expect(codes).toEqual(["cam07", "CAM08"]);
+  });
+
+  it("places a matched device ONCE: a second proposal for it reports a duplicate instead of moving it", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    // Both proposals match the same unplaced inventory device. Until the refresh lands it still
+    // reads x/y = null, so without a session guard the second accept would silently overwrite the
+    // first placement — and both proposals would vanish with nothing said.
+    await stageDevices([
+      deviceProposal({ id: "dev-0", label: "TO02", typeCode: "TO", point: [0.2, 0.2] }),
+      deviceProposal({ id: "dev-1", label: "TO02", typeCode: "TO", point: [0.8, 0.8] }),
+    ]);
+
+    await clickAsync("accept-all");
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 1);
+    const fd = lastFormData(placeFloorDeviceAction);
+    expect(fd.get("id")).toBe("dev-to02");
+    // The FIRST proposal's point survives — the second never overwrote it.
+    expect(Number(fd.get("x"))).toBeCloseTo(0.2, 10);
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+    expect(screen.getByTestId("canvas-error").textContent).toContain("already on the plan");
+  });
+
+  it("outlines a matched room ONCE: a second proposal for it reports a duplicate instead of reshaping it", async () => {
+    const setBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    await stageRooms([
+      roomProposal({ id: "room-0", name: "No polygon yet" }),
+      roomProposal({
+        id: "room-1",
+        name: "No polygon yet",
+        polygon: [
+          [0.6, 0.6],
+          [0.8, 0.6],
+          [0.8, 0.8],
+        ],
+      }),
+    ]);
+
+    await clickAsync("accept-all");
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(setBefore + 1);
+    const fd = lastFormData(setRoomPolygonAction);
+    expect(fd.get("roomId")).toBe("room-none");
+    // The first proposal's outline stands.
+    expect(JSON.parse(String(fd.get("polygon")))[0]).toEqual([0.1, 0.1]);
+    expect(screen.getByTestId("canvas-error").textContent).toContain("already outlined");
+  });
+
+  it("refreshes ONCE for a whole batch, not once per commit", async () => {
+    await stageDevices([
+      deviceProposal({ id: "dev-0", label: "TO01", typeCode: "TO", point: [0.1, 0.1] }),
+      deviceProposal({ id: "dev-1", label: "TO02", typeCode: "TO", point: [0.9, 0.9] }),
+    ]);
+    const refreshBefore = refreshMock.mock.calls.length;
+
+    await clickAsync("accept-all");
+
+    expect(refreshMock.mock.calls.length - refreshBefore).toBe(1);
+  });
+
   it("generates a DIFFERENT code for each unmatched room in one batch", async () => {
     const createBefore = vi.mocked(createRoomAction).mock.calls.length;
     vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-a" });
@@ -1440,7 +1555,9 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     expect(codes).toEqual(["R01", "R02"]);
   });
 
-  /** The canvas with a swapped-in device list, so a test can re-render it the way SiteDetail does. */
+  /** The canvas with a swapped-in device list, so a test can re-render it the way SiteDetail does.
+   *  The site codes are derived from the same list, because SiteDetail derives both from the one
+   *  `devices` array it was given — a refresh that adds a row adds its code in the same render. */
   function canvasWithDevices(devices: FloorDeviceRow[]) {
     return (
       <FloorPlanCanvas
@@ -1450,6 +1567,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
         devices={devices}
         racks={RACKS}
         deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={devices.map((d) => d.code)}
         editable
       />
     );
@@ -1473,6 +1591,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
         devices={DEVICES}
         racks={RACKS}
         deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
         editable
       />
     );

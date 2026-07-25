@@ -466,6 +466,7 @@ export function SiteDetail({
                     devices={activeFloorDevices}
                     racks={activeFloorRacks}
                     deviceTypes={deviceTypes}
+                    allSiteDeviceCodes={allSiteDeviceCodes}
                     editable
                     planTools={planTools}
                     onRoomTraced={(polygon) => panelRef.current?.openAddRoomWithPolygon(polygon)}

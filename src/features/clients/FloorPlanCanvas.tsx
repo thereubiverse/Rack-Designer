@@ -41,6 +41,7 @@ import {
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
 import { planDeviceCommit, planRoomCommit } from "./planProposals";
+import { normaliseCode } from "./validation";
 import { ProposalPanel } from "./ProposalPanel";
 
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
@@ -484,6 +485,10 @@ interface FloorPlanCanvasProps {
   devices: FloorDeviceRow[];
   racks: SiteRackRow[];
   deviceTypes: DeviceTypeRow[];
+  /** EVERY device code at this site, not just this floor's. Device codes are `unique (site_id,
+   *  code)`, so this is the space a generated code has to avoid; `devices` above stays floor-scoped
+   *  because it is what the plan draws and matches against. */
+  allSiteDeviceCodes: string[];
   editable: boolean;
   /** Plan-level controls (Replace / Delete plan) rendered into the pane's top-left toolbar,
    *  beneath the Edit-layout toggle. Supplied by SiteDetail because it owns the upload pipeline and
@@ -500,7 +505,19 @@ interface FloorPlanCanvasProps {
 
 export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvasProps>(
   function FloorPlanCanvas(
-    { plan, planUrl, rooms, devices, racks, deviceTypes, editable, planTools, onRoomTraced, onDevicePlaced },
+    {
+      plan,
+      planUrl,
+      rooms,
+      devices,
+      racks,
+      deviceTypes,
+      allSiteDeviceCodes,
+      editable,
+      planTools,
+      onRoomTraced,
+      onDevicePlaced,
+    },
     ref
   ) {
   const imgW = plan.width_px;
@@ -746,9 +763,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     pendingDevicesRef.current = pendingDevicesRef.current.filter(
       (p) => !devices.some((d) => d.id === p.id)
     );
+    // Once the prop shows the placement, planDeviceCommit returns `duplicate` on its own and the
+    // session entry is redundant — dropping it keeps a later un-place + re-accept working.
+    for (const d of devices) {
+      if (d.x != null && d.y != null) committedThisSessionRef.current.delete(d.id);
+    }
   }, [devices]);
   useEffect(() => {
     pendingRoomsRef.current = pendingRoomsRef.current.filter((p) => !rooms.some((r) => r.id === p.id));
+    for (const r of rooms) {
+      if (r.plan_polygon != null) committedThisSessionRef.current.delete(r.id);
+    }
   }, [rooms]);
 
   // The accept helpers below can outlive the render they were created in — a batch awaits a server
@@ -759,6 +784,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   devicesRef.current = devices;
   const roomsRef = useRef(rooms);
   roomsRef.current = rooms;
+  const siteCodesRef = useRef(allSiteDeviceCodes);
+  siteCodesRef.current = allSiteDeviceCodes;
+
+  // Ids this component has already committed geometry for during this proposal session. A device
+  // matched by an accept still reads x/y = null (a room, plan_polygon = null) until the refresh
+  // lands, so without this a second proposal naming the same row would match it again and silently
+  // OVERWRITE the first placement — worse than a loud failure, because both proposals vanish and
+  // nothing is said. Entries drop as soon as the refreshed props show the geometry (below), and the
+  // whole set is dropped on a floor change.
+  const committedThisSessionRef = useRef<Set<string>>(new Set());
 
   // Proposals are per-floor and must never survive a floor switch. SiteDetail keys this component
   // by the active floor id, so a switch remounts it and the state is fresh anyway — this makes the
@@ -777,6 +812,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     // into a PLACE against another floor's device.
     pendingDevicesRef.current = [];
     pendingRoomsRef.current = [];
+    committedThisSessionRef.current = new Set();
   }, [plan.floor_id]);
 
   // Esc / outside-press closes the wizard menu. Deliberately its OWN effect, not a branch of the
@@ -904,8 +940,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   /** Returns the error message if this proposal could not be committed, else null. The message is
    *  also shown immediately; the batch below re-shows the FIRST one at the end, so a later success
    *  (which clears the error) can't swallow it. */
-  async function acceptDevice(dp: DeviceProposal): Promise<string | null> {
-    const decision = planDeviceCommit(dp, [...devicesRef.current, ...pendingDevicesRef.current]);
+  async function acceptDevice(dp: DeviceProposal, batch = false): Promise<string | null> {
+    const pending = pendingDevicesRef.current;
+    const decision = planDeviceCommit(
+      dp,
+      // MATCH against this floor (plus this session's rows) — matching site-wide would place
+      // another floor's device onto this plan, where it wouldn't even render.
+      [...devicesRef.current, ...pending],
+      // GENERATE against the whole site: the table is `unique (site_id, code)`, so a code derived
+      // from this floor's list alone is routinely one another floor already owns.
+      [...siteCodesRef.current, ...pending.map((d) => d.code)]
+    );
     if (decision.kind === "duplicate") {
       // The code is site-unique and the matched device is already on the plan: there is nothing to
       // commit, so the proposal just goes away with an explanation.
@@ -915,9 +960,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return message;
     }
     if (decision.kind === "place") {
-      const failure = await commitPlaceDevice(decision.deviceId, dp.point);
+      // The matched row still reads x/y = null until the refresh lands, so a SECOND proposal with
+      // the same label would match it again and silently overwrite the first placement. This is
+      // that window's guard, and it reports the same way the duplicate branch above does.
+      if (committedThisSessionRef.current.has(decision.deviceId)) {
+        const message = `${dp.label} is already on the plan.`;
+        dropDevice(dp.id);
+        setError(message);
+        return message;
+      }
+      const failure = await commitPlaceDevice(decision.deviceId, dp.point, batch);
       // A failure keeps the proposal staged — nothing was created, so a retry is harmless.
-      if (!failure) dropDevice(dp.id);
+      if (!failure) {
+        committedThisSessionRef.current.add(decision.deviceId);
+        dropDevice(dp.id);
+      }
       return failure;
     }
     const type = floorDeviceTypes.find((t) => t.code === dp.typeCode);
@@ -949,7 +1006,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         floor_id: plan.floor_id,
         room_id: null,
         device_type_id: type.id,
-        code: decision.code,
+        // NORMALISED, because that is what createFloorDeviceAction actually wrote. Storing the raw
+        // label would let suggestDeviceCode's ^CODE(\d+)$ miss it (a lowercase "cam07" reads as an
+        // untaken CAM07) and generate the very code this row already owns.
+        code: normaliseCode(decision.code),
         name: "",
         status: "planned",
         created_at: "",
@@ -960,8 +1020,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         y: null,
       },
     ];
-    const failure = await commitPlaceDevice(res.id, dp.point);
+    const failure = await commitPlaceDevice(res.id, dp.point, batch);
     if (!failure) {
+      committedThisSessionRef.current.add(res.id);
       pendingDevicesRef.current = pendingDevicesRef.current.map((d) =>
         d.id === res.id ? { ...d, x: dp.point[0], y: dp.point[1] } : d
       );
@@ -974,17 +1035,31 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (failure) {
       const message = `${decision.code} was created but couldn't be placed — drag it on from the tray. (${failure})`;
       setError(message);
-      router.refresh();
+      // A batch refreshes once, at the end.
+      if (!batch) router.refresh();
       return message;
     }
     return null;
   }
 
-  async function acceptRoom(rp: RoomProposal): Promise<string | null> {
+  async function acceptRoom(rp: RoomProposal, batch = false): Promise<string | null> {
+    // Room codes are `unique (floor_id, code)` and this canvas IS one floor, so — unlike devices —
+    // the list it holds is already the whole code space.
     const decision = planRoomCommit(rp, [...roomsRef.current, ...pendingRoomsRef.current]);
     if (decision.kind === "attach") {
-      const failure = await commitRoomPolygon(decision.roomId, rp.polygon);
-      if (!failure) dropRoom(rp.id);
+      // Same window as the device place branch: the attached room reads plan_polygon = null until
+      // the refresh lands, so a second proposal with that name would overwrite the first outline.
+      if (committedThisSessionRef.current.has(decision.roomId)) {
+        const message = `${rp.name || decision.roomId} is already outlined on the plan.`;
+        dropRoom(rp.id);
+        setError(message);
+        return message;
+      }
+      const failure = await commitRoomPolygon(decision.roomId, rp.polygon, batch);
+      if (!failure) {
+        committedThisSessionRef.current.add(decision.roomId);
+        dropRoom(rp.id);
+      }
       return failure;
     }
     const fd = new FormData();
@@ -1006,15 +1081,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       {
         id: res.id,
         floor_id: plan.floor_id,
-        code: decision.code,
+        code: normaliseCode(decision.code),
         name: rp.name,
         type: rp.roomType,
         created_at: "",
         plan_polygon: null,
       },
     ];
-    const failure = await commitRoomPolygon(res.id, rp.polygon);
+    const failure = await commitRoomPolygon(res.id, rp.polygon, batch);
     if (!failure) {
+      committedThisSessionRef.current.add(res.id);
       pendingRoomsRef.current = pendingRoomsRef.current.map((r) =>
         r.id === res.id ? { ...r, plan_polygon: rp.polygon } : r
       );
@@ -1024,7 +1100,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (failure) {
       const message = `${decision.code} was created but its outline couldn't be saved — trace it from the tray. (${failure})`;
       setError(message);
-      router.refresh();
+      if (!batch) router.refresh();
       return message;
     }
     return null;
@@ -1040,15 +1116,18 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     let firstError: string | null = null;
     try {
       for (const rp of proposals.rooms) {
-        const failure = await acceptRoom(rp);
+        const failure = await acceptRoom(rp, true);
         firstError ??= failure;
       }
       for (const dp of proposals.devices) {
-        const failure = await acceptDevice(dp);
+        const failure = await acceptDevice(dp, true);
         firstError ??= failure;
       }
     } finally {
       setAccepting(false);
+      // ONE refresh for the whole batch, not one per commit — 40 proposals used to mean 40
+      // sequential refreshes.
+      router.refresh();
     }
     // A later success calls setError(null); re-show the first failure so the batch can't end quiet.
     if (firstError) setError(firstError);
@@ -1192,7 +1271,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // ---- Action commits — each is called exactly once per completed gesture ----
   /** Returns the error message on failure (already shown), or null on success — so an accept can
    *  chain on the outcome. Gesture callers ignore the value and rely on the setError above. */
-  async function commitPlaceDevice(id: string, point: NormPoint): Promise<string | null> {
+  async function commitPlaceDevice(id: string, point: NormPoint, skipRefresh = false): Promise<string | null> {
     const fd = new FormData();
     fd.set("id", id);
     fd.set("x", String(point[0]));
@@ -1204,7 +1283,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return message;
     }
     setError(null);
-    router.refresh();
+    if (!skipRefresh) router.refresh();
     return null;
   }
 
@@ -1222,7 +1301,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   }
 
   /** Same contract as commitPlaceDevice: the error message, or null on success. */
-  async function commitRoomPolygon(roomId: string, polygon: NormPoint[]): Promise<string | null> {
+  async function commitRoomPolygon(
+    roomId: string,
+    polygon: NormPoint[],
+    skipRefresh = false
+  ): Promise<string | null> {
     const fd = new FormData();
     fd.set("roomId", roomId);
     fd.set("polygon", JSON.stringify(polygon));
@@ -1233,7 +1316,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return message;
     }
     setError(null);
-    router.refresh();
+    if (!skipRefresh) router.refresh();
     return null;
   }
 

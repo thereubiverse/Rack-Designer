@@ -1,5 +1,5 @@
 import type { NormPoint } from "./floorPlanOps";
-import type { RoomType } from "@/domain/hierarchy";
+import { ROOM_TYPES, type RoomType } from "@/domain/hierarchy";
 
 export type Confidence = "high" | "medium" | "low";
 
@@ -21,7 +21,6 @@ export interface DeviceProposal {
 // The seeded category='floor' device type codes (see device_types). The AI may only ever produce
 // one of these; anything else becomes TO.
 export const FLOOR_TYPE_CODES = ["CAM", "AP", "TO", "RK", "ACP", "PH", "PR", "SCR", "DP", "LP", "3DP", "ISP"];
-const ROOM_TYPES: RoomType[] = ["MDF", "IDF", "other"];
 const CONFIDENCES: Confidence[] = ["high", "medium", "low"];
 const MAX_PROPOSALS = 40;
 
@@ -43,6 +42,13 @@ export function coerceTypeCode(v: unknown): string {
   if (FLOOR_TYPE_CODES.includes(up)) return up;
   const key = v.trim().toLowerCase().replace(/[^a-z]/g, "");
   return SYNONYMS[key] ?? "TO";
+}
+
+/** Case-INSENSITIVE, like coerceTypeCode: a model that answers "mdf" means MDF, and silently
+ *  degrading that to "other" would mis-type the room. Always returns a canonical member. */
+function coerceRoomType(v: unknown): RoomType {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return ROOM_TYPES.find((t) => t.toLowerCase() === s) ?? "other";
 }
 
 function coerceConfidence(v: unknown): Confidence {
@@ -94,11 +100,10 @@ export function validateRoomDiscovery(raw: unknown): RoomProposal[] {
     const r = (item ?? {}) as Record<string, unknown>;
     const polygon = coercePolygon(r.polygon);
     if (!polygon) continue;
-    const rt = str(r.roomType) as RoomType;
     out.push({
       id: `room-${out.length}`,
       name: str(r.name),
-      roomType: ROOM_TYPES.includes(rt) ? rt : "other",
+      roomType: coerceRoomType(r.roomType),
       polygon,
       confidence: coerceConfidence(r.confidence),
     });

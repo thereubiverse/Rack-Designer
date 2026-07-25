@@ -35,6 +35,27 @@ describe("planDeviceCommit", () => {
     expect(planDeviceCommit(dprop({ label: "CAM07", typeCode: "CAM" }), [dev({ code: "CAM01" })]))
       .toEqual({ kind: "create", code: "CAM07" });
   });
+  // Device codes are `unique (site_id, code)` but the canvas only ever holds ONE FLOOR's devices,
+  // so the code space has to be passed in separately or every generated code is a coin flip on a
+  // multi-floor site.
+  it("generates around codes taken ELSEWHERE at the site, not just on this floor", () => {
+    const thisFloor = [dev({ code: "CAM01" })];
+    const siteCodes = ["CAM01", "CAM02", "CAM03"]; // CAM02/CAM03 live on other floors
+    expect(planDeviceCommit(dprop({ label: "", typeCode: "CAM" }), thisFloor, siteCodes))
+      .toEqual({ kind: "create", code: "CAM04" });
+  });
+  it("refuses a label already used at the site even though this floor is free of it", () => {
+    const thisFloor = [dev({ code: "CAM01" })];
+    // CAM07 is another floor's device: creating with it would break the site-unique constraint,
+    // and matching it would place a device that isn't even on this plan.
+    const res = planDeviceCommit(dprop({ label: "CAM07", typeCode: "CAM" }), thisFloor, ["CAM01", "CAM07"]);
+    expect(res).toEqual({ kind: "create", code: "CAM02" });
+  });
+  it("defaults the code space to the given devices when the caller has no site-wide list", () => {
+    const devices = [dev({ code: "CAM01" }), dev({ code: "CAM02" })];
+    expect(planDeviceCommit(dprop({ label: "", typeCode: "CAM" }), devices))
+      .toEqual({ kind: "create", code: "CAM03" });
+  });
   it("falls back to suggestDeviceCode when the label is empty or malformed", () => {
     const devices = [dev({ code: "CAM01" }), dev({ code: "CAM02" })];
     expect(planDeviceCommit(dprop({ label: "", typeCode: "CAM" }), devices)).toEqual({ kind: "create", code: "CAM03" });

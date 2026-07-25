@@ -72,6 +72,16 @@ describe("validateRoomDiscovery", () => {
     expect(out.map((r) => r.name)).toEqual(["Bad type"]);
     expect(out[0].roomType).toBe("other");
   });
+  it("reads a room type case-insensitively and returns the canonical member", () => {
+    // The model answers in whatever case it likes; "mdf" means MDF, and silently degrading it to
+    // "other" would mis-type the room (coerceTypeCode has always been case-insensitive).
+    const out = validateRoomDiscovery({ rooms: [
+      { name: "Lower", roomType: "mdf", polygon: [[0, 0], [1, 0], [1, 1]] },
+      { name: "Mixed", roomType: " Idf ", polygon: [[0, 0], [1, 0], [1, 1]] },
+      { name: "Shouty", roomType: "OTHER", polygon: [[0, 0], [1, 0], [1, 1]] },
+    ] });
+    expect(out.map((r) => r.roomType)).toEqual(["MDF", "IDF", "other"]);
+  });
   it("never throws on garbage", () => {
     expect(validateRoomDiscovery(undefined)).toEqual([]);
     expect(validateRoomDiscovery({ rooms: [null, 3, "x"] })).toEqual([]);

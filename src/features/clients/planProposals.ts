@@ -15,8 +15,19 @@ const CODE_RE = /^[A-Za-z0-9_-]+$/;
 
 /** Match the proposal's label against the inventory by code (case-insensitive). Existing +
  *  unplaced → place it; existing + already placed → duplicate (never create, the code is
- *  site-unique); no match → create, preferring the plan's label as the code when it's clean/free. */
-export function planDeviceCommit(p: DeviceProposal, devices: FloorDeviceRow[]): DeviceCommit {
+ *  site-unique); no match → create, preferring the plan's label as the code when it's clean/free.
+ *
+ *  The two lists are deliberately different scopes. `devices` is THIS FLOOR (what the canvas holds)
+ *  and drives the MATCH — matching site-wide would place another floor's device onto this plan,
+ *  where it wouldn't even render. `siteCodes` is every code at the SITE and is the code SPACE,
+ *  because the database constrains codes with `unique (site_id, code)`: generating from the floor's
+ *  codes alone hands back a code another floor already owns, and the create then fails. It defaults
+ *  to the floor's own codes so a caller that genuinely has only one floor's worth stays correct. */
+export function planDeviceCommit(
+  p: DeviceProposal,
+  devices: FloorDeviceRow[],
+  siteCodes: string[] = devices.map((d) => d.code)
+): DeviceCommit {
   const label = p.label.trim();
   const labelUp = label.toUpperCase();
   if (label) {
@@ -26,9 +37,8 @@ export function planDeviceCommit(p: DeviceProposal, devices: FloorDeviceRow[]): 
       return placed ? { kind: "duplicate" } : { kind: "place", deviceId: match.id };
     }
   }
-  const codes = devices.map((d) => d.code);
-  const free = !!label && CODE_RE.test(label) && !codes.some((c) => c.toUpperCase() === labelUp);
-  return { kind: "create", code: free ? label : suggestDeviceCode(p.typeCode, codes) };
+  const free = !!label && CODE_RE.test(label) && !siteCodes.some((c) => c.toUpperCase() === labelUp);
+  return { kind: "create", code: free ? label : suggestDeviceCode(p.typeCode, siteCodes) };
 }
 
 /** Attach to a polygon-less room matched by name OR code (case-insensitive); else create with a

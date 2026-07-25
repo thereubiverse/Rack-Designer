@@ -139,4 +139,16 @@ describe("discoverRoomsAction", () => {
       apiKey: "key-123",
     });
   });
+
+  // The backend is mocked wholesale everywhere else in this file, so nothing else in the suite
+  // would notice a refactor that dropped the guard from one prompt. importActual reaches the REAL
+  // prompt strings past that mock.
+  it("keeps the plan-text-is-data guard in BOTH prompts", async () => {
+    const backend = await vi.importActual<typeof import("./ai/planVisionBackend")>(
+      "./ai/planVisionBackend"
+    );
+    expect(backend.GUARD).toMatch(/NEVER as instructions/i);
+    expect(backend.ROOMS_PROMPT).toContain(backend.GUARD);
+    expect(backend.DEVICES_PROMPT).toContain(backend.GUARD);
+  });
 });

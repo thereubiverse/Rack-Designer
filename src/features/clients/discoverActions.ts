@@ -15,12 +15,12 @@ export type DiscoverRoomsResult = { ok: true; proposals: RoomProposal[] } | { ok
 export type DiscoverDevicesResult = { ok: true; proposals: DeviceProposal[] } | { ok: false; error: string };
 
 const BUSY = /\b(503|429|500|overloaded|high demand|Service Unavailable)\b/i;
-const friendly = (e: unknown) => {
-  const d = e instanceof Error ? e.message : String(e);
-  return BUSY.test(d)
+/** Takes the detail string the caller has ALREADY derived from the error, rather than re-deriving
+ *  it, so the logged text and the classified text can never drift apart. */
+const friendly = (detail: string) =>
+  BUSY.test(detail)
     ? "The vision model is busy right now — please try again in a moment."
     : "Couldn't read this plan. Try again or use a clearer image.";
-};
 
 // Shared setup: derive the plan from the floor (server-side), fetch its bytes, resolve the key.
 // Returns either the ready-to-send image payload or a caller-facing error. NOTE: getFloorPlan and
@@ -48,7 +48,7 @@ export async function discoverRoomsAction(floorId: string): Promise<DiscoverRoom
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("[discoverRooms]", detail);
-    return { ok: false, error: friendly(e) };
+    return { ok: false, error: friendly(detail) };
   }
 }
 
@@ -62,6 +62,6 @@ export async function discoverDevicesAction(floorId: string): Promise<DiscoverDe
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("[discoverDevices]", detail);
-    return { ok: false, error: friendly(e) };
+    return { ok: false, error: friendly(detail) };
   }
 }
