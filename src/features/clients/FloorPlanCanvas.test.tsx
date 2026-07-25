@@ -1463,10 +1463,50 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     };
   }
 
+  /** The canvas with a swapped-in room list, for the room-path mirror of the above. */
+  function canvasWithRooms(rooms: RoomRow[]) {
+    return (
+      <FloorPlanCanvas
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={rooms}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        editable
+      />
+    );
+  }
+
+  function outlinedRoom(id: string, code: string): RoomRow {
+    return {
+      id, floor_id: "floor-1", code, name: "", type: "other",
+      created_at: "2026-01-01T00:00:00Z",
+      plan_polygon: [
+        [0.1, 0.1],
+        [0.3, 0.1],
+        [0.3, 0.3],
+      ],
+    };
+  }
+
+  /** A deferred-per-call mock: every invocation returns a promise the test releases by hand. That
+   *  is what lets the re-render AND the release happen inside the test's own act scope — resolving
+   *  from inside the mock instead would pop the outer scope first and leave the rest of the batch's
+   *  state updates outside any act(), which React reports as a warning. */
+  function deferredOk(mock: { mockImplementationOnce: (f: () => Promise<{ ok: boolean }>) => unknown }, times: number) {
+    const releases: ((value: { ok: boolean }) => void)[] = [];
+    for (let i = 0; i < times; i++) {
+      mock.mockImplementationOnce(() => new Promise((resolve) => releases.push(resolve)));
+    }
+    return releases;
+  }
+
   /** Stage three unlabeled CAM proposals (the fall-through-to-a-generated-code case) on a canvas
-   *  rendered by the caller, and hand back the created codes after Accept all. `onPlaced` re-renders
-   *  the canvas between accepts, standing in for whatever SiteDetail pushes down mid-batch. */
-  async function threeGeneratedCodes(onPlaced: (nth: number) => void) {
+   *  rendered by the caller, Accept all, and hand back the created codes. `beforeEachRelease`
+   *  re-renders the canvas between accepts, standing in for whatever SiteDetail pushes down
+   *  mid-batch. */
+  async function threeGeneratedDeviceCodes(beforeEachRelease: (nth: number) => void) {
     vi.mocked(createFloorDeviceAction)
       .mockResolvedValueOnce({ ok: true, id: "dev-a" })
       .mockResolvedValueOnce({ ok: true, id: "dev-b" })
@@ -1481,16 +1521,53 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("discover-devices"));
     });
-    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length - 0;
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    const releases = deferredOk(vi.mocked(placeFloorDeviceAction), 3);
+
+    // Starts the batch and suspends it on the first placement.
+    await clickAsync("accept-all");
     for (let i = 0; i < 3; i++) {
-      vi.mocked(placeFloorDeviceAction).mockImplementationOnce(async () => {
-        onPlaced(i);
-        return { ok: true };
+      await act(async () => {
+        beforeEachRelease(i);
+        releases[i]({ ok: true });
       });
     }
-    await clickAsync("accept-all");
     return vi
       .mocked(createFloorDeviceAction)
+      .mock.calls.slice(createBefore)
+      .map((c) => String(c[0].get("code")));
+  }
+
+  /** The room mirror: three unmatched "other" proposals, so planRoomCommit falls through to a
+   *  generated code for each. The room path is duplicated code (its own ref, its own prune effect),
+   *  so it needs its own coverage — the device tests cannot reach it. */
+  async function threeGeneratedRoomCodes(beforeEachRelease: (nth: number) => void) {
+    vi.mocked(createRoomAction)
+      .mockResolvedValueOnce({ ok: true, id: "room-a" })
+      .mockResolvedValueOnce({ ok: true, id: "room-b" })
+      .mockResolvedValueOnce({ ok: true, id: "room-c" });
+    vi.mocked(discoverRoomsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: ["Store", "Plant", "Riser"].map((name, i) =>
+        roomProposal({ id: `room-${i}`, name, roomType: "other" })
+      ),
+    });
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("discover-rooms"));
+    });
+    const createBefore = vi.mocked(createRoomAction).mock.calls.length;
+    const releases = deferredOk(vi.mocked(setRoomPolygonAction), 3);
+
+    await clickAsync("accept-all");
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        beforeEachRelease(i);
+        releases[i]({ ok: true });
+      });
+    }
+    return vi
+      .mocked(createRoomAction)
       .mock.calls.slice(createBefore)
       .map((c) => String(c[0].get("code")));
   }
@@ -1500,7 +1577,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     // SiteDetail derives activeFloorDevices with an unmemoized .filter(), so any unrelated state
     // change there (a layout measurement, a menu opening) pushes down a brand-new array holding
     // exactly the same, pre-refresh rows. Pending rows must survive that.
-    const codes = await threeGeneratedCodes(() => view.rerender(canvasWithDevices([...DEVICES])));
+    const codes = await threeGeneratedDeviceCodes(() => view.rerender(canvasWithDevices([...DEVICES])));
     expect(codes).toEqual(["CAM03", "CAM04", "CAM05"]);
   });
 
@@ -1510,11 +1587,27 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     // pending copies drop (the prop has them), so the decision must be reading the LATEST prop and
     // not the list captured when the batch started.
     const landed = [...DEVICES];
-    const codes = await threeGeneratedCodes((nth) => {
+    const codes = await threeGeneratedDeviceCodes((nth) => {
       landed.push(placedDevice(["dev-a", "dev-b", "dev-c"][nth], `CAM0${nth + 3}`));
       view.rerender(canvasWithDevices([...landed]));
     });
     expect(codes).toEqual(["CAM03", "CAM04", "CAM05"]);
+  });
+
+  it("keeps generated ROOM codes distinct when a FRESH-IDENTITY but still-stale room list arrives mid-batch", async () => {
+    const view = render(canvasWithRooms(ROOMS));
+    const codes = await threeGeneratedRoomCodes(() => view.rerender(canvasWithRooms([...ROOMS])));
+    expect(codes).toEqual(["R01", "R02", "R03"]);
+  });
+
+  it("keeps generated ROOM codes distinct when a REAL refresh lands mid-batch", async () => {
+    const view = render(canvasWithRooms(ROOMS));
+    const landed = [...ROOMS];
+    const codes = await threeGeneratedRoomCodes((nth) => {
+      landed.push(outlinedRoom(["room-a", "room-b", "room-c"][nth], `R0${nth + 1}`));
+      view.rerender(canvasWithRooms([...landed]));
+    });
+    expect(codes).toEqual(["R01", "R02", "R03"]);
   });
 
   it("waits for each accept to finish before starting the next one", async () => {

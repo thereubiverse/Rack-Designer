@@ -772,6 +772,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setProposalRoomEditId(null);
     setSelectedProposalVertex(null);
     setWizardNotice(null);
+    // The pending rows go too: they are pruned by CONTENT against this floor's props, so one left
+    // over from the previous floor could never be pruned again — and could match a proposal here
+    // into a PLACE against another floor's device.
+    pendingDevicesRef.current = [];
+    pendingRoomsRef.current = [];
   }, [plan.floor_id]);
 
   // Esc / outside-press closes the wizard menu. Deliberately its OWN effect, not a branch of the
