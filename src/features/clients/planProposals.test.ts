@@ -66,10 +66,10 @@ describe("planRoomCommit", () => {
     const res = planRoomCommit(rprop({ name: "MDF", roomType: "other" }), rooms);
     expect(res.kind).toBe("create");
   });
-  it("prefers a polygon-less room matching by code over a polygon-having room matching by name", () => {
+  it("skips a polygon-having match and keeps searching for a polygon-less one", () => {
     const rooms = [
-      room({ id: "a", code: "MDF", name: "Main Dist Frame", plan_polygon: [[0, 0], [1, 0], [1, 1]] }),
-      room({ id: "b", code: "BACKUP", plan_polygon: null }),
+      room({ id: "a", code: "MDF", name: "BACKUP", plan_polygon: [[0, 0], [1, 0], [1, 1]] }),
+      room({ id: "b", code: "BACKUP", name: "Spare Room", plan_polygon: null }),
     ];
     expect(planRoomCommit(rprop({ name: "BACKUP" }), rooms)).toEqual({ kind: "attach", roomId: "b" });
   });
@@ -87,5 +87,9 @@ describe("planRoomCommit", () => {
     const rooms = [room({ id: "a", code: "MDF", name: "Main Dist Frame" })];
     const res = planRoomCommit(rprop({ name: "   " }), rooms);
     expect(res.kind).toBe("create");
+  });
+  it("trims whitespace around proposal name before matching", () => {
+    const rooms = [room({ id: "a", code: "MDF", name: "Main Dist Frame" })];
+    expect(planRoomCommit(rprop({ name: "  MDF  " }), rooms)).toEqual({ kind: "attach", roomId: "a" });
   });
 });
