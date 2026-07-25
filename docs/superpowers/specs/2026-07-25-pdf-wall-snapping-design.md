@@ -119,7 +119,31 @@ Two consequences:
    walls. The filter must not hardcode "heavy = wall" — it must be tuned per sheet type, or fall back
    to geometry (long, orthogonal, forming closed regions) within the thin-black class.
 
-### 5.4 The filtering pipeline (pure, testable)
+### 5.4 TUNED against the real sheet (Cellar.pdf, 2026-07-25)
+
+Measured on the user's actual drawing against the eleven hand-traced rooms preserved in
+`.superpowers/sdd/baseline/`. Metric is **edge coverage**: the fraction of traced room-edge length
+having an extracted wall run within tolerance. Coverage is what snapping needs — a missing wall
+breaks the feature, whereas a spurious run is a minor annoyance.
+
+| config | runs | cover @6px | @12px |
+|---|---|---|---|
+| orthogonal only, minLen 1.5% | 218 | 54.4% | 57.4% |
+| **any angle**, minLen 1.5% | 496 | 90.6% | 95.7% |
+| **any angle, minLen 1.0%, gap 6 — CHOSEN** | **1,013** | **94.9%** | **99.6%** |
+| any angle, minLen 0.6% | 3,155 | 95.4% | 99.9% |
+
+**The orthogonality filter was the single biggest defect — it cost 36 points of coverage.** This
+building has a rotated wing, and axis-aligned filtering discarded every wall in it. Segments must be
+grouped by their **infinite line (θ, ρ)** — Hough-style — never by axis plus position.
+
+Chosen parameters: grey stroke class only, any angle, θ bucket 1°, ρ bucket ~0.6pt, merge gap 6pt,
+minimum run length 1.0% of the sheet's long edge. Yields ~1,013 runs (~30KB JSON).
+
+Known remaining false positives: stair treads and some hatching (many equally-spaced short parallel
+runs). Harmless for snapping; a candidate for a later "regular repeating pattern" filter.
+
+### 5.5 The filtering pipeline (pure, testable)
 
 ```
 decode paths
@@ -136,10 +160,28 @@ Each stage is a pure function so the heuristic is tuned against fixtures, not by
 stored as `{ vertical: boolean, pos: number, start: number, end: number }[]` in normalized units —
 compact (~1,400 runs ≈ 25KB JSON) and directly usable by the snapper without re-deriving anything.
 
-### 5.5 Labels
+### 5.6 Labels
 
 `page.getTextContent()` gives items with a transform. Each becomes
 `{ text, x, y }` normalized the same way. No OCR, no model, no transcription error.
+
+## 5.7 Plan rendering must not lose quality (user requirement, 2026-07-25)
+
+> "when a pdf of a floor plan is uploaded i dont want any loss of quality or compression"
+
+Slice B renders the PDF to a **fixed 2600px PNG** and discards the vector. That is a real quality
+loss: zooming past ~100% shows interpolation, and fine electrical symbols soften.
+
+Since the PDF is being retained anyway (§2), the plan layer changes from a static `<image>` to a
+**pdf.js-rendered canvas that re-renders at the current zoom** — the behaviour of any PDF viewer.
+The plan then stays sharp at every magnification, and the PNG is demoted to a cheap thumbnail
+rather than the source of truth.
+
+Rejected alternative: rendering a much larger PNG (e.g. 10,000px). Still finite, and a dense CAD
+sheet becomes a 20–50MB download.
+
+This affects `FloorPlanCanvas`'s image layer only. The coordinate model is unchanged — normalized
+0..1 over the page — so pins, rooms, walls and snapping are unaffected.
 
 ## 6. Snapping
 
