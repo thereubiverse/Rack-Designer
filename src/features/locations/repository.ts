@@ -224,6 +224,12 @@ export async function upsertFloorPlan(
     heightPx: number;
     originalFilename: string;
     source: "image" | "pdf";
+    /** The retained source PDF (Slice D). Both are optional/nullable: a plan without geometry
+     *  support is a perfectly working plan, so callers pass `null` (not omit) when the PDF upload
+     *  failed or none was sent. `pdfPage` of `0` is a real, valid page index — never coerce with
+     *  `||`, only `??`. */
+    pdfStoragePath?: string | null;
+    pdfPage?: number | null;
   }
 ): Promise<FloorPlanRow> {
   const { data: floor, error: floorErr } = await db.from("floors").select("id").eq("id", input.floorId).single();
@@ -238,6 +244,8 @@ export async function upsertFloorPlan(
         height_px: input.heightPx,
         original_filename: input.originalFilename,
         source: input.source,
+        pdf_storage_path: input.pdfStoragePath ?? null,
+        pdf_page: input.pdfPage ?? null,
       },
       { onConflict: "floor_id" }
     )

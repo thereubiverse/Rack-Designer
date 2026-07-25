@@ -48,11 +48,21 @@ export function PlanUploadZone({
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  async function uploadBlob(blob: Blob, source: "image" | "pdf") {
+  async function uploadBlob(
+    blob: Blob,
+    source: "image" | "pdf",
+    // The original source PDF plus the page rendered from it — sent alongside the PNG so the
+    // server can retain the PDF for later wall-geometry extraction. Only ever set for PDF uploads.
+    pdfSource?: { file: File; pageIndex: number }
+  ) {
     const formData = new FormData();
     formData.set("floorId", floorId);
     formData.set("source", source);
     formData.set("file", blob, "plan.png");
+    if (pdfSource) {
+      formData.set("pdf", pdfSource.file, pdfSource.file.name);
+      formData.set("pdfPage", String(pdfSource.pageIndex));
+    }
 
     const res = await uploadFloorPlanAction(formData);
     if (!res.ok) {
@@ -85,7 +95,7 @@ export function PlanUploadZone({
         const pageCount = await getPdfPageCount(file);
         if (pageCount <= 1) {
           const { blob } = await convertPdfPage(file, 0);
-          await uploadBlob(blob, "pdf");
+          await uploadBlob(blob, "pdf", { file, pageIndex: 0 });
         } else {
           setPendingPdf({ file, pageCount });
           setBusy(false);
@@ -108,7 +118,7 @@ export function PlanUploadZone({
     setBusy(true);
     try {
       const { blob } = await convertPdfPage(file, pageIndex);
-      await uploadBlob(blob, "pdf");
+      await uploadBlob(blob, "pdf", { file, pageIndex });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Conversion failed");
       setBusy(false);

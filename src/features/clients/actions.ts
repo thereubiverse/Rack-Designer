@@ -38,7 +38,8 @@ import {
 } from "@/features/locations/repository";
 import type { NormPoint } from "./floorPlanOps";
 import { readPngDimensions } from "./pngHeader";
-import { uploadPlanObject, removePlanObject } from "./planStorage";
+import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf } from "./planStorage";
+import type { FloorPlanRow } from "@/lib/supabase/types";
 
 const FLOOR_DEVICE_STATUSES = ["planned", "installed"] as const;
 type FloorDeviceStatus = (typeof FLOOR_DEVICE_STATUSES)[number];
@@ -455,11 +456,21 @@ export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok:
 /** Trust posture for this slice: dimensions are decoded from the uploaded bytes (never taken from
  *  FormData), and the storage scope (site) is derived from the floor row (never from the caller).
  *  ORDER MATTERS and is part of the contract: floor lookup -> size check -> PNG decode -> storage
- *  upload -> row upsert. A rejection at any step must leave NO storage write behind. */
+ *  upload -> row upsert. A rejection at any step must leave NO storage write behind.
+ *
+ *  Slice D: the client may additionally send the original source PDF (`pdf`) and the page index
+ *  chosen from it (`pdfPage`). The PNG remains the thing that makes a plan usable at all — the PDF
+ *  is purely an enhancement that unlocks wall-geometry extraction later — so it is uploaded to
+ *  `${siteId}/${floorId}.pdf` strictly AFTER the PNG upload succeeds, and its own failure is caught
+ *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
+ *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
+ *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
 export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
+  const pdfFile = formData.get("pdf");
+  const rawPdfPage = formData.get("pdfPage");
 
   // Duck-typed rather than `instanceof Blob`/`instanceof File`: FormData's Blob comes from
   // whatever Fetch/File implementation the runtime provides, and different runtimes (Node vs. a
@@ -490,8 +501,33 @@ export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: b
 
   const path = `${siteId}/${floorId}.png`;
 
+  // `Number()` on a missing/blank/non-numeric field yields NaN (or a non-integer), which is
+  // rejected — treated as absent, never as an error. This codebase's standing rule: `0` is a real,
+  // valid page index, so the check is `>= 0`, never a falsy/truthy coercion.
+  let pdfPage: number | null = null;
+  if (rawPdfPage != null) {
+    const n = Number(rawPdfPage);
+    if (Number.isInteger(n) && n >= 0) pdfPage = n;
+  }
+
+  let pdfStoragePath: string | null = null;
+
   try {
     await uploadPlanObject(db, path, bytes);
+
+    if (isBlobLike(pdfFile)) {
+      const pdfPath = `${siteId}/${floorId}.pdf`;
+      try {
+        const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
+        await uploadPlanPdf(db, pdfPath, pdfBytes);
+        pdfStoragePath = pdfPath;
+      } catch {
+        // Swallow — see the doc comment above. The PNG already landed; a PDF hiccup must not
+        // orphan it or fail this action. Falls back to `pdf_storage_path: null`.
+        pdfStoragePath = null;
+      }
+    }
+
     await upsertFloorPlan(db, {
       floorId,
       storagePath: path,
@@ -499,6 +535,8 @@ export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: b
       heightPx: dims.height,
       originalFilename: typeof file.name === "string" ? file.name : "plan.png",
       source,
+      pdfStoragePath,
+      pdfPage,
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
@@ -515,10 +553,20 @@ export async function deleteFloorPlanAction(formData: FormData): Promise<{ ok: b
 
   // Best-effort object removal: a missing (or already-removed) storage object must never block
   // the row + placement cleanup below, so any failure here — including the lookup itself — is
-  // swallowed inside its own try/catch.
+  // swallowed inside its own try/catch. `plan` is hoisted so the PDF-removal block below can reuse
+  // the same lookup rather than repeating it.
+  let plan: FloorPlanRow | null = null;
   try {
-    const plan = await getFloorPlan(db, floorId);
+    plan = await getFloorPlan(db, floorId);
     if (plan) await removePlanObject(db, plan.storage_path);
+  } catch {
+    // swallow — see comment above.
+  }
+
+  // PDF removal gets its OWN try/catch, exactly like the PNG above: a missing/already-removed PDF
+  // object (or a plan that never had one) must never block row/placement cleanup.
+  try {
+    if (plan?.pdf_storage_path) await removePlanPdf(db, plan.pdf_storage_path);
   } catch {
     // swallow — see comment above.
   }

@@ -135,6 +135,39 @@ describe("PlanUploadZone", () => {
     expect(refreshMock).toHaveBeenCalled();
   });
 
+  it("choosing page 3 of a multi-page PDF sends BOTH the rendered PNG and the original source PDF, with pdfPage '2' (0-based)", async () => {
+    vi.mocked(getPdfPageCount).mockResolvedValue(5);
+    render(<PlanUploadZone floorId="floor-1" hasPlan={false} />);
+    const file = makePdfFile();
+
+    await act(async () => {
+      selectFile(file);
+    });
+
+    const picker = screen.getByTestId("pdf-page-picker") as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(picker, { target: { value: "3" } });
+    });
+
+    expect(convertPdfPage).toHaveBeenCalledWith(file, 2);
+
+    expect(uploadFloorPlanAction).toHaveBeenCalledTimes(1);
+    const formData = vi.mocked(uploadFloorPlanAction).mock.calls[0][0] as FormData;
+
+    const uploadedPng = formData.get("file") as File;
+    expect(uploadedPng).toBeTruthy();
+    expect(uploadedPng.size).toBe(PDF_PAGE_BLOB.size);
+
+    // jsdom's FormData.set(name, file, filename) rewraps the File into a new instance with that
+    // filename, so it is no longer the same object reference — compare identity via content/name/
+    // type instead of `toBe`.
+    const uploadedPdf = formData.get("pdf") as File;
+    expect(uploadedPdf.name).toBe(file.name);
+    expect(uploadedPdf.type).toBe(file.type);
+    expect(uploadedPdf.size).toBe(file.size);
+    expect(formData.get("pdfPage")).toBe("2");
+  });
+
   it("shows an inline error and keeps the zone usable when the upload action fails", async () => {
     vi.mocked(uploadFloorPlanAction).mockResolvedValueOnce({ ok: false, error: "Boom" });
     render(<PlanUploadZone floorId="floor-1" hasPlan={false} />);
