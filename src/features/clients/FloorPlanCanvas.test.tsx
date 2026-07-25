@@ -78,6 +78,11 @@ const PLAN: FloorPlanRow = {
   source: "image",
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
+  pdf_storage_path: null,
+  pdf_page: null,
+  wall_runs: null,
+  plan_labels: null,
+  geometry_extracted_at: null,
 };
 
 const PLAN_URL = "https://example.test/plan.png";

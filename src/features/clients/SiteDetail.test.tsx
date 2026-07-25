@@ -103,6 +103,11 @@ const plans: FloorPlanRow[] = [
     source: "image",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    pdf_storage_path: null,
+    pdf_page: null,
+    wall_runs: null,
+    plan_labels: null,
+    geometry_extracted_at: null,
   },
 ];
 const planUrls: Record<string, string> = { "floor-gf": "https://signed.test/floor-gf.png" };
@@ -124,6 +129,11 @@ const plansBothFloors: FloorPlanRow[] = [
     source: "image",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    pdf_storage_path: null,
+    pdf_page: null,
+    wall_runs: null,
+    plan_labels: null,
+    geometry_extracted_at: null,
   },
   {
     id: "plan-1f",
@@ -135,6 +145,11 @@ const plansBothFloors: FloorPlanRow[] = [
     source: "image",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
+    pdf_storage_path: null,
+    pdf_page: null,
+    wall_runs: null,
+    plan_labels: null,
+    geometry_extracted_at: null,
   },
 ];
 const planUrlsBothFloors: Record<string, string> = {
