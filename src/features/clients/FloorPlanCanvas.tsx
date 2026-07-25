@@ -2435,20 +2435,23 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 onClick={fitToArea}
               />
             </span>
-            {/* Wall overlay toggle: shows what a trace will snap to. Always offered (not gated on
-                wallRuns.length) so an empty plan reads as "extraction found nothing here" rather
-                than the control silently going missing. */}
-            <span className="pointer-events-auto">
-              <IconButton
-                data-testid="toggle-walls"
-                icon="tabler:vector-triangle"
-                tip="Show walls"
-                tipSide="right"
-                variant={showWalls ? "floatingActive" : "floating"}
-                aria-pressed={showWalls}
-                onClick={() => setShowWalls((s) => !s)}
-              />
-            </span>
+            {/* Wall overlay toggle: shows what a trace will snap to. Gated on there being walls at
+                all, so an image-sourced plan — or a PDF whose extraction hasn't run — is exactly
+                the toolbar it was before walls existed, rather than gaining a control with nothing
+                behind it. */}
+            {wallRuns.length > 0 && (
+              <span className="pointer-events-auto">
+                <IconButton
+                  data-testid="toggle-walls"
+                  icon="tabler:vector-triangle"
+                  tip="Show walls"
+                  tipSide="right"
+                  variant={showWalls ? "floatingActive" : "floating"}
+                  aria-pressed={showWalls}
+                  onClick={() => setShowWalls((s) => !s)}
+                />
+              </span>
+            )}
             {/* AI discovery: one button, a two-item menu (rooms / devices). The menu is anchored to
                 this span (relative) so it opens beside the stack rather than pushing it around. */}
             <span ref={wizardRef} className="pointer-events-auto relative">

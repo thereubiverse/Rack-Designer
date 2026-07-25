@@ -2018,4 +2018,13 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     fireEvent.click(screen.getByTestId("toggle-walls"));
     expect(screen.queryByTestId("wall-overlay")).toBeNull();
   });
+
+  it("offers no wall toggle at all when the plan has no extracted walls", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref, wallRuns: [] });
+    // An image-sourced plan (or a PDF whose extraction hasn't run) gets exactly the toolbar it had
+    // before walls existed — the fit button is still there, a dead wall control is not.
+    expect(screen.getByTestId("fit-to-area")).toBeInTheDocument();
+    expect(screen.queryByTestId("toggle-walls")).toBeNull();
+  });
 });
