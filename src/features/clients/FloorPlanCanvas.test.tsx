@@ -1440,6 +1440,83 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     expect(codes).toEqual(["R01", "R02"]);
   });
 
+  /** The canvas with a swapped-in device list, so a test can re-render it the way SiteDetail does. */
+  function canvasWithDevices(devices: FloorDeviceRow[]) {
+    return (
+      <FloorPlanCanvas
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={devices}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        editable
+      />
+    );
+  }
+
+  function placedDevice(id: string, code: string): FloorDeviceRow {
+    return {
+      id, site_id: "site-1", floor_id: "floor-1", room_id: null, device_type_id: "type-cam",
+      code, name: "", status: "planned", created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z", x: 0.5, y: 0.5,
+    };
+  }
+
+  /** Stage three unlabeled CAM proposals (the fall-through-to-a-generated-code case) on a canvas
+   *  rendered by the caller, and hand back the created codes after Accept all. `onPlaced` re-renders
+   *  the canvas between accepts, standing in for whatever SiteDetail pushes down mid-batch. */
+  async function threeGeneratedCodes(onPlaced: (nth: number) => void) {
+    vi.mocked(createFloorDeviceAction)
+      .mockResolvedValueOnce({ ok: true, id: "dev-a" })
+      .mockResolvedValueOnce({ ok: true, id: "dev-b" })
+      .mockResolvedValueOnce({ ok: true, id: "dev-c" });
+    vi.mocked(discoverDevicesAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [0, 1, 2].map((i) =>
+        deviceProposal({ id: `dev-${i}`, label: "", typeCode: "CAM", point: [0.1 * (i + 1), 0.5] })
+      ),
+    });
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("discover-devices"));
+    });
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length - 0;
+    for (let i = 0; i < 3; i++) {
+      vi.mocked(placeFloorDeviceAction).mockImplementationOnce(async () => {
+        onPlaced(i);
+        return { ok: true };
+      });
+    }
+    await clickAsync("accept-all");
+    return vi
+      .mocked(createFloorDeviceAction)
+      .mock.calls.slice(createBefore)
+      .map((c) => String(c[0].get("code")));
+  }
+
+  it("keeps generated codes distinct when a FRESH-IDENTITY but still-stale device list arrives mid-batch", async () => {
+    const view = render(canvasWithDevices(DEVICES));
+    // SiteDetail derives activeFloorDevices with an unmemoized .filter(), so any unrelated state
+    // change there (a layout measurement, a menu opening) pushes down a brand-new array holding
+    // exactly the same, pre-refresh rows. Pending rows must survive that.
+    const codes = await threeGeneratedCodes(() => view.rerender(canvasWithDevices([...DEVICES])));
+    expect(codes).toEqual(["CAM03", "CAM04", "CAM05"]);
+  });
+
+  it("keeps generated codes distinct when a REAL refresh lands mid-batch", async () => {
+    const view = render(canvasWithDevices(DEVICES));
+    // Now the re-render carries the rows this batch just created — a router.refresh() landing. The
+    // pending copies drop (the prop has them), so the decision must be reading the LATEST prop and
+    // not the list captured when the batch started.
+    const landed = [...DEVICES];
+    const codes = await threeGeneratedCodes((nth) => {
+      landed.push(placedDevice(["dev-a", "dev-b", "dev-c"][nth], `CAM0${nth + 3}`));
+      view.rerender(canvasWithDevices([...landed]));
+    });
+    expect(codes).toEqual(["CAM03", "CAM04", "CAM05"]);
+  });
+
   it("waits for each accept to finish before starting the next one", async () => {
     const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
     // The first placement hangs until this test releases it. Under Promise.all BOTH calls would

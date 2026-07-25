@@ -736,14 +736,29 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // hazard: `devices` stays stale until router.refresh() round-trips, so two single Accepts clicked
   // back to back collide the same way. planRoomCommit generates room codes the same way, hence the
   // room list too. Each prop change means the refresh landed and the prop is authoritative again.
+  // Pruned by CONTENT, never by prop identity: SiteDetail derives these lists with an unmemoized
+  // .filter(), so any unrelated re-render there hands down a fresh array holding the SAME stale
+  // rows. Clearing on identity would drop the pending rows while the props still lack them — the
+  // collision, re-armed. Each row drops exactly when the refreshed prop actually contains it.
   const pendingDevicesRef = useRef<FloorDeviceRow[]>([]);
   const pendingRoomsRef = useRef<RoomRow[]>([]);
   useEffect(() => {
-    pendingDevicesRef.current = [];
+    pendingDevicesRef.current = pendingDevicesRef.current.filter(
+      (p) => !devices.some((d) => d.id === p.id)
+    );
   }, [devices]);
   useEffect(() => {
-    pendingRoomsRef.current = [];
+    pendingRoomsRef.current = pendingRoomsRef.current.filter((p) => !rooms.some((r) => r.id === p.id));
   }, [rooms]);
+
+  // The accept helpers below can outlive the render they were created in — a batch awaits a server
+  // round-trip per proposal, and a refresh landing mid-batch re-renders underneath it. Reading the
+  // lists through refs means each decision sees the LATEST props plus the surviving pending rows,
+  // instead of whatever was in scope when the batch started.
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
+  const roomsRef = useRef(rooms);
+  roomsRef.current = rooms;
 
   // Proposals are per-floor and must never survive a floor switch. SiteDetail keys this component
   // by the active floor id, so a switch remounts it and the state is fresh anyway — this makes the
@@ -781,6 +796,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   /** Run one discovery pass and park its proposals in state. Never throws: the actions return
    *  `{ ok: false, error }` for every failure, including the "no-key" sentinel. */
   async function runDiscovery(kind: "rooms" | "devices") {
+    // Never while an accept is in flight: proposal ids are index-based, so a pass landing mid-accept
+    // could hand a freshly staged proposal the id the accept is about to drop.
+    if (accepting) return;
     setWizardOpen(false);
     setWizardNotice(null);
     // Proposal ids are per-pass and index-based ("room-0"), so a re-run can hand the SAME id to a
@@ -882,7 +900,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
    *  also shown immediately; the batch below re-shows the FIRST one at the end, so a later success
    *  (which clears the error) can't swallow it. */
   async function acceptDevice(dp: DeviceProposal): Promise<string | null> {
-    const decision = planDeviceCommit(dp, [...devices, ...pendingDevicesRef.current]);
+    const decision = planDeviceCommit(dp, [...devicesRef.current, ...pendingDevicesRef.current]);
     if (decision.kind === "duplicate") {
       // The code is site-unique and the matched device is already on the plan: there is nothing to
       // commit, so the proposal just goes away with an explanation.
@@ -922,7 +940,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       ...pendingDevicesRef.current,
       {
         id: res.id,
-        site_id: devices[0]?.site_id ?? "",
+        site_id: devicesRef.current[0]?.site_id ?? "",
         floor_id: plan.floor_id,
         room_id: null,
         device_type_id: type.id,
@@ -958,7 +976,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   }
 
   async function acceptRoom(rp: RoomProposal): Promise<string | null> {
-    const decision = planRoomCommit(rp, [...rooms, ...pendingRoomsRef.current]);
+    const decision = planRoomCommit(rp, [...roomsRef.current, ...pendingRoomsRef.current]);
     if (decision.kind === "attach") {
       const failure = await commitRoomPolygon(decision.roomId, rp.polygon);
       if (!failure) dropRoom(rp.id);
@@ -1569,8 +1587,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       proposalPinDragRef.current = null;
       proposalVertexDragRef.current = null;
       dragRef.current = null;
-      // Guarded: unlike the pan path below, this gesture normally never captured the pointer, and
-      // releasing an uncaptured pointer id throws.
+      // Guarded because releasing an UNKNOWN pointer id throws NotFoundError (releasing a merely
+      // uncaptured one is a spec no-op), and this gesture normally never captured the pointer.
       if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
@@ -2257,7 +2275,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   <button
                     type="button"
                     data-testid="discover-rooms"
-                    disabled={discovering != null}
+                    disabled={discovering != null || accepting}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
                     onClick={() => void runDiscovery("rooms")}
                   >
@@ -2266,7 +2284,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   <button
                     type="button"
                     data-testid="discover-devices"
-                    disabled={discovering != null}
+                    disabled={discovering != null || accepting}
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
                     onClick={() => void runDiscovery("devices")}
                   >
