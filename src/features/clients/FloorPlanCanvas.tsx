@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
-import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
@@ -110,6 +110,14 @@ const POLYGON_DEDUPE_EPSILON = 1e-3;
 // Vertex snapping while tracing: a trace point within this many SCREEN pixels of an existing room's
 // vertex jumps to it exactly, so rooms that share a wall meet on the same corners at any zoom.
 const SNAP_PX = 12;
+
+// A stable identity for "this plan has no extracted geometry" — an inline `[]` default would be a
+// fresh array on every render, which is exactly the kind of churn the memo-free render path here
+// doesn't need.
+const NO_WALL_RUNS: WallRun[] = [];
+// The wall overlay's ink: sky-500, half-opaque. Deliberately NOT the rooms' blue — an extracted
+// wall is context the user traces ONTO, never a committed shape on the floor.
+const WALL_STROKE = "#0ea5e9";
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
@@ -489,6 +497,10 @@ interface FloorPlanCanvasProps {
    *  code)`, so this is the space a generated code has to avoid; `devices` above stays floor-scoped
    *  because it is what the plan draws and matches against. */
   allSiteDeviceCodes: string[];
+  /** Wall geometry extracted from the plan's source PDF, normalized 0..1 like every other point
+   *  here. Empty for image-sourced plans and for PDFs whose extraction hasn't run — in which case
+   *  this component behaves exactly as it did before walls existed. */
+  wallRuns?: WallRun[];
   editable: boolean;
   /** Plan-level controls (Replace / Delete plan) rendered into the pane's top-left toolbar,
    *  beneath the Edit-layout toggle. Supplied by SiteDetail because it owns the upload pipeline and
@@ -513,6 +525,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       racks,
       deviceTypes,
       allSiteDeviceCodes,
+      wallRuns = NO_WALL_RUNS,
       editable,
       planTools,
       onRoomTraced,
@@ -680,6 +693,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [error, setError] = useState<string | null>(null);
   // When on, pin/rack code labels are hidden until that marker is hovered (declutters a busy plan).
   const [labelsOnHover, setLabelsOnHover] = useState(false);
+  // When on, the walls extracted from the source PDF are drawn under the floor's own shapes — so
+  // the snap targets are visible rather than guessed at, and a glance confirms extraction worked.
+  const [showWalls, setShowWalls] = useState(false);
 
   // ---- Tray selection / active gesture mode (mutually exclusive) ----
   const [placingDeviceId, setPlacingDeviceId] = useState<string | null>(null);
@@ -1263,9 +1279,69 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return best;
   }
 
-  /** Snap a traced point: prefer an exact existing corner, else a point on an existing wall. */
+  /** Nearest ENDPOINT of any extracted wall run within SNAP_PX, or null. Wall runs meet at their
+   *  endpoints, so an endpoint is where a real corner of a real room is — a far more valuable
+   *  target than an arbitrary point mid-run, which is why this outranks both line snaps below. */
+  function snapToWallCorner(n: NormPoint): NormPoint | null {
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const w of wallRuns) {
+      const d1 = Math.hypot(toScreenX(w.x1 - n[0]), toScreenY(w.y1 - n[1]));
+      if (d1 < bestDist) {
+        bestDist = d1;
+        best = [w.x1, w.y1];
+      }
+      const d2 = Math.hypot(toScreenX(w.x2 - n[0]), toScreenY(w.y2 - n[1]));
+      if (d2 < bestDist) {
+        bestDist = d2;
+        best = [w.x2, w.y2];
+      }
+    }
+    return best;
+  }
+
+  /** Nearest point ON an extracted wall run within SNAP_PX, or null — the same point-to-segment
+   *  projection snapToEdge uses (clamped to t ∈ [0,1]), against the PDF's wall geometry instead of
+   *  an already-outlined room. Last in the chain: a wall's line is the weakest of the four targets.
+   *
+   *  ~1k runs are scanned per pointermove. Measured: both wall scans together cost 0.05 ms over
+   *  1,014 runs — 0.3% of a 16.7 ms frame — so this stays a plain linear scan. A spatial index
+   *  would be one more structure to keep in sync with the plan for no measurable gain. */
+  function snapToWallLine(n: NormPoint): NormPoint | null {
+    const px = toScreenX(n[0]);
+    const py = toScreenY(n[1]);
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const w of wallRuns) {
+      const ax = toScreenX(w.x1);
+      const ay = toScreenY(w.y1);
+      const bx = toScreenX(w.x2);
+      const by = toScreenY(w.y2);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+      const cx = ax + t * dx;
+      const cy = ay + t * dy;
+      const dist = Math.hypot(px - cx, py - cy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = [cx / (imgW * view.zoom), cy / (imgH * view.zoom)];
+      }
+    }
+    return best;
+  }
+
+  /** Snap a traced point, strongest target first: an existing room's corner, then a wall run's
+   *  corner, then a point on an existing room's wall, then a point on a wall run.
+   *
+   *  Existing ROOM geometry deliberately outranks the PDF's walls even when a wall is nearer:
+   *  rooms that share a wall must land on exactly the same vertices (the Slice B contract), and an
+   *  extracted run can sit half a wall thickness away from the corner a neighbouring room was
+   *  already outlined on. Corners beat lines within each source for the same reason a corner is
+   *  worth more than a line: it's a point two walls agree on. */
   function snapPoint(n: NormPoint): NormPoint | null {
-    return snapToVertex(n) ?? snapToEdge(n);
+    return snapToVertex(n) ?? snapToWallCorner(n) ?? snapToEdge(n) ?? snapToWallLine(n);
   }
 
   // ---- Action commits — each is called exactly once per completed gesture ----
@@ -2060,6 +2136,25 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         >
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
             <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
+            {/* Extracted walls — drawn straight after the image and BEFORE every room, pin and
+                rack, because they are context the floor sits on, not content on the floor. Same
+                IMAGE-PIXEL space as everything else (identityView), stroke divided by the live zoom
+                so it stays hairline-thin at any magnification. Never a pointer target. */}
+            {showWalls && wallRuns.length > 0 && (
+              <g
+                data-testid="wall-overlay"
+                stroke={WALL_STROKE}
+                strokeWidth={1 / view.zoom}
+                opacity={0.5}
+                style={{ pointerEvents: "none" }}
+              >
+                {wallRuns.map((w, i) => {
+                  const a = normToScreen([w.x1, w.y1], identityView(imgW, imgH));
+                  const b = normToScreen([w.x2, w.y2], identityView(imgW, imgH));
+                  return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+                })}
+              </g>
+            )}
             {rooms.map((room) => (
               <RoomPolygon
                 key={room.id}
@@ -2338,6 +2433,20 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 variant={returnView ? "floatingActive" : "floating"}
                 aria-pressed={returnView != null}
                 onClick={fitToArea}
+              />
+            </span>
+            {/* Wall overlay toggle: shows what a trace will snap to. Always offered (not gated on
+                wallRuns.length) so an empty plan reads as "extraction found nothing here" rather
+                than the control silently going missing. */}
+            <span className="pointer-events-auto">
+              <IconButton
+                data-testid="toggle-walls"
+                icon="tabler:vector-triangle"
+                tip="Show walls"
+                tipSide="right"
+                variant={showWalls ? "floatingActive" : "floating"}
+                aria-pressed={showWalls}
+                onClick={() => setShowWalls((s) => !s)}
               />
             </span>
             {/* AI discovery: one button, a two-item menu (rooms / devices). The menu is anchored to

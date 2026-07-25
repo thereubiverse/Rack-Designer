@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
-import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
 import { isValidPolygon } from "./floorPlanOps";
@@ -1862,5 +1862,160 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
 
     fireEvent.pointerDown(screen.getByTestId("floor-plan-canvas"), { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
     expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+  });
+});
+
+describe("FloorPlanCanvas (wall snapping)", () => {
+  // The jsdom fallback fit is fully determined: pane 870x560 over a 1200x800 plan gives
+  // zoom = min(870/1200, 560/800) = 0.7, panX = (870 - 840)/2 = 15, panY = (560 - 560)/2 = 0.
+  // So a normalized point lands at screen (15 + nx*840, ny*560) — every coordinate below is
+  // hand-computed from that, the same way the existing room-snap tests are.
+  const sx = (nx: number) => 15 + nx * 840;
+  const sy = (ny: number) => ny * 560;
+
+  const WALL_RUNS: WallRun[] = [
+    // A long horizontal run, well clear of both fixture rooms. Its left end and the run below
+    // share the corner (0.2, 0.8) — screen (183, 448).
+    { x1: 0.2, y1: 0.8, x2: 0.6, y2: 0.8 },
+    { x1: 0.2, y1: 0.8, x2: 0.2, y2: 0.95 },
+    // A stub whose endpoint sits 0.0025 (≈2.1 screen px) to the RIGHT of room MDF's corner
+    // [0.3, 0.1] — deliberately the NEARER target for the priority test below.
+    { x1: 0.3025, y1: 0.1, x2: 0.3025, y2: 0.05 },
+    // A stub whose TOP endpoint (204, 178.08) sits just below room MDF's bottom edge (y = 168),
+    // for the "wall corner beats room edge" ordering test.
+    { x1: 0.225, y1: 0.318, x2: 0.225, y2: 0.45 },
+    // A run parallel to, and 5.6 screen px below, that same bottom edge — so a click between the
+    // two is NEARER this line than the room's, for the "room edge beats wall line" ordering test.
+    { x1: 0.05, y1: 0.31, x2: 0.25, y2: 0.31 },
+  ];
+
+  function renderWithWalls(props: {
+    ref: React.Ref<FloorPlanCanvasHandle>;
+    onRoomTraced?: (polygon: [number, number][]) => void;
+    wallRuns?: WallRun[];
+  }) {
+    return render(
+      <FloorPlanCanvas
+        ref={props.ref}
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
+        wallRuns={props.wallRuns ?? WALL_RUNS}
+        editable
+        onRoomTraced={props.onRoomTraced}
+      />
+    );
+  }
+
+  /** Trace a triangle whose FIRST click is `first` (the point under test) and whose other two are
+   *  far from it, then close it. Returns the committed polygon. */
+  async function traceFrom(first: { x: number; y: number }, wallRuns?: WallRun[]) {
+    const onRoomTraced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref, onRoomTraced, wallRuns });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: first.x, clientY: first.y });
+      fireEvent.click(svg, { clientX: 500, clientY: 300 });
+      fireEvent.click(svg, { clientX: 300, clientY: 400 });
+    });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 300, clientY: 400 });
+    });
+
+    expect(onRoomTraced).toHaveBeenCalledTimes(1);
+    return onRoomTraced.mock.calls[0][0] as [number, number][];
+  }
+
+  it("snaps a traced point EXACTLY onto a wall run's endpoint", async () => {
+    // The shared corner (0.2, 0.8) renders at (183, 448); click ~4px off it, diagonally.
+    const polygon = await traceFrom({ x: sx(0.2) + 3, y: sy(0.8) + 3 });
+    expect(polygon[0][0]).toBeCloseTo(0.2, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.8, 10);
+  });
+
+  it("snaps a traced point ONTO a wall run's line, not to either endpoint", async () => {
+    // The midpoint of the horizontal run is (0.4, 0.8) -> (351, 448); its nearest endpoint is
+    // 168 screen px away, so only a line snap can catch this click.
+    const polygon = await traceFrom({ x: sx(0.4), y: sy(0.8) + 3 });
+    expect(polygon[0][1]).toBeCloseTo(0.8, 10); // perpendicular distance to the run is 0
+    expect(polygon[0][0]).toBeCloseTo(0.4, 10); // projected, not pulled to 0.2 or 0.6
+  });
+
+  it("keeps an existing ROOM vertex ahead of a NEARER wall corner", async () => {
+    // Room MDF's corner [0.3, 0.1] is at (267, 56); the wall stub's endpoint [0.3025, 0.1] is at
+    // (269.1, 56). Clicking (270, 56) is 0.9px from the wall corner and 3px from the room corner —
+    // the room must still win, or two rooms sharing this wall would stop meeting exactly.
+    const polygon = await traceFrom({ x: 270, y: sy(0.1) });
+    expect(polygon[0][0]).toBeCloseTo(0.3, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.1, 10);
+  });
+
+  it("prefers a wall CORNER over a nearer point on an existing room's edge", async () => {
+    // Room MDF's bottom edge is the line y = 168 across x 99..267; the wall stub's top endpoint is
+    // (204, 178.08). A click at (200, 172) is 4px from the edge and 7.3px from the corner — the
+    // corner is FARTHER, and must still win: a corner is a point two walls agree on.
+    const polygon = await traceFrom({ x: 200, y: 172 });
+    expect(polygon[0][0]).toBeCloseTo(0.225, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.318, 10);
+  });
+
+  it("prefers an existing room's edge over a nearer wall LINE", async () => {
+    // A click at (150, 172) is 1.6px from the wall run at y = 173.6 and 4px from room MDF's bottom
+    // edge at y = 168, with no corner of either kind in range. The room still wins — a shared wall
+    // has to stay shared even when the PDF's run sits half a wall-thickness off it.
+    const polygon = await traceFrom({ x: 150, y: 172 });
+    expect(polygon[0][1]).toBeCloseTo(0.3, 10);
+    expect(polygon[0][0]).toBeCloseTo((150 - 15) / 840, 10);
+  });
+
+  it("does not snap past the END of a wall run — the projection is clamped to the segment", async () => {
+    // The horizontal run ends at (519, 448). A click at (560, 450) is 2px from that run's INFINITE
+    // line but 41px past its end, so an unclamped projection would wrongly pin it to y = 0.8.
+    const polygon = await traceFrom({ x: 560, y: 450 });
+    expect(polygon[0][0]).toBeCloseTo((560 - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(450 / 560, 10);
+  });
+
+  it("leaves a click far from every wall and room untouched", async () => {
+    // (700, 200) is >100 screen px from any wall run and any room edge.
+    const polygon = await traceFrom({ x: 700, y: 200 });
+    expect(polygon[0][0]).toBeCloseTo((700 - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(200 / 560, 10);
+  });
+
+  it("with wallRuns=[] behaves exactly as before — the wall-corner click does not snap", async () => {
+    const click = { x: sx(0.2) + 3, y: sy(0.8) + 3 };
+    const polygon = await traceFrom(click, []);
+    expect(polygon[0][0]).toBeCloseTo((click.x - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(click.y / 560, 10);
+  });
+
+  it("renders the wall overlay only once toggled, before the rooms, in image-pixel space", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref });
+    expect(screen.queryByTestId("wall-overlay")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+    const overlay = screen.getByTestId("wall-overlay");
+    const lines = overlay.querySelectorAll("line");
+    expect(lines).toHaveLength(WALL_RUNS.length);
+    // identity-view image pixels: 0.2*1200 = 240, 0.8*800 = 640, 0.6*1200 = 720.
+    expect(lines[0].getAttribute("x1")).toBe("240");
+    expect(lines[0].getAttribute("y1")).toBe("640");
+    expect(lines[0].getAttribute("x2")).toBe("720");
+    expect(lines[0].getAttribute("y2")).toBe("640");
+    // Walls are CONTEXT: they must paint under the rooms, never over them.
+    const room = screen.getByTestId("plan-room-MDF");
+    expect(overlay.compareDocumentPosition(room) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+    expect(screen.queryByTestId("wall-overlay")).toBeNull();
   });
 });

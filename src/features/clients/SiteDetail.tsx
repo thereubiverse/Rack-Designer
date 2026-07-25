@@ -467,6 +467,9 @@ export function SiteDetail({
                     racks={activeFloorRacks}
                     deviceTypes={deviceTypes}
                     allSiteDeviceCodes={allSiteDeviceCodes}
+                    // Extracted from the source PDF at upload; null for image plans and for PDFs
+                    // whose extraction hasn't run, both of which the canvas treats as "no walls".
+                    wallRuns={activeFloorPlan.wall_runs ?? []}
                     editable
                     planTools={planTools}
                     onRoomTraced={(polygon) => panelRef.current?.openAddRoomWithPolygon(polygon)}
