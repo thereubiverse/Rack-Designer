@@ -1086,6 +1086,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
   it("accepts a device matching an EXISTING UNPLACED device: places THAT id, creates nothing", async () => {
     const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
     const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    const refreshBefore = refreshMock.mock.calls.length;
     // TO02 is the SECOND unplaced device in the fixture — never "the first row".
     await stageDevices([deviceProposal({ label: "TO02", typeCode: "TO", point: [0.25, 0.75] })]);
 
@@ -1100,7 +1101,9 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     // Accepted proposals leave the panel; this was the only one, so the panel goes with it.
     expect(screen.queryByTestId("proposal-item-dev-0")).toBeNull();
     expect(screen.queryByTestId("proposal-panel")).toBeNull();
-    expect(refreshMock).toHaveBeenCalled();
+    // Delta, not a bare toHaveBeenCalled: mocks are never reset in this file, so an earlier test's
+    // refresh would satisfy that on its own.
+    expect(refreshMock.mock.calls.length).toBeGreaterThan(refreshBefore);
   });
 
   it("accepts an UNMATCHED device by creating it with the label as its code, then placing the NEW id", async () => {
@@ -1391,6 +1394,162 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
       [0.3, 0.3],
       [0.1, 0.3],
     ]);
+  });
+
+  it("generates a DIFFERENT code for each unlabeled proposal in one batch", async () => {
+    const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-a" });
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-b" });
+    // Unlabeled devices are ordinary plan-pass output: planDeviceCommit falls through to a
+    // GENERATED code for both, and the props stay pre-refresh for the whole batch — so without the
+    // canvas feeding the row it just created back into the decision, both would ask for CAM03 and
+    // the second create would die on the site-unique constraint.
+    await stageDevices([
+      deviceProposal({ id: "dev-0", label: "", typeCode: "CAM", point: [0.1, 0.1] }),
+      deviceProposal({ id: "dev-1", label: "", typeCode: "CAM", point: [0.9, 0.9] }),
+    ]);
+
+    await clickAsync("accept-all");
+
+    expect(createFloorDeviceAction).toHaveBeenCalledTimes(createBefore + 2);
+    const codes = vi
+      .mocked(createFloorDeviceAction)
+      .mock.calls.slice(-2)
+      .map((c) => c[0].get("code"));
+    // CAM01/CAM02 are taken by the fixture, so the pair must be the next two free codes.
+    expect(codes).toEqual(["CAM03", "CAM04"]);
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+  });
+
+  it("generates a DIFFERENT code for each unmatched room in one batch", async () => {
+    const createBefore = vi.mocked(createRoomAction).mock.calls.length;
+    vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-a" });
+    vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-b" });
+    await stageRooms([
+      roomProposal({ id: "room-0", name: "Store", roomType: "other" }),
+      roomProposal({ id: "room-1", name: "Plant", roomType: "other" }),
+    ]);
+
+    await clickAsync("accept-all");
+
+    expect(createRoomAction).toHaveBeenCalledTimes(createBefore + 2);
+    const codes = vi
+      .mocked(createRoomAction)
+      .mock.calls.slice(-2)
+      .map((c) => c[0].get("code"));
+    expect(codes).toEqual(["R01", "R02"]);
+  });
+
+  it("waits for each accept to finish before starting the next one", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    // The first placement hangs until this test releases it. Under Promise.all BOTH calls would
+    // already have fired; sequential means the second cannot start yet.
+    let release!: (value: { ok: boolean; error?: string }) => void;
+    vi.mocked(placeFloorDeviceAction).mockImplementationOnce(
+      () => new Promise((resolve) => { release = resolve; })
+    );
+    await stageDevices([
+      deviceProposal({ id: "dev-0", label: "TO01", typeCode: "TO", point: [0.1, 0.1] }),
+      deviceProposal({ id: "dev-1", label: "TO02", typeCode: "TO", point: [0.9, 0.9] }),
+    ]);
+
+    await clickAsync("accept-all");
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 1);
+    expect(screen.getByTestId("proposal-item-dev-1")).toBeInTheDocument();
+
+    await act(async () => {
+      release({ ok: true });
+    });
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 2);
+    expect(screen.queryByTestId("proposal-panel")).toBeNull();
+  });
+
+  it("drops the proposal when the device is CREATED but its placement fails, and says where it went", async () => {
+    const refreshBefore = refreshMock.mock.calls.length;
+    vi.mocked(createFloorDeviceAction).mockResolvedValueOnce({ ok: true, id: "dev-fresh" });
+    vi.mocked(placeFloorDeviceAction).mockResolvedValueOnce({ ok: false, error: "Placement rejected" });
+    await stageDevices([deviceProposal({ label: "CAM09", typeCode: "CAM" })]);
+
+    await clickAsync("accept-dev-0");
+
+    // The row exists, so re-staging it would only tempt a duplicate create.
+    expect(screen.queryByTestId("proposal-item-dev-0")).toBeNull();
+    const error = screen.getByTestId("canvas-error").textContent!;
+    expect(error).toContain("CAM09");
+    expect(error).toContain("tray");
+    // Refreshed anyway, or the new unplaced device wouldn't appear in that tray.
+    expect(refreshMock.mock.calls.length).toBeGreaterThan(refreshBefore);
+  });
+
+  it("drops the proposal when the room is CREATED but its outline fails, and says where it went", async () => {
+    const refreshBefore = refreshMock.mock.calls.length;
+    vi.mocked(createRoomAction).mockResolvedValueOnce({ ok: true, id: "room-fresh" });
+    vi.mocked(setRoomPolygonAction).mockResolvedValueOnce({ ok: false, error: "Outline rejected" });
+    await stageRooms([roomProposal({ name: "Server room", roomType: "IDF" })]);
+
+    await clickAsync("accept-room-0");
+
+    expect(screen.queryByTestId("proposal-item-room-0")).toBeNull();
+    const error = screen.getByTestId("canvas-error").textContent!;
+    expect(error).toContain("IDF01");
+    expect(error).toContain("tray");
+    expect(refreshMock.mock.calls.length).toBeGreaterThan(refreshBefore);
+  });
+
+  it("keeps a keystroke aimed at a panel field away from the selected outline vertex", async () => {
+    await stageRooms([roomProposal()]);
+    fireEvent.click(screen.getByTestId("proposal-outline-room-0"));
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(screen.getByTestId("proposal-vertex-room-0-1"), {
+      clientX: 267, clientY: 71, button: 0, pointerId: 1,
+    });
+    fireEvent.pointerUp(svg, { clientX: 267, clientY: 71, pointerId: 1 });
+    // The selected handle is the filled one.
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
+
+    // Backspacing a typo out of the room's name must not delete a corner of its outline.
+    const nameField = screen.getByTestId("proposal-name-room-0");
+    fireEvent.keyDown(nameField, { key: "Backspace" });
+    expect(screen.getByTestId("proposal-vertex-room-0-3")).toBeInTheDocument();
+    // Nor may Esc in a field drop the selection out from under the user.
+    fireEvent.keyDown(nameField, { key: "Escape" });
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
+
+    // The same keys still work when the plan itself has focus.
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Backspace" });
+    });
+    expect(screen.queryByTestId("proposal-vertex-room-0-3")).toBeNull();
+  });
+
+  it("lets a placement click through a ghost pin instead of swallowing it", async () => {
+    const placeBefore = vi.mocked(placeFloorDeviceAction).mock.calls.length;
+    await stageDevices([deviceProposal({ label: "CAM09", point: [0.5, 0.5] })]);
+    enterEditMode();
+    fireEvent.click(screen.getByTestId("tray-device-TO02"));
+
+    // A click that lands on the ghost while a placement is armed belongs to the plan underneath —
+    // the committed pins only intercept in edit mode, and placement/trace gestures run outside it.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("proposal-pin-dev-0"), { clientX: 400, clientY: 300 });
+    });
+
+    expect(placeFloorDeviceAction).toHaveBeenCalledTimes(placeBefore + 1);
+    expect(lastFormData(placeFloorDeviceAction).get("id")).toBe("dev-to02");
+  });
+
+  it("does not nudge a ghost pin when the press barely moves (a select-click, not a drag)", async () => {
+    await stageDevices([deviceProposal({ label: "CAM09", point: [0.5, 0.5] })]);
+
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const pin = screen.getByTestId("proposal-pin-dev-0");
+    fireEvent.pointerDown(pin, { clientX: 615, clientY: 400, button: 0, pointerId: 1 });
+    // Under the 6px tap threshold — physical click drift, not a drag.
+    fireEvent.pointerMove(svg, { clientX: 618, clientY: 402, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 618, clientY: 402, pointerId: 1 });
+
+    expect(screen.getByTestId("proposal-pin-dev-0").getAttribute("transform")).toBe("translate(600 400)");
   });
 
   it("Esc closes the wizard menu", () => {
