@@ -76,6 +76,54 @@ function readingOrder<T extends { point: NormPoint }>(items: T[]): T[] {
 }
 
 /**
+ * Rooms in the order someone WALKS them: start at the top-left room, then keep going to whichever
+ * traced room is nearest the one just finished.
+ *
+ * Reading order was tried first and is wrong for this job. It sends you across the building and
+ * back — finish a room on the left, and the next number is whatever sits beside it in the same
+ * horizontal band, even if a much nearer room is one step down the corridor.
+ *
+ * The start is the reading-order first room rather than an arbitrary one, so the sequence is
+ * repeatable and always begins where someone would naturally start reading the sheet.
+ *
+ * `aspect` is the plan's width/height. Without it "nearest" is measured in normalized units, where
+ * one unit of X is 2600px and one unit of Y is 1733px on this drawing set — a room 1.5x further
+ * away horizontally would look equally close.
+ */
+function nearestFirstRooms<T extends { code: string; plan_polygon: NormPoint[] }>(
+  rooms: T[],
+  aspect: number
+): T[] {
+  const centre = new Map<T, NormPoint>(rooms.map((r) => [r, polygonCentroid(r.plan_polygon)]));
+  const gap = (a: T, b: T) => {
+    const [ax, ay] = centre.get(a)!;
+    const [bx, by] = centre.get(b)!;
+    return Math.hypot((ax - bx) * aspect, ay - by);
+  };
+  const remaining = [...rooms].sort((a, b) => {
+    const [ax, ay] = centre.get(a)!;
+    const [bx, by] = centre.get(b)!;
+    if (Math.abs(ay - by) > ROW_BAND) return ay - by;
+    return ax - bx || a.code.localeCompare(b.code);
+  });
+
+  const out = [remaining.shift()!];
+  while (remaining.length > 0) {
+    const from = out[out.length - 1];
+    let best = 0;
+    for (let i = 1; i < remaining.length; i++) {
+      const d = gap(from, remaining[i]);
+      const b = gap(from, remaining[best]);
+      // Ties break on the reading order `remaining` is already in, so two rooms equidistant from
+      // the last one resolve the same way every run rather than on array luck.
+      if (d < b) best = i;
+    }
+    out.push(remaining.splice(best, 1)[0]);
+  }
+  return out;
+}
+
+/**
  * Put device proposals into the order a cabling crew would walk them: room by room, and within a
  * room along each wall run.
  *
@@ -84,13 +132,17 @@ function readingOrder<T extends { point: NormPoint }>(items: T[]): T[] {
  * what tells someone which port they are standing in front of.
  *
  * Rooms come first when the floor has any TRACED — grouping by room is what makes a drop list read
- * "011 is TO05-TO08". Rooms themselves are visited in reading order, by centroid. Devices in no
- * traced room keep the same reading order and go last, so an untraced floor still numbers sensibly
- * rather than not at all.
+ * "011 is TO05-TO08". Rooms themselves are walked NEAREST-FIRST (see nearestFirstRooms), so the
+ * sequence carries on into the next room along instead of jumping back across the plan. Devices in
+ * no traced room keep reading order and go last, so an untraced floor still numbers sensibly rather
+ * than not at all.
+ *
+ * `aspect` is the plan's width/height, and only affects which room counts as nearest.
  */
 export function orderDeviceProposals(
   proposals: DeviceProposal[],
-  rooms: OrderingRoom[] = []
+  rooms: OrderingRoom[] = [],
+  aspect = 1
 ): DeviceProposal[] {
   const traced = rooms.filter(
     (r): r is OrderingRoom & { plan_polygon: NormPoint[] } =>
@@ -98,14 +150,7 @@ export function orderDeviceProposals(
   );
   if (traced.length === 0) return readingOrder(proposals);
 
-  const ordered = [...traced].sort((a, b) => {
-    const [ax, ay] = polygonCentroid(a.plan_polygon);
-    const [bx, by] = polygonCentroid(b.plan_polygon);
-    // Same banding as devices: rooms side by side down a corridor read left-to-right, not by a
-    // hair's difference in how their outlines were traced.
-    if (Math.abs(ay - by) > ROW_BAND) return ay - by;
-    return ax - bx || a.code.localeCompare(b.code);
-  });
+  const ordered = nearestFirstRooms(traced, aspect);
 
   const remaining = new Set(proposals);
   const out: DeviceProposal[] = [];

@@ -289,3 +289,71 @@ describe("orderDeviceProposals", () => {
     ]);
   });
 });
+
+describe("orderDeviceProposals — walking rooms nearest-first", () => {
+  const at = (id: string, x: number, y: number): DeviceProposal => ({
+    id,
+    label: "",
+    typeCode: "TO",
+    point: [x, y],
+    confidence: "high",
+  });
+  const ids = (ps: DeviceProposal[]) => ps.map((p) => p.id);
+  /** A small room centred on cx,cy. */
+  const roomAt = (code: string, cx: number, cy: number) => ({
+    code,
+    plan_polygon: [
+      [cx - 0.05, cy - 0.05],
+      [cx + 0.05, cy - 0.05],
+      [cx + 0.05, cy + 0.05],
+      [cx - 0.05, cy + 0.05],
+    ] as NormPoint[],
+  });
+
+  it("CONTINUES TO THE NEAREST ROOM instead of back across the plan", () => {
+    // Reading order would go A (top-left) -> B (top-RIGHT, same band) -> C, sending the crew across
+    // the building and back. C is much nearer to A, so the walk should take it second.
+    const rooms = [roomAt("A", 0.1, 0.1), roomAt("B", 0.9, 0.12), roomAt("C", 0.15, 0.5)];
+    const ps = [at("a", 0.1, 0.1), at("b", 0.9, 0.12), at("c", 0.15, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "c", "b"]);
+  });
+
+  it("measures nearest ON THE SHEET, not in normalized units", () => {
+    // B is 0.4 away in X, C is 0.4 away in Y. On a 3:2 sheet that X gap is half again as long, so
+    // C is genuinely the nearer room even though the normalized numbers tie.
+    const rooms = [roomAt("A", 0.1, 0.1), roomAt("B", 0.5, 0.1), roomAt("C", 0.1, 0.5)];
+    const ps = [at("a", 0.1, 0.1), at("b", 0.5, 0.1), at("c", 0.1, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms, 1))).toEqual(["a", "b", "c"]);
+    expect(ids(orderDeviceProposals(ps, rooms, 2600 / 1733))).toEqual(["a", "c", "b"]);
+  });
+
+  it("always starts at the top-left room, whatever order the rooms arrive in", () => {
+    const rooms = [roomAt("C", 0.15, 0.5), roomAt("B", 0.9, 0.12), roomAt("A", 0.1, 0.1)];
+    const ps = [at("c", 0.15, 0.5), at("b", 0.9, 0.12), at("a", 0.1, 0.1)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "c", "b"]);
+  });
+
+  it("chains on from the room just finished, not from the first one", () => {
+    // A -> B -> C -> D marches steadily right; a "nearest to the START" rule would give A, B, C, D
+    // only by luck, so D is placed to be nearest C and far from A.
+    const rooms = [roomAt("A", 0.1, 0.5), roomAt("B", 0.3, 0.5), roomAt("C", 0.5, 0.5), roomAt("D", 0.7, 0.5)];
+    const ps = [at("d", 0.7, 0.5), at("b", 0.3, 0.5), at("a", 0.1, 0.5), at("c", 0.5, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("still keeps a room's own ports in wall order", () => {
+    const rooms = [roomAt("A", 0.5, 0.5)];
+    const ps = [at("right", 0.54, 0.5), at("left", 0.46, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["left", "right"]);
+  });
+
+  it("never drops or duplicates a proposal when walking rooms", () => {
+    const rooms = [roomAt("A", 0.2, 0.2), roomAt("B", 0.8, 0.2), roomAt("C", 0.5, 0.8)];
+    const ps = [at("a", 0.2, 0.2), at("b", 0.8, 0.2), at("c", 0.5, 0.8), at("loose", 0.95, 0.95)];
+    const out = orderDeviceProposals(ps, rooms);
+    expect(out).toHaveLength(4);
+    expect(new Set(ids(out))).toEqual(new Set(ids(ps)));
+    // The unroomed one still trails the walk.
+    expect(ids(out)[3]).toBe("loose");
+  });
+});

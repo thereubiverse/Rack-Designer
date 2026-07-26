@@ -1088,7 +1088,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       // arbitrary. Numbered here, not in the action: the code space is site-wide and only the
       // client holds it.
       const numbered = numberDeviceProposals(
-        orderDeviceProposals(res.proposals, rooms),
+        // imgW/imgH so "nearest room" is measured on the sheet, not in normalized units where
+        // one unit of X and one of Y are different distances.
+        orderDeviceProposals(res.proposals, rooms, imgW / imgH),
         siteCodesRef.current
       );
       setProposals((p) => ({ ...p, devices: numbered }));
