@@ -1,5 +1,8 @@
 # Per-Site Symbol Legend (Slice E) — Design
 
+> **ADDENDUM 2026-07-26 — the premise was tested against the real legend sheet before building.
+> Half of it holds; the half that matters for telecom outlets does not. Read §9 before §1.**
+
 ## 1. Why this exists — measured, not assumed
 
 Symbol discovery works: template matching finds every instance of a symbol, at the angles the
@@ -138,3 +141,36 @@ clicks, and mis-parsing would be worse than not parsing. Sharing libraries acros
 Whether the legend picker should reuse `FloorPlanCanvas` (pan/zoom/click already work, but it
 carries a great deal of floor-plan-specific machinery) or be a much simpler dedicated view. Lean
 simple: a legend needs pan, zoom, click and a highlight — not rooms, walls, racks or proposals.
+
+## 9. Measured result of the premise test (2026-07-26)
+
+Sheets: `E-010.00` (SYMBOL LIST) as the legend; `Cellar.pdf`, `E-101P`, `E-102P` as plans.
+
+**Holds — a legend gives clean templates.** The SYMBOL LIST defines the user's symbol explicitly:
+`▼` = TELEPHONE/DATA OUTLET WITH TWO (2) RJ-45, `▽` = DATA OUTLET. Each symbol sits alone in its own
+table cell; the only adjacent ink is a straight cell rule. §1's argument is correct.
+
+**Fails — clean templates still do not match plan instances.** §6 named "a measured recall against the
+plan's telecom outlets" as the deliverable. Measured:
+
+- The one telecom triangle verified by eye (Cellar, beside the TV box) scores **0.719**.
+- On E-102P: 654 hits ≥0.60, 26 ≥0.75, **0 ≥0.85**. E-101P: 254 / 28 / **0**.
+- The true positive is buried among hundreds of unrelated blobs scoring 0.60–0.83. No threshold separates them.
+
+**§3's scale calibration is not the fix.** The 0.6–1.8 ladder saturates the hit cap at every rung.
+Raster resolution is not the fix either — 2600px → 7800px moves the top score 0.823 → 0.80.
+Masked correlation over template ink only (the obvious remedy for a cluttered surround) is *worse*:
+0.598, with an unstable best "rotation" of 315° on a symmetric triangle.
+
+**Why.** A legend symbol has clean white all around it; a plan instance never does — it touches its
+TV box and its circle. At ~10px of anti-aliased ink there is not enough signal to bridge that.
+
+**What to build instead.** On this drawing set the outlets are identified by their **text tag**, not
+their glyph: `decodePlanPage` already returns tags with positions, for free and exactly — E-102P has
+TV=28, GFI=20; Cellar has GFI=14, CP=10. Vector shape matching is unavailable here (Cellar's 83,023
+paths contain exactly one 2–3-segment small path and no triangle glyphs — the symbols are loose line
+segments plus hatch). Tag-driven discovery is exact where correlation is approximate.
+
+**Status: do not implement §4–§5 for telecom outlets.** The legend remains worth building for large,
+distinctive symbols, where §1's reasoning still applies — but it will not solve the case that
+motivated it.
