@@ -1,6 +1,6 @@
 import "server-only";
 import type { WallRun, PlanLabel } from "@/lib/supabase/types";
-import { buildWallRuns, normalizeRuns } from "./planGeometry";
+import { buildWallRuns, collapseWallPairs, normalizeRuns } from "./planGeometry";
 
 const RENDER_LONG_EDGE = 2600;   // matches the PNG Slice B renders, so both share one coordinate space
 const MAX_LABELS = 400;
@@ -87,7 +87,7 @@ export async function extractPlanGeometry(
     }
   }
 
-  const walls = normalizeRuns(buildWallRuns(segs, W, H), W, H);
+  const walls = normalizeRuns(collapseWallPairs(buildWallRuns(segs, W, H), W, H), W, H);
 
   const content = await page.getTextContent();
   const labels: PlanLabel[] = [];
