@@ -163,3 +163,29 @@ before assuming it is free.
 Auto-cataloguing every symbol on a sheet without a pick (the user picks in one click; guessing which
 clusters are "symbols" is a harder problem with worse failure modes). The per-site legend (Slice E) —
 superseded for this case, left unbuilt. Multi-page sheets. Curve-shape matching beyond circles.
+
+## 9. Changed during implementation (2026-07-26)
+
+Two things in §3 did not survive contact with the sheets. Both changes are measured.
+
+**Matching is on the VERTEX CONSTELLATION, not the multiset of primitives.** §3 proposed comparing
+the primitives a symbol is made of. Instances differ in exactly that: the outlet decomposes into two
+4-7-8 halves, plus extra rings on some instances, so face matching found **22 of 28** on E-102P. The
+corner POINTS do not differ. Comparing the sorted pairwise distances between a symbol's distinct
+corners is stable, still rotation- and translation-invariant, and reproduces every count exactly.
+
+**Minimal faces are selected by CONTAINMENT.** The first rule tried was the planar fact that an edge
+borders at most two faces. It is not sufficient, and a unit test caught it: for a square split by its
+diagonal, the two triangles spend the diagonal twice but leave each outer side with a spare use, so
+the square's own ring still came through. Rejecting any ring that encloses an already-accepted face
+is both simpler and correct.
+
+Also added, not in §3: **the seed's fill class is required of every hit**. Geometry cannot separate
+this sheet's solid triangle (telephone/data outlet) from its hollow one (data outlet) — they are the
+same triangle. Without this, picking a telecom outlet also proposes every data outlet on the floor.
+
+**Acceptance bar met.** E-101P **44**, E-102P **28**, E-103P **4** — all exact against §6. Cellar
+returns **19** where §6 says 20: the twentieth was a leader ARROWHEAD that the looser probe accepted
+and this rejects, confirmed by cropping it. The engine is more accurate than the number set for it.
+
+Assembly costs ~30ms per sheet, so §7's concern about cost is answered and no cache is needed.

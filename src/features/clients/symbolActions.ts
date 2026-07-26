@@ -15,6 +15,13 @@ import {
   type SymbolHit,
 } from "./symbolMatch";
 import { decodePlanPage, type PlanPath, type PlanTextItem } from "./planPaths";
+import {
+  classifyFill,
+  extractPrimitives,
+  findMatches,
+  signatureFor,
+  type StructHit,
+} from "./symbolStructure";
 import { coerceTypeCode, type Confidence, type DeviceProposal } from "./planDetect";
 
 export type DiscoverSymbolsResult =
@@ -101,6 +108,63 @@ function nearestCode(labels: PlanLabel[], hit: SymbolHit, imgW: number, imgH: nu
 }
 
 /**
+ * Structural pass: find the picked symbol by its geometry.
+ *
+ * Returns [] whenever this route cannot answer — no vector paths, nothing assembles inside the
+ * picked box, or only the seed itself matched — and the caller then falls through to correlation.
+ * Returning [] rather than throwing is deliberate: a symbol with no straight edges is an ordinary
+ * case, not an error.
+ *
+ * The FILL check is not decoration. Geometry cannot tell this sheet's solid triangle
+ * ("telephone/data outlet with two RJ-45") from its hollow one ("data outlet") — they are the same
+ * triangle, and the legend distinguishes them only by shading. So the seed's own fill class is
+ * measured and every hit must share it, or picking a telecom outlet would also propose every data
+ * outlet on the floor.
+ */
+async function structuralProposals(
+  bytes: Uint8Array,
+  page: number,
+  box: { x: number; y: number; w: number; h: number },
+  img: GreyImage,
+  labels: PlanLabel[],
+  typeCode: string
+): Promise<DeviceProposal[]> {
+  const { paths } = await decodePlanPage(bytes, page);
+  const prims = extractPrimitives(paths);
+  const sig = signatureFor(prims, {
+    minX: box.x,
+    minY: box.y,
+    maxX: box.x + box.w,
+    maxY: box.y + box.h,
+  });
+  if (!sig) return [];
+
+  const hits = findMatches(prims, sig);
+  // One hit is the seed itself: the user already knows where that is, and a "search" that finds
+  // only what was clicked is a failed search, not a one-result one.
+  if (hits.length < 2) return [];
+
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const seed = hits.reduce((best, h) =>
+    Math.hypot(h.x - cx, h.y - cy) < Math.hypot(best.x - cx, best.y - cy) ? h : best
+  );
+  const seedFill = classifyFill(img, seed);
+  const same = hits.filter((h) => classifyFill(img, h) === seedFill).slice(0, MAX_HITS);
+
+  return same.map((h: StructHit, i) => ({
+    id: `str-${i}`,
+    label: nearestCode(labels, { x: h.x, y: h.y, score: 1 } as SymbolHit, img.width, img.height),
+    typeCode,
+    // Hits are CENTRES in page pixels; the canvas works in 0..1 against the same raster.
+    point: [clamp(h.x / img.width, 0, 1), clamp(h.y / img.height, 0, 1)] as [number, number],
+    // Structural hits are exact — there is no score to map. A single-primitive match (a bare
+    // circle, say) is genuinely ambiguous, so it is the one case that reports lower.
+    confidence: (h.parts > 1 ? "high" : "medium") as Confidence,
+  }));
+}
+
+/**
  * Find every instance of the symbol the user picked, and stage them as device proposals.
  *
  * NOT an AI pass despite living beside one: this is exact raster template matching (symbolMatch),
@@ -127,12 +191,35 @@ export async function discoverSymbolsAction(input: {
 
     const bytes = await downloadPlanObject(db, plan.pdf_storage_path);
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
-    const img: GreyImage = await renderPlanGrey(bytes, plan.pdf_page ?? 0);
+    const page = plan.pdf_page ?? 0;
+    // A COPY per consumer: pdf.js transfers the buffer to its worker, so the second reader of the
+    // same Uint8Array gets a detached, zero-length array. Rendering and decoding both read it.
+    const img: GreyImage = await renderPlanGrey(new Uint8Array(bytes), page);
 
     const box = toPixelBox(input.box, img.width, img.height);
     if (!box) {
       return { ok: false, error: "That symbol is too small to search for." };
     }
+
+    const typeCode = coerceTypeCode(input.typeCode);
+    const labels = plan.plan_labels ?? [];
+
+    // ---- Structural matching first ----------------------------------------------------------
+    //
+    // Correlation cannot find this drawing set's telecom outlet at all (measured: the one verified
+    // instance scores 0.719 among hundreds of blobs at 0.60-0.83), because the symbol is ~10px of
+    // ink drawn against the wall it mounts on and NCC compares the whole window. Its GEOMETRY is
+    // exact, so try that first and fall through to NCC for symbols that assemble no primitives —
+    // a lone circle, an arc-only glyph — which is what CP and GFI rely on.
+    const structural = await structuralProposals(
+      new Uint8Array(bytes),
+      page,
+      box,
+      img,
+      labels,
+      typeCode
+    );
+    if (structural.length > 0) return { ok: true, proposals: structural };
 
     // A mostly-background template correlates with blank paper everywhere (measured: 400 hits on
     // the real sheet for a box drawn on blank paper, vs 7 genuine ones for a tight box on the same
@@ -162,9 +249,8 @@ export async function discoverSymbolsAction(input: {
       maxHits: MAX_HITS,
     });
 
-    // Coerced ONCE for the whole run: every hit is the same symbol, so it is the same type.
-    const typeCode = coerceTypeCode(input.typeCode);
-    const labels = plan.plan_labels ?? [];
+    // `typeCode` is coerced ONCE above for the whole run: every hit is the same symbol, so it is
+    // the same type.
     const proposals: DeviceProposal[] = hits.map((h, i) => ({
       id: `sym-${i}`,
       label: nearestCode(labels, h, img.width, img.height),

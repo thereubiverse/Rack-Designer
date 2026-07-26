@@ -69,6 +69,15 @@ beforeEach(() => {
   // that do override this. A distinctive list makes it obvious which path a rotations argument came
   // from.
   vi.mocked(dominantAngles).mockReturnValue([0, 90, 180, 270]);
+  // Discovery now tries STRUCTURAL matching before correlation. A page with no vector paths
+  // assembles no primitives, so that pass defers and every correlation assertion below still
+  // describes the route it always did. Tests that exercise the structural route supply paths.
+  vi.mocked(decodePlanPage).mockResolvedValue({
+    paths: [],
+    texts: [],
+    width: IMG_W,
+    height: IMG_H,
+  });
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -688,5 +697,116 @@ describe("pickSymbolAction", () => {
     vi.mocked(decodePlanPage).mockResolvedValue(page([]));
     const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
     expect(res).toEqual({ ok: false, error: NO_SYMBOL });
+  });
+});
+
+// ---- Structural discovery -----------------------------------------------------------------
+//
+// The route that exists because correlation cannot find this drawing set's telecom outlet at all.
+// These use REAL geometry through the real symbolStructure module (only the PDF decode is mocked),
+// so they fail if the assembly rules change underneath them.
+
+describe("discoverSymbolsAction — structural route", () => {
+  /** One straight run as its own path, which is how the sheets actually emit a triangle's sides. */
+  const seg = (a: [number, number], b: [number, number]): PlanPath => ({
+    segs: [{ a, b }],
+    minX: Math.min(a[0], b[0]),
+    minY: Math.min(a[1], b[1]),
+    maxX: Math.max(a[0], b[0]),
+    maxY: Math.max(a[1], b[1]),
+    grey: false,
+  });
+
+  /** An equilateral triangle of side 8 at `ox,oy`; its centroid is (ox+4, oy+2.31). */
+  const tri = (ox: number, oy: number): PlanPath[] => [
+    seg([ox, oy], [ox + 8, oy]),
+    seg([ox + 8, oy], [ox + 4, oy + 6.93]),
+    seg([ox + 4, oy + 6.93], [ox, oy]),
+  ];
+
+  const geom = (paths: PlanPath[]) => ({
+    paths,
+    texts: [] as PlanTextItem[],
+    width: IMG_W,
+    height: IMG_H,
+  });
+
+  /** A page-sized white raster with a solid blob at each of `centres`. */
+  const raster = (centres: [number, number][]) => {
+    const data = new Uint8Array(IMG_W * IMG_H).fill(255);
+    for (const [cx, cy] of centres) {
+      for (let y = cy - 4; y <= cy + 4; y++) {
+        for (let x = cx - 4; x <= cx + 4; x++) data[y * IMG_W + x] = 0;
+      }
+    }
+    return { data, width: IMG_W, height: IMG_H };
+  };
+
+  /** A box drawn around the triangle at 100,100, in NORMALIZED coordinates. */
+  const seedBox = {
+    x: 98 / IMG_W,
+    y: 98 / IMG_H,
+    w: 12 / IMG_W,
+    h: 12 / IMG_H,
+  };
+
+  it("finds every instance of the picked symbol WITHOUT correlation", async () => {
+    vi.mocked(decodePlanPage).mockResolvedValue(geom([...tri(100, 100), ...tri(500, 100), ...tri(900, 100)]));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "TO" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.proposals).toHaveLength(3);
+    expect(res.proposals.every((p) => p.id.startsWith("str-"))).toBe(true);
+    // The whole point: correlation was never consulted.
+    expect(matchSymbol).not.toHaveBeenCalled();
+  });
+
+  it("places hits at the symbols' own centres, normalized against the RENDERED raster", async () => {
+    vi.mocked(decodePlanPage).mockResolvedValue(geom([...tri(100, 100), ...tri(500, 100)]));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "TO" });
+    if (!res.ok) throw new Error("unreachable");
+    const xs = res.proposals.map((p) => p.point[0] * IMG_W).sort((a, b) => a - b);
+    expect(xs[0]).toBeCloseTo(104, 0);
+    expect(xs[1]).toBeCloseTo(504, 0);
+  });
+
+  it("keeps only instances SHADED LIKE THE SEED — a solid outlet must not propose hollow ones", async () => {
+    // Geometry cannot separate this sheet's "telephone/data outlet" from its "data outlet": both
+    // are the same triangle and only the shading differs. Seed and one other are inked; the third
+    // is bare, and must not come back.
+    vi.mocked(decodePlanPage).mockResolvedValue(geom([...tri(100, 100), ...tri(500, 100), ...tri(900, 100)]));
+    vi.mocked(renderPlanGrey).mockResolvedValue(raster([[104, 102], [504, 102]]));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "TO" });
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.proposals).toHaveLength(2);
+    const xs = res.proposals.map((p) => Math.round(p.point[0] * IMG_W));
+    expect(xs).not.toContain(904);
+  });
+
+  it("FALLS THROUGH to correlation when the pick assembles nothing", async () => {
+    // A symbol with no straight edges — a lone circle — is an ordinary case, not an error, and it
+    // is what CP and GFI rely on.
+    vi.mocked(decodePlanPage).mockResolvedValue(geom([]));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "TO" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
+    expect(matchSymbol).toHaveBeenCalled();
+    expect(res.proposals[0]?.id).toMatch(/^sym-/);
+  });
+
+  it("FALLS THROUGH when only the seed itself matches — a search that finds one thing failed", async () => {
+    vi.mocked(decodePlanPage).mockResolvedValue(geom(tri(100, 100)));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "TO" });
+    expect(matchSymbol).toHaveBeenCalled();
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.proposals[0]?.id).toMatch(/^sym-/);
+  });
+
+  it("carries the coerced type code onto every structural proposal", async () => {
+    vi.mocked(decodePlanPage).mockResolvedValue(geom([...tri(100, 100), ...tri(500, 100)]));
+    const res = await discoverSymbolsAction({ floorId: "f1", box: seedBox, typeCode: "nonsense" });
+    if (!res.ok) throw new Error("unreachable");
+    const codes = new Set(res.proposals.map((p) => p.typeCode));
+    expect(codes.size).toBe(1);
   });
 });
