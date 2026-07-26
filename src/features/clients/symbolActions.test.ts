@@ -9,6 +9,7 @@ vi.mock("./symbolMatch", () => ({
   matchSymbol: vi.fn(),
   cropToInk: vi.fn(),
   hasInk: vi.fn(),
+  dominantAngles: vi.fn(),
 }));
 vi.mock("./planPaths", () => ({ decodePlanPage: vi.fn() }));
 
@@ -16,7 +17,7 @@ import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import { getFloorPlan } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
-import { extractTemplate, matchSymbol, cropToInk, hasInk } from "./symbolMatch";
+import { extractTemplate, matchSymbol, cropToInk, hasInk, dominantAngles } from "./symbolMatch";
 import type { SymbolHit } from "./symbolMatch";
 import { decodePlanPage } from "./planPaths";
 import type { PlanPath, PlanTextItem } from "./planPaths";
@@ -64,6 +65,10 @@ beforeEach(() => {
   // so cropToInk must be a pass-through unless a test deliberately overrides it.
   vi.mocked(cropToInk).mockImplementation((_img, box) => box);
   vi.mocked(hasInk).mockReturnValue(true);
+  // The default plan below has wall_runs null, so most tests never reach dominantAngles; the ones
+  // that do override this. A distinctive list makes it obvious which path a rotations argument came
+  // from.
+  vi.mocked(dominantAngles).mockReturnValue([0, 90, 180, 270]);
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -317,6 +322,66 @@ describe("discoverSymbolsAction", () => {
     } as never);
     const res = await discoverSymbolsAction(input());
     expect(res.ok && res.proposals[0].label).toBe("CP12");
+  });
+
+  it("derives the rotations from the plan's OWN wall runs and searches exactly those", async () => {
+    // The user's report: "many times the symbols are the same but at different angles because of
+    // the walls". Devices mount on walls, so the plan's wall geometry is where the angles worth
+    // searching come from. Would catch: leaving the hardcoded four square rotations in place, or
+    // deriving them from anything other than this plan's own runs.
+    const walls = [{ x1: 0.1, y1: 0.1, x2: 0.5, y2: 0.17 }];
+    vi.mocked(getFloorPlan).mockResolvedValue({ ...plan, wall_runs: walls } as never);
+    vi.mocked(dominantAngles).mockReturnValue([0, 10, 80, 90, 100, 170, 180, 190, 260, 270, 280, 350]);
+
+    const res = await discoverSymbolsAction(input());
+
+    // The RENDERED raster's aspect ratio, not the stored width_px/height_px (1200 x 800): a wall run
+    // is normalized against the page, and reading its angle without undoing that squash gives an
+    // angle the building does not have.
+    expect(dominantAngles).toHaveBeenCalledWith(walls, { aspectRatio: IMG_W / IMG_H });
+    expect(matchSymbol).toHaveBeenCalledWith(IMG, TEMPLATE, {
+      minScore: 0.65,
+      rotations: [0, 10, 80, 90, 100, 170, 180, 190, 260, 270, 280, 350],
+      maxHits: 200,
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("wall_runs null -> the four square rotations, and dominantAngles is never consulted", async () => {
+    // A plan uploaded before geometry extraction ran has no wall runs. It must still be searchable,
+    // with exactly the behaviour this feature shipped with.
+    const res = await discoverSymbolsAction(input());
+    expect(dominantAngles).not.toHaveBeenCalled();
+    expect(matchSymbol).toHaveBeenCalledWith(
+      IMG,
+      TEMPLATE,
+      expect.objectContaining({ rotations: [0, 90, 180, 270] })
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("an EMPTY wall_runs array also falls back, rather than deriving angles from nothing", async () => {
+    vi.mocked(getFloorPlan).mockResolvedValue({ ...plan, wall_runs: [] } as never);
+    await discoverSymbolsAction(input());
+    expect(dominantAngles).not.toHaveBeenCalled();
+    expect(matchSymbol).toHaveBeenCalledWith(
+      IMG,
+      TEMPLATE,
+      expect.objectContaining({ rotations: [0, 90, 180, 270] })
+    );
+  });
+
+  it("dominantAngles throwing RESOLVES {ok:false}, never a rejection", async () => {
+    vi.mocked(getFloorPlan).mockResolvedValue({
+      ...plan,
+      wall_runs: [{ x1: 0, y1: 0, x2: 1, y2: 0 }],
+    } as never);
+    vi.mocked(dominantAngles).mockImplementation(() => {
+      throw new Error("boom");
+    });
+    await expect(discoverSymbolsAction(input())).resolves.toEqual(
+      expect.objectContaining({ ok: false })
+    );
   });
 
   it("zero hits is a success with an empty list, not an error", async () => {

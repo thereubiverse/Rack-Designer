@@ -21,10 +21,19 @@
  *   - minScore around 0.65 was the useful operating point; 0.7 costs real
  *     detections. Scores on genuine instances ran 0.66-1.0, not 0.9+, because
  *     the window includes surrounding drawing that differs per instance.
- *   - Recall: CP 9/10, GFI 12/14, TV 2/2 with rotations [0,90,180,270].
- *     The GFI misses sit in a wing of the building rotated about -10 degrees;
- *     adding 10-degree steps recovers one of them at ~6x the runtime.
- *   - Runtime ~1-2s per symbol per full sheet, single threaded.
+ *   - Recall with the fixed rotations [0,90,180,270]: CP 9/10, GFI 12/14.
+ *     Both GFI misses sit where the drawing changes orientation. The sheet uses
+ *     TWO grids, 0 and 9.3 degrees, and the template happens to be cut from the
+ *     9.3-degree one. `dominantAngles` reads those grids off the plan's own wall
+ *     runs and searches the differences between them: GFI goes to 13/14 and CP
+ *     stays 9/10 with every score improved (0.66-0.75 -> 0.72-0.87 on the four
+ *     instances in the rotated part).
+ *   - Runtime ~1.6-2.9s per symbol per full sheet at four rotations, single
+ *     threaded; ~2-4.5x that at the twelve `dominantAngles` derives here — the
+ *     rotated variants have larger bounding boxes as well as being more numerous.
+ *   - The last GFI miss is NOT a rotation failure: swept at 1-degree steps its
+ *     best score anywhere is 0.657, barely over the 0.65 operating point, and it
+ *     wants about -6 degrees rather than the wing's -9.3.
  */
 
 export interface GreyImage {
@@ -240,6 +249,199 @@ export function hasInk(
 }
 
 // ---------------------------------------------------------------------------
+// Orientations the building actually uses
+// ---------------------------------------------------------------------------
+
+/** One extracted wall centreline, normalized 0..1 against the page (floor_plans.wall_runs). */
+export interface AngleRun {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface DominantAnglesOpts {
+  /** Histogram bucket width, degrees. Default 2. */
+  bucketDeg?: number;
+  /** Cap on how many distinct building orientations are detected. Default 3. */
+  maxAngles?: number;
+  /** An orientation must hold at least this fraction of total wall length. Default 0.05. */
+  minShareFrac?: number;
+  /**
+   * pixelWidth / pixelHeight of the page the runs were normalized against. Default 1.
+   *
+   * REQUIRED for a non-square page. Normalising x by W and y by H is an ANISOTROPIC scaling, and
+   * anisotropic scaling does not commute with rotation: measured on the real Cellar sheet
+   * (2600 x 1733), the single 9.3-degree wall family reads as TWO different families (5.4 and 12.4
+   * degrees) if the angles are taken straight from the normalized coordinates. Undo the squash
+   * before measuring an angle, or the peaks are fiction.
+   */
+  aspectRatio?: number;
+}
+
+const DEFAULT_BUCKET_DEG = 2;
+const DEFAULT_MAX_ANGLES = 3;
+const DEFAULT_MIN_SHARE_FRAC = 0.05;
+/** Two rotations closer than this are the same search. See the merge loop below. */
+const MERGE_DEG = 0.5;
+
+/**
+ * The rotations worth trying for a symbol on THIS building, derived from its wall runs.
+ *
+ * Devices mount on walls, so a symbol's rotation follows the wall it sits on: the orientations a
+ * drawing uses are exactly the orientations of its walls. Brute-forcing every 5 degrees multiplies
+ * the search cost over angles the drawing never uses; this reads them off the geometry instead.
+ *
+ * WHAT COMES BACK IS RELATIVE, NOT ABSOLUTE — the pairwise DIFFERENCES between the detected
+ * orientations (0 always among them), each expanded to its four quadrants. This is the part that is
+ * easy to get wrong, and getting it wrong was measured on the real Cellar sheet: the sheet uses two
+ * orientations, 0 and 9.3 degrees; the GFI outlet the user picks sits in the 9.3-degree part of the
+ * plan, and the two instances discovery misses sit in the axis-aligned part. Matching them needs the
+ * template turned by MINUS 9.3 degrees. Searching the absolute orientations [0, 9.3] and their
+ * quadrants leaves recall at 12/14 — unchanged; searching the differences [0, +9.3, -9.3] and their
+ * quadrants takes it to 13/14. The template is cut from one instance whose own orientation is not
+ * known in advance, so only the differences are meaningful.
+ *
+ * 0/90/180/270 are always present, so this can never search less than the previous fixed set.
+ * PURE: no I/O, no clock, no randomness. Never throws — garbage in yields the four square angles.
+ */
+export function dominantAngles(runs: AngleRun[], opts: DominantAnglesOpts = {}): number[] {
+  const bucketDeg = clampNum(opts.bucketDeg ?? DEFAULT_BUCKET_DEG, 0.25, 45);
+  const maxAngles = Math.max(1, Math.floor(clampNum(opts.maxAngles ?? DEFAULT_MAX_ANGLES, 1, 12)));
+  const minShareFrac = clampNum(opts.minShareFrac ?? DEFAULT_MIN_SHARE_FRAC, 0, 1);
+  const aspect =
+    Number.isFinite(opts.aspectRatio) && (opts.aspectRatio as number) > 0
+      ? (opts.aspectRatio as number)
+      : 1;
+
+  const nb = Math.max(1, Math.round(90 / bucketDeg));
+  const step = 90 / nb;
+  const weight = new Float64Array(nb);
+  // Doubled-angle (x4, since the period here is 90 degrees) vector sums, so a peak can be refined to
+  // the length-weighted mean of its bucket and its two neighbours WITHOUT the wraparound bug that
+  // averaging raw degrees has at the 0/90 seam. Measured: the sheet's near-vertical walls read
+  // 89.87 degrees, which a naive mean would place at the far end of the histogram from 0.
+  const vx = new Float64Array(nb);
+  const vy = new Float64Array(nb);
+  let total = 0;
+
+  for (const r of runs ?? []) {
+    if (!isFiniteRun(r)) continue;
+    // Undo the normalisation's squash before measuring the angle (see aspectRatio above). Only the
+    // RATIO matters, so scaling x by the aspect and leaving y alone is the whole correction.
+    const dx = (r.x2 - r.x1) * aspect;
+    const dy = r.y2 - r.y1;
+    const len = Math.hypot(dx, dy);
+    if (!(len > 0)) continue;
+    // mod 90: a wall at 10 degrees and one at 100 belong to the SAME building grid.
+    let a = (Math.atan2(dy, dx) * 180) / Math.PI;
+    a = ((a % 90) + 90) % 90;
+    const b = Math.min(nb - 1, Math.floor(a / step));
+    // Length-weighted: a 700px wall says far more about the building's grid than a 3px stub.
+    weight[b] += len;
+    total += len;
+    const q = (4 * a * Math.PI) / 180;
+    vx[b] += len * Math.cos(q);
+    vy[b] += len * Math.sin(q);
+  }
+
+  if (!(total > 0)) return [...DEFAULT_ROTATIONS];
+
+  // Peaks: heaviest buckets first, skipping any that merely neighbours one already taken (a real
+  // orientation smears across two buckets when it straddles a boundary).
+  const order = Array.from({ length: nb }, (_, i) => i).sort(
+    (a, b) => weight[b] - weight[a] || a - b
+  );
+  const peaks: { deg: number; weight: number }[] = [];
+  const takenBuckets: number[] = [];
+  for (const b of order) {
+    if (peaks.length >= maxAngles) break;
+    if (weight[b] / total < minShareFrac) break; // sorted descending: nothing after this qualifies
+    if (takenBuckets.some((t) => circularBucketDist(t, b, nb) <= 1)) continue;
+    takenBuckets.push(b);
+    let sx = 0;
+    let sy = 0;
+    let w = 0;
+    for (let d = -1; d <= 1; d++) {
+      const i = ((b + d) % nb + nb) % nb;
+      sx += vx[i];
+      sy += vy[i];
+      w += weight[i];
+    }
+    let deg = (Math.atan2(sy, sx) * 180) / Math.PI / 4;
+    deg = ((deg % 90) + 90) % 90;
+    peaks.push({ deg, weight: w });
+  }
+
+  // 0 is always a candidate ORIENTATION, not just a candidate answer: legends, schedules and title
+  // blocks are drawn square even on a rotated plan, so the user's picked example may well be square
+  // while the instances are not. Its weight floor keeps it competitive when ranking below.
+  const base = [...peaks];
+  if (!base.some((p) => nearAngle(p.deg, 0, 90, MERGE_DEG))) {
+    base.push({ deg: 0, weight: Math.max(total * minShareFrac, 0) });
+  }
+
+  // Pairwise differences, mod 90, ranked by the combined weight of the pair they come from.
+  const rel: { deg: number; weight: number }[] = [];
+  for (const a of base) {
+    for (const b of base) {
+      let d = (a.deg - b.deg) % 90;
+      if (d < 0) d += 90;
+      rel.push({ deg: d, weight: a.weight * b.weight });
+    }
+  }
+  rel.sort((a, b) => b.weight - a.weight || a.deg - b.deg);
+  // Merge near-identical angles, heaviest first. Below MERGE_DEG two rotations are the same search:
+  // half a degree moves the corner of a 20px template by less than a tenth of a pixel, so keeping
+  // both would double the runtime for nothing. It also absorbs the measurement noise in a refined
+  // peak (the real sheet's axis-aligned family refines to 0.007 degrees, not 0).
+  const ranked: { deg: number; weight: number }[] = [];
+  for (const r of rel) {
+    // Every extra relative angle is another full scan of the sheet. Cap it.
+    if (ranked.length >= maxAngles + 1) break;
+    if (ranked.some((k) => nearAngle(k.deg, r.deg, 90, MERGE_DEG))) continue;
+    ranked.push(r);
+  }
+
+  const out: number[] = [...DEFAULT_ROTATIONS];
+  for (const r of ranked) {
+    for (const quadrant of DEFAULT_ROTATIONS) out.push((r.deg + quadrant) % 360);
+  }
+  out.sort((a, b) => a - b);
+  const deduped: number[] = [];
+  for (const v of out) {
+    if (deduped.length === 0 || v - deduped[deduped.length - 1] > 1e-6) deduped.push(v);
+  }
+  return deduped;
+}
+
+function isFiniteRun(r: AngleRun): boolean {
+  return (
+    r != null &&
+    Number.isFinite(r.x1) &&
+    Number.isFinite(r.y1) &&
+    Number.isFinite(r.x2) &&
+    Number.isFinite(r.y2)
+  );
+}
+
+function circularBucketDist(a: number, b: number, nb: number): number {
+  const d = Math.abs(a - b);
+  return Math.min(d, nb - d);
+}
+
+function nearAngle(a: number, b: number, period: number, tol: number): boolean {
+  let d = Math.abs(a - b) % period;
+  if (d > period / 2) d = period - d;
+  return d < tol;
+}
+
+function clampNum(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+// ---------------------------------------------------------------------------
 // Matching
 // ---------------------------------------------------------------------------
 
@@ -253,11 +455,6 @@ export function matchSymbol(img: GreyImage, tpl: Template, opts: MatchOpts = {})
   if (img.data.length < img.width * img.height) return [];
   if (tpl.data.length < tpl.width * tpl.height) return [];
 
-  // Computed ONCE, from the template as given (not per rotation — a 90-degree turn is an exact
-  // permutation of the same pixels, so its ink fraction cannot change).
-  const templateDensity = inkFraction(tpl.data, tpl.width * tpl.height, MATCH_INK_THRESHOLD);
-  const minInkFrac = inkRatioMin * templateDensity;
-
   const found: SymbolHit[] = [];
   // The coarse image depends only on the downsample factor, and every rotation
   // of a template shares one, so build it at most once per factor.
@@ -269,7 +466,14 @@ export function matchSymbol(img: GreyImage, tpl: Template, opts: MatchOpts = {})
     // A flat template correlates with nothing; its denominator is zero. Bail
     // rather than divide by it.
     if (stats.denom <= 0) continue;
-    scanRotation(img, variant, stats, deg, minScore, minInkFrac, found, coarseImages);
+    // Per ROTATED VARIANT, not once for the template as given. A 90-degree turn is an exact
+    // permutation and cannot change the ink fraction, but an arbitrary angle can: the rotated
+    // bounding box is larger (1.41x each side at 45 degrees, so 2x the area) and the same ink now
+    // occupies half the fraction. Measured: computing this once from the unrotated template made
+    // the gate reject EVERY window for a genuine 45-degree instance, which never showed up while
+    // only right angles were searched.
+    const density = inkFraction(variant.data, variant.width * variant.height, MATCH_INK_THRESHOLD);
+    scanRotation(img, variant, stats, deg, minScore, inkRatioMin * density, found, coarseImages);
   }
 
   const suppressRadius = opts.suppressRadiusPx ?? Math.max(tpl.width, tpl.height) / 2;
@@ -726,9 +930,7 @@ function rotateTemplate(tpl: Template, deg: number): Template {
   const sin = Math.sin(rad);
   const dw = Math.max(1, Math.round(Math.abs(w * cos) + Math.abs(h * sin)));
   const dh = Math.max(1, Math.round(Math.abs(w * sin) + Math.abs(h * cos)));
-  let total = 0;
-  for (let i = 0; i < data.length; i++) total += data[i];
-  const fill = data.length ? total / data.length : 0;
+  const fill = backgroundValue(data);
   const out = new Uint8Array(dw * dh);
   const scx = (w - 1) / 2;
   const scy = (h - 1) / 2;
@@ -745,6 +947,29 @@ function rotateTemplate(tpl: Template, deg: number): Template {
     }
   }
   return { data: out, width: dw, height: dh };
+}
+
+/**
+ * The template's BACKGROUND (paper) level: the 90th percentile of its values.
+ *
+ * This is what a rotation fills the corners of its bounding box with. Filling them with black would
+ * paint a hard dark frame that correlates with whatever dark ink happens to sit near a candidate
+ * window and wrecks the score; filling them with the MEAN paints a mid-grey wash that no real page
+ * region matches. Paper is what actually surrounds a symbol on the sheet, and a symbol template is
+ * mostly paper, so a high percentile of its own pixels is the paper value — measured, not assumed
+ * (an explicit 255 would be wrong for the screened-back grey the architecture puts behind a symbol).
+ */
+function backgroundValue(data: Uint8Array): number {
+  if (data.length === 0) return 0;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const target = Math.floor(data.length * 0.9);
+  let seen = 0;
+  for (let v = 0; v < 256; v++) {
+    seen += hist[v];
+    if (seen > target) return v;
+  }
+  return 255;
 }
 
 function sampleBilinear(

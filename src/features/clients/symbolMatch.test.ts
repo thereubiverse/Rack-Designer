@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { extractTemplate, matchSymbol, cropToInk, hasInk, type GreyImage } from "./symbolMatch";
+import {
+  extractTemplate,
+  matchSymbol,
+  cropToInk,
+  hasInk,
+  dominantAngles,
+  type GreyImage,
+} from "./symbolMatch";
 
 // ---------------------------------------------------------------------------
 // Synthetic canvas helpers. The module is pure, so every test here draws its
@@ -63,6 +70,52 @@ function rot90cw(m: boolean[][]): boolean[][] {
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) out[x][n - 1 - y] = m[y][x];
   return out;
 }
+
+/**
+ * An asymmetric glyph, defined ANALYTICALLY in its own local space so it can be stamped at any
+ * angle. Rectangles, in local coordinates about the glyph's centre: a tall stem on the left, a foot
+ * along the bottom, and a tab at the top middle that kills the 180-degree symmetry the first two
+ * would otherwise leave. Stamped by inverse-rotating each destination pixel, which is independent of
+ * how symbolMatch rotates a template — so a test built on it can actually fail.
+ */
+const GLYPH_RECTS = [
+  { x0: -8, x1: -5, y0: -9, y1: 9 },
+  { x0: -8, x1: 8, y0: 6, y1: 9 },
+  { x0: -2, x1: 2, y0: -9, y1: -6 },
+];
+
+/** Stamp GLYPH_RECTS centred at (cx, cy), turned `deg` CLOCKWISE on screen (y grows downwards). */
+function stampGlyph(img: GreyImage, cx: number, cy: number, deg: number) {
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  for (let dy = -18; dy <= 18; dy++) {
+    for (let dx = -18; dx <= 18; dx++) {
+      const lx = cos * dx + sin * dy;
+      const ly = -sin * dx + cos * dy;
+      if (GLYPH_RECTS.some((r) => lx >= r.x0 && lx <= r.x1 && ly >= r.y0 && ly <= r.y1)) {
+        put(img, cx + dx, cy + dy, BLACK);
+      }
+    }
+  }
+}
+
+/** A 23x23 template cut from an upright stamp of GLYPH_RECTS. */
+function glyphTemplate() {
+  const src = blank(60, 60);
+  stampGlyph(src, 30, 30, 0);
+  return extractTemplate(src, { x: 19, y: 19, w: 23, h: 23 });
+}
+
+/** One normalized wall run of `len` (in units of 1/1000 of the page) starting at (x, y), at `deg`. */
+function run(x: number, y: number, len: number, deg: number) {
+  const r = (deg * Math.PI) / 180;
+  return { x1: x, y1: y, x2: x + (len * Math.cos(r)) / 1000, y2: y + (len * Math.sin(r)) / 1000 };
+}
+
+/** True if `list` holds an angle within `tol` of `deg`. */
+const hasAngle = (list: number[], deg: number, tol = 0.5) =>
+  list.some((v) => Math.abs(v - deg) < tol);
 
 /** Centre of a wxh window whose top-left is at (x,y), in pixel-centre coordinates. */
 const centreOf = (x: number, size: number) => x + (size - 1) / 2;
@@ -197,6 +250,44 @@ describe("matchSymbol", () => {
     expect(uprightOnly).toHaveLength(1);
     expect(uprightOnly[0].rotationDeg).toBe(0);
     expect(uprightOnly[0].x).toBe(centreOf(20, 12));
+  });
+
+  // THE regression test for the reported problem: "many times the symbols are the same but at
+  // different angles because of the walls". Before this, matchSymbol snapped every rotation to a
+  // multiple of 90 and an instance in a wing turned ~10 degrees was simply not findable.
+  it("finds a 10-degree instance ONLY when 10 is in rotations — the rotated-wing case", () => {
+    const tpl = glyphTemplate();
+    const img = blank(160, 160);
+    stampGlyph(img, 80, 78, 10);
+
+    const square = matchSymbol(img, tpl, { minScore: 0.7, rotations: [0] });
+    expect(square).toEqual([]);
+
+    const tilted = matchSymbol(img, tpl, { minScore: 0.7, rotations: [0, 10] });
+    expect(tilted).toHaveLength(1);
+    expect(tilted[0].rotationDeg).toBe(10);
+    expect(tilted[0].x).toBeCloseTo(80, 0);
+    expect(tilted[0].y).toBeCloseTo(78, 0);
+  });
+
+  // Rotating to an arbitrary angle leaves corners of the destination box with no source pixel behind
+  // them. Filling those with BLACK paints a dark frame the real page never has, which drags the
+  // correlation down on the genuine instance: measured on this exact fixture, black fill scores the
+  // 45-degree instance below 0.7 (not found at all) and the 10-degree one at 0.666 instead of 0.874.
+  // The fill has to be the template's own background — the paper the symbol actually sits on.
+  it("fills a rotation's uncovered corners with the template's BACKGROUND, not black", () => {
+    const tpl = glyphTemplate();
+    // 45 degrees is the worst case: the rotated box is 2x the area, so half of it is fill.
+    // Deliberately close to the image edge, where a dark frame would have nothing to hide behind.
+    const img = blank(120, 120);
+    stampGlyph(img, 26, 26, 45);
+
+    const hits = matchSymbol(img, tpl, { minScore: 0.7, rotations: [0, 45] });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].rotationDeg).toBe(45);
+    expect(hits[0].score).toBeGreaterThan(0.8);
+    expect(hits[0].x).toBeCloseTo(26, 0);
+    expect(hits[0].y).toBeCloseTo(26, 0);
   });
 
   it("suppresses overlapping peaks down to one hit (test 4)", () => {
@@ -564,6 +655,100 @@ describe("matchSymbol", () => {
     // the gate otherwise removes, not just "some" of them.
     expect(disabled.some(nearBlank)).toBe(true);
     expect(disabled.some(nearGlyph)).toBe(true);
+  });
+});
+
+describe("dominantAngles", () => {
+  it("an axis-aligned building asks for exactly the four square rotations", () => {
+    // Would catch: emitting spurious near-zero angles (a refined peak lands at 0.007, not 0) and so
+    // doubling the search cost on a plain rectilinear plan for nothing.
+    const runs = [run(0.1, 0.1, 500, 0), run(0.2, 0.2, 500, 90), run(0.3, 0.1, 400, 0)];
+    expect(dominantAngles(runs)).toEqual([0, 90, 180, 270]);
+  });
+
+  it("a building drawn at 10 degrees asks for ~10 and its four quadrants", () => {
+    // The user's case: "the symbols are the same but at different angles because of the walls".
+    // 100 degrees is the SAME building grid as 10 — walls perpendicular to each other, one grid.
+    const runs = [run(0.1, 0.1, 500, 10), run(0.2, 0.3, 400, 100), run(0.3, 0.5, 300, 10)];
+    const out = dominantAngles(runs);
+    for (const q of [10, 100, 190, 280]) expect(hasAngle(out, q)).toBe(true);
+    // …and never less than the previous fixed behaviour.
+    for (const q of [0, 90, 180, 270]) expect(hasAngle(out, q)).toBe(true);
+  });
+
+  it("also asks for the NEGATIVE offset — the picked example may itself be in the rotated wing", () => {
+    // Measured on the real Cellar sheet, and the whole reason this returns differences rather than
+    // the building's absolute orientations: the plan uses 0 and 9.3 degrees, the GFI outlet the user
+    // clicks sits in the 9.3-degree part, and the instances discovery misses sit in the square part.
+    // Matching those needs the template turned by MINUS 9.3. Searching [0, 9.3] and quadrants left
+    // recall at 12/14; adding the negative took it to 13/14.
+    const runs = [run(0.1, 0.1, 500, 10), run(0.4, 0.1, 500, 0)];
+    const out = dominantAngles(runs);
+    expect(hasAngle(out, 10)).toBe(true);
+    expect(hasAngle(out, 80)).toBe(true); // -10, folded into [0, 360)
+    expect(hasAngle(out, 350)).toBe(true);
+  });
+
+  it("weights by LENGTH: many short stubs lose to a few long walls", () => {
+    // Would catch: counting runs instead of measuring them. 50 stubs outnumber 3 walls 16:1, but a
+    // 400px wall says far more about the building's grid than a 2px fragment does.
+    const stubs = Array.from({ length: 50 }, (_, i) => run(0.05 + i * 0.01, 0.5, 2, 40));
+    const walls = [run(0.1, 0.1, 400, 10), run(0.2, 0.3, 400, 10), run(0.3, 0.6, 400, 10)];
+    const out = dominantAngles([...stubs, ...walls], { maxAngles: 1 });
+    expect(hasAngle(out, 10)).toBe(true);
+    expect(hasAngle(out, 40)).toBe(false);
+  });
+
+  it("ignores an orientation holding less than minShareFrac of the total wall length", () => {
+    const walls = [run(0.1, 0.1, 900, 0), run(0.2, 0.3, 900, 90)];
+    const sliver = [run(0.5, 0.5, 40, 25)];
+    expect(dominantAngles([...walls, ...sliver])).toEqual([0, 90, 180, 270]);
+    // …unless the caller lowers the bar, which proves the sliver was really there.
+    expect(hasAngle(dominantAngles([...walls, ...sliver], { minShareFrac: 0.01 }), 25)).toBe(true);
+  });
+
+  it("respects maxAngles: only the heaviest orientations are searched", () => {
+    const a = [run(0.1, 0.1, 900, 0), run(0.15, 0.1, 900, 0)];
+    const b = [run(0.2, 0.2, 600, 10), run(0.25, 0.2, 600, 10)];
+    const c = [run(0.3, 0.3, 300, 40), run(0.35, 0.3, 300, 40)];
+    const all = [...a, ...b, ...c];
+    expect(hasAngle(dominantAngles(all, { maxAngles: 3 }), 40)).toBe(true);
+    const capped = dominantAngles(all, { maxAngles: 1 });
+    expect(hasAngle(capped, 40)).toBe(false);
+    expect(hasAngle(capped, 10)).toBe(false); // only the single heaviest orientation survives
+    expect(capped).toEqual([0, 90, 180, 270]);
+  });
+
+  it("undoes the page's aspect ratio before measuring an angle", () => {
+    // Would catch: reading angles straight out of the normalized coordinates. Normalising divides x
+    // by the page WIDTH and y by its HEIGHT — an anisotropic squash that changes every angle that
+    // isn't square. This run is a true 10 degrees on a 2:1 page.
+    const tilted = [
+      { x1: 0.1, y1: 0.1, x2: 0.5, y2: 0.1 + 0.4 * 2 * Math.tan((10 * Math.PI) / 180) },
+    ];
+    expect(hasAngle(dominantAngles(tilted, { aspectRatio: 2 }), 10)).toBe(true);
+    // Without the correction the same wall reads as ~19.4 degrees — a rotation the building
+    // never uses, and the real 10-degree one never searched.
+    const uncorrected = dominantAngles(tilted);
+    expect(hasAngle(uncorrected, 10)).toBe(false);
+    expect(hasAngle(uncorrected, 19.4, 0.2)).toBe(true);
+  });
+
+  it("empty, zero-length and non-finite input all fall back to the four square rotations", () => {
+    // Never throws: this feeds a server action, and a plan whose geometry extraction produced
+    // nothing usable must still be searchable.
+    expect(dominantAngles([])).toEqual([0, 90, 180, 270]);
+    expect(dominantAngles([{ x1: 0.1, y1: 0.1, x2: 0.1, y2: 0.1 }])).toEqual([0, 90, 180, 270]);
+    expect(
+      dominantAngles([{ x1: Number.NaN, y1: 0, x2: 1, y2: 1 }, { x1: 0, y1: 0, x2: Infinity, y2: 0 }])
+    ).toEqual([0, 90, 180, 270]);
+  });
+
+  it("returns a sorted, de-duplicated list inside [0, 360)", () => {
+    const out = dominantAngles([run(0.1, 0.1, 500, 10), run(0.4, 0.1, 500, 0)]);
+    expect(out).toEqual([...out].sort((a, b) => a - b));
+    expect(new Set(out).size).toBe(out.length);
+    expect(out.every((v) => v >= 0 && v < 360)).toBe(true);
   });
 });
 

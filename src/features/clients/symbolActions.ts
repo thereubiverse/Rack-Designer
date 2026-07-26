@@ -5,7 +5,15 @@ import { getFloorPlan } from "@/features/locations/repository";
 import type { PlanLabel } from "@/lib/supabase/types";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
-import { extractTemplate, matchSymbol, cropToInk, hasInk, type GreyImage, type SymbolHit } from "./symbolMatch";
+import {
+  extractTemplate,
+  matchSymbol,
+  cropToInk,
+  hasInk,
+  dominantAngles,
+  type GreyImage,
+  type SymbolHit,
+} from "./symbolMatch";
 import { decodePlanPage, type PlanPath, type PlanTextItem } from "./planPaths";
 import { coerceTypeCode, type Confidence, type DeviceProposal } from "./planDetect";
 
@@ -20,7 +28,9 @@ export type PickSymbolResult =
 /** The measured operating point (see symbolMatch's header): 0.65 with the four square rotations
  *  gave CP 9/10 and GFI 12/14 on the real sheet; 0.7 costs real detections. */
 const MIN_SCORE = 0.65;
-const ROTATIONS = [0, 90, 180, 270];
+/** What to search when the plan has no extracted wall geometry to derive orientations from — the
+ *  four square rotations this feature shipped with. */
+const SQUARE_ROTATIONS = [0, 90, 180, 270];
 /** A sheet has hundreds of outlets, not thousands. The cap bounds both the response and the review
  *  list; the matcher returns highest-scoring first, so a truncated run keeps the best hits. */
 const MAX_HITS = 200;
@@ -134,10 +144,21 @@ export async function discoverSymbolsAction(input: {
       return { ok: false, error: "Nothing to match there — try a different symbol." };
     }
 
+    // Devices mount on walls, so a symbol's rotation follows the wall it sits on. The plan's own
+    // extracted wall runs say which orientations this building uses; searching those (and nothing
+    // else) is what recovers a symbol drawn in a rotated wing without paying for arbitrary angles
+    // the drawing never uses. Measured on the real Cellar sheet: GFI recall 12/14 -> 13/14, CP
+    // 9/10 -> 9/10, at ~2x the runtime. A plan whose geometry has never been extracted has
+    // wall_runs null; that falls back to exactly the previous behaviour.
+    const rotations =
+      plan.wall_runs && plan.wall_runs.length > 0
+        ? dominantAngles(plan.wall_runs, { aspectRatio: img.width / img.height })
+        : SQUARE_ROTATIONS;
+
     const tpl = extractTemplate(img, cropped);
     const hits = matchSymbol(img, tpl, {
       minScore: MIN_SCORE,
-      rotations: ROTATIONS,
+      rotations,
       maxHits: MAX_HITS,
     });
 
