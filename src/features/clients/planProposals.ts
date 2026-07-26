@@ -1,6 +1,6 @@
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
-import type { NormPoint } from "./floorPlanOps";
+import { pointInPolygon, polygonCentroid, type NormPoint } from "./floorPlanOps";
 import { suggestDeviceCode } from "./floorDeviceOps";
 
 export type DeviceCommit =
@@ -40,6 +40,82 @@ export function planDeviceCommit(
   }
   const free = !!label && CODE_RE.test(label) && !siteCodes.some((c) => c.toUpperCase() === labelUp);
   return { kind: "create", code: free ? label : suggestDeviceCode(p.typeCode, siteCodes) };
+}
+
+/** How far apart two devices' Y can be and still count as the same run along a wall. In normalized
+ *  plan units, so ~0.02 of a 1733px-tall sheet is ~35px — wider than the few pixels of jitter along
+ *  one wall, far narrower than the gap between opposite walls of a room. */
+const ROW_BAND = 0.02;
+
+/** A room only participates in ordering if it has been traced; an untraced room contains nothing. */
+type OrderingRoom = { code: string; plan_polygon: NormPoint[] | null };
+
+/** Reading order with a tolerance band: top-to-bottom by row, left-to-right within a row.
+ *
+ *  The band is the point. A straight sort on Y alone interleaves two devices 1px apart vertically
+ *  but a metre apart horizontally, which is exactly the "the numbers are random" complaint — a run
+ *  of outlets along one wall has to come out consecutive. Banding is greedy from the topmost device
+ *  rather than fixed buckets, so two devices 0.3px apart can never fall either side of a boundary. */
+function readingOrder<T extends { point: NormPoint }>(items: T[]): T[] {
+  const byY = [...items].sort((a, b) => a.point[1] - b.point[1]);
+  const out: T[] = [];
+  let row: T[] = [];
+  let rowTop = 0;
+  for (const it of byY) {
+    if (row.length === 0 || it.point[1] - rowTop <= ROW_BAND) {
+      if (row.length === 0) rowTop = it.point[1];
+      row.push(it);
+      continue;
+    }
+    out.push(...row.sort((a, b) => a.point[0] - b.point[0]));
+    row = [it];
+    rowTop = it.point[1];
+  }
+  out.push(...row.sort((a, b) => a.point[0] - b.point[0]));
+  return out;
+}
+
+/**
+ * Put device proposals into the order a cabling crew would walk them: room by room, and within a
+ * room along each wall run.
+ *
+ * Without this the numbers follow whatever order the matcher happened to find clusters in, so two
+ * outlets on the same wall can be TO03 and TO17. That is useless on site, where the numbering is
+ * what tells someone which port they are standing in front of.
+ *
+ * Rooms come first when the floor has any TRACED — grouping by room is what makes a drop list read
+ * "011 is TO05-TO08". Rooms themselves are visited in reading order, by centroid. Devices in no
+ * traced room keep the same reading order and go last, so an untraced floor still numbers sensibly
+ * rather than not at all.
+ */
+export function orderDeviceProposals(
+  proposals: DeviceProposal[],
+  rooms: OrderingRoom[] = []
+): DeviceProposal[] {
+  const traced = rooms.filter(
+    (r): r is OrderingRoom & { plan_polygon: NormPoint[] } =>
+      Array.isArray(r.plan_polygon) && r.plan_polygon.length >= 3
+  );
+  if (traced.length === 0) return readingOrder(proposals);
+
+  const ordered = [...traced].sort((a, b) => {
+    const [ax, ay] = polygonCentroid(a.plan_polygon);
+    const [bx, by] = polygonCentroid(b.plan_polygon);
+    // Same banding as devices: rooms side by side down a corridor read left-to-right, not by a
+    // hair's difference in how their outlines were traced.
+    if (Math.abs(ay - by) > ROW_BAND) return ay - by;
+    return ax - bx || a.code.localeCompare(b.code);
+  });
+
+  const remaining = new Set(proposals);
+  const out: DeviceProposal[] = [];
+  for (const room of ordered) {
+    const inside = [...remaining].filter((p) => pointInPolygon(p.point, room.plan_polygon));
+    for (const p of inside) remaining.delete(p);
+    out.push(...readingOrder(inside));
+  }
+  out.push(...readingOrder([...remaining]));
+  return out;
 }
 
 /**

@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
 import {
   numberDeviceProposals,
+  orderDeviceProposals,
   planDeviceCommit,
   planRoomCommit,
   filterAlreadyTraced,
 } from "./planProposals";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
+import type { NormPoint } from "./floorPlanOps";
 
 function dev(over: Partial<FloorDeviceRow>): FloorDeviceRow {
   return {
@@ -205,5 +207,85 @@ describe("numberDeviceProposals", () => {
     // one". Numbering must not quietly attach nineteen proposals to whatever is in the inventory.
     const [out] = numberDeviceProposals([dp("a", "TO")], ["TO01"]);
     expect(planDeviceCommit(out, [], ["TO01"])).toEqual({ kind: "create", code: "TO02" });
+  });
+});
+
+describe("orderDeviceProposals", () => {
+  const at = (id: string, x: number, y: number): DeviceProposal => ({
+    id,
+    label: "",
+    typeCode: "TO",
+    point: [x, y],
+    confidence: "high",
+  });
+  const ids = (ps: DeviceProposal[]) => ps.map((p) => p.id);
+  const room = (code: string, x0: number, y0: number, x1: number, y1: number) => ({
+    code,
+    plan_polygon: [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ] as NormPoint[],
+  });
+
+  it("runs a wall of outlets left-to-right even when their Y jitters", () => {
+    // The complaint this exists for: four ports along one wall must not come out 3, 17, 5, 11.
+    const jittered = [at("d", 0.8, 0.5005), at("b", 0.4, 0.4995), at("a", 0.2, 0.5), at("c", 0.6, 0.501)];
+    expect(ids(orderDeviceProposals(jittered))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("reads row by row down the sheet", () => {
+    const grid = [at("br", 0.8, 0.8), at("tr", 0.8, 0.2), at("bl", 0.2, 0.8), at("tl", 0.2, 0.2)];
+    expect(ids(orderDeviceProposals(grid))).toEqual(["tl", "tr", "bl", "br"]);
+  });
+
+  it("keeps genuinely separate rows apart rather than merging them into one", () => {
+    const rows = [at("low", 0.2, 0.6), at("high", 0.8, 0.2)];
+    expect(ids(orderDeviceProposals(rows))).toEqual(["high", "low"]);
+  });
+
+  it("GROUPS BY ROOM when the floor has traced rooms, so a room's ports are consecutive", () => {
+    // Interleaved on the sheet: without room grouping these alternate between the two rooms.
+    const ps = [
+      at("r2-a", 0.6, 0.2),
+      at("r1-a", 0.1, 0.2),
+      at("r2-b", 0.7, 0.5),
+      at("r1-b", 0.2, 0.5),
+    ];
+    const rooms = [room("102", 0.5, 0.0, 0.9, 0.9), room("101", 0.0, 0.0, 0.4, 0.9)];
+    // 101 is to the LEFT of 102 and both span the same rows, so it is walked first.
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["r1-a", "r1-b", "r2-a", "r2-b"]);
+  });
+
+  it("puts devices in no traced room LAST, still in reading order", () => {
+    const ps = [at("outside", 0.95, 0.1), at("inside", 0.1, 0.5)];
+    expect(ids(orderDeviceProposals(ps, [room("101", 0.0, 0.0, 0.4, 0.9)]))).toEqual([
+      "inside",
+      "outside",
+    ]);
+  });
+
+  it("ignores rooms that have never been traced", () => {
+    const ps = [at("b", 0.8, 0.2), at("a", 0.2, 0.2)];
+    const untraced = [{ code: "101", plan_polygon: null }];
+    expect(ids(orderDeviceProposals(ps, untraced))).toEqual(["a", "b"]);
+  });
+
+  it("never drops or duplicates a proposal", () => {
+    const ps = Array.from({ length: 12 }, (_, i) => at(`d${i}`, (i * 7) % 10 / 10, (i * 3) % 10 / 10));
+    const rooms = [room("101", 0.0, 0.0, 0.5, 0.5), room("102", 0.5, 0.5, 1.0, 1.0)];
+    const out = orderDeviceProposals(ps, rooms);
+    expect(out).toHaveLength(ps.length);
+    expect(new Set(ids(out))).toEqual(new Set(ids(ps)));
+  });
+
+  it("numbers in walk order once composed with numbering", () => {
+    const ps = [at("right", 0.8, 0.5), at("left", 0.2, 0.5)];
+    const out = numberDeviceProposals(orderDeviceProposals(ps), []);
+    expect(out.map((p) => [p.id, p.label])).toEqual([
+      ["left", "TO01"],
+      ["right", "TO02"],
+    ]);
   });
 });

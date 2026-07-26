@@ -43,7 +43,12 @@ import {
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
 import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
-import { numberDeviceProposals, planDeviceCommit, planRoomCommit } from "./planProposals";
+import {
+  numberDeviceProposals,
+  orderDeviceProposals,
+  planDeviceCommit,
+  planRoomCommit,
+} from "./planProposals";
 import { normaliseCode } from "./validation";
 import { ProposalPanel } from "./ProposalPanel";
 import { deriveWallCorners } from "./planGeometry";
@@ -1078,8 +1083,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         setWizardNotice(res.error);
         return;
       }
-      // Numbered here, not by the action: the code space is site-wide and only the client holds it.
-      const numbered = numberDeviceProposals(res.proposals, siteCodesRef.current);
+      // Ordered BEFORE numbering, so the numbers themselves run room by room and along each wall —
+      // on site the number is what identifies the port you are standing at, and match order is
+      // arbitrary. Numbered here, not in the action: the code space is site-wide and only the
+      // client holds it.
+      const numbered = numberDeviceProposals(
+        orderDeviceProposals(res.proposals, rooms),
+        siteCodesRef.current
+      );
       setProposals((p) => ({ ...p, devices: numbered }));
       if (numbered.length === 0) setWizardNotice("none-found");
     } finally {
