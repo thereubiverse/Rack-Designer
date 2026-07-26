@@ -42,6 +42,31 @@ export function planDeviceCommit(
   return { kind: "create", code: free ? label : suggestDeviceCode(p.typeCode, siteCodes) };
 }
 
+/**
+ * Label every device proposal `PREFIX + next free NN`, ignoring whatever text sits near it on the
+ * plan.
+ *
+ * Labels used to be lifted from the nearest plan label, which is wrong often enough to be worse
+ * than useless: a sheet's text sits where it fits, not where its device is, so a telecom outlet
+ * would arrive named after the `GFI` tag or the dimension string that happened to be closest.
+ *
+ * Numbering runs against `takenCodes` AND accumulates its own output, so a batch of nineteen gets
+ * nineteen distinct codes rather than nineteen copies of the first free one. Because every code it
+ * produces is free at the site, `planDeviceCommit` reads them as `create` — they cannot collide with
+ * an existing device and silently bind a proposal to it.
+ */
+export function numberDeviceProposals(
+  proposals: DeviceProposal[],
+  takenCodes: string[]
+): DeviceProposal[] {
+  const taken = [...takenCodes];
+  return proposals.map((p) => {
+    const code = suggestDeviceCode(p.typeCode, taken);
+    taken.push(code);
+    return { ...p, label: code };
+  });
+}
+
 /** Attach to a polygon-less room matched by name OR code (case-insensitive); else create with a
  *  code prefixed by the room type (MDF/IDF) or "R" for generic rooms. suggestDeviceCode is a
  *  generic "prefix + next free NN" generator — reused here for room codes. */

@@ -285,21 +285,6 @@ describe("discoverSymbolsAction", () => {
     ]);
   });
 
-  it("adopts a code-shaped plan label near the hit, and ignores prose", async () => {
-    // Would catch: dropping the label lookup entirely, or accepting any nearby text — the sheet is
-    // full of prose ("FOR CARD MACHINE"), which would land in the device's code field.
-    vi.mocked(getFloorPlan).mockResolvedValue({
-      ...plan,
-      plan_labels: [
-        // 20px right of the hit at (1300, 866.5) -> within the ~40px radius, code-shaped.
-        { text: "CP12", x: 1320 / IMG_W, y: 866.5 / IMG_H },
-        // Closer still, but prose: must never win.
-        { text: "FOR CARD MACHINE", x: 1305 / IMG_W, y: 866.5 / IMG_H },
-      ],
-    } as never);
-    const res = await discoverSymbolsAction(input());
-    expect(res.ok && res.proposals[0].label).toBe("CP12");
-  });
 
   it("leaves the label empty when the only nearby text is prose", async () => {
     vi.mocked(getFloorPlan).mockResolvedValue({
@@ -321,17 +306,6 @@ describe("discoverSymbolsAction", () => {
     expect(res.ok && res.proposals[0].label).toBe("");
   });
 
-  it("picks the NEAREST code-shaped label when several are in range", async () => {
-    vi.mocked(getFloorPlan).mockResolvedValue({
-      ...plan,
-      plan_labels: [
-        { text: "CP99", x: 1330 / IMG_W, y: 866.5 / IMG_H },
-        { text: "CP12", x: 1310 / IMG_W, y: 866.5 / IMG_H },
-      ],
-    } as never);
-    const res = await discoverSymbolsAction(input());
-    expect(res.ok && res.proposals[0].label).toBe("CP12");
-  });
 
   it("derives the rotations from the plan's OWN wall runs and searches exactly those", async () => {
     // The user's report: "many times the symbols are the same but at different angles because of

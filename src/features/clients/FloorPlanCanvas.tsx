@@ -43,7 +43,7 @@ import {
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
 import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
-import { planDeviceCommit, planRoomCommit } from "./planProposals";
+import { numberDeviceProposals, planDeviceCommit, planRoomCommit } from "./planProposals";
 import { normaliseCode } from "./validation";
 import { ProposalPanel } from "./ProposalPanel";
 import { deriveWallCorners } from "./planGeometry";
@@ -60,6 +60,11 @@ const FALLBACK_PANE_HEIGHT = 560;
 
 const ZOOM_MAX = 8;
 const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute number
+
+/** Zoom used when a proposal row asks "show me where this is". Absolute, not a multiple of fit:
+ *  the symbols this reveals are ~14px on the 2600px-wide render, so they need roughly 1:1 pixels
+ *  plus a bit to be legible, whatever the pane happens to be sized to. */
+const FOCUS_ZOOM = 2.5;
 
 // Fit-to-area easing — the SAME transition the rack designer's Fit toggle uses
 // (transform 340ms cubic-bezier(0.2, 0, 0, 1)), so the plan glides to the fitted view instead of
@@ -708,6 +713,30 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setReturnView(moved ? before : null);
   }, [returnView, paneW, paneH, imgW, imgH, animateViewTo]);
 
+  /**
+   * Centre the plan on one normalized point and zoom in far enough to see what is drawn there —
+   * the answer to "which of these nineteen is this row?".
+   *
+   * Never zooms OUT: a search can return a symbol the user is already inspecting closely, and
+   * yanking the view back to a fixed zoom to "focus" it would lose the detail they were reading.
+   * Reuses the fit tween so this travels with the same easing as the Fit button rather than
+   * teleporting.
+   */
+  const focusOnPoint = useCallback(
+    ([nx, ny]: NormPoint) => {
+      const zoom = clampZoom(Math.max(viewRef.current.zoom, FOCUS_ZOOM));
+      animateViewTo({
+        zoom,
+        panX: paneW / 2 - nx * imgW * zoom,
+        panY: paneH / 2 - ny * imgH * zoom,
+      });
+      // The fit toggle's remembered view belongs to a fit, not to this — leaving it armed would
+      // make the next Fit click restore a view the user never asked to come back to.
+      setReturnView(null);
+    },
+    [animateViewTo, clampZoom, paneW, paneH, imgW, imgH]
+  );
+
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
   // scrolling underneath the plan while the user zooms it.
@@ -941,6 +970,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           setWizardNotice(res.error);
           return;
         }
+        // NOT renumbered, unlike the symbol search below. This pass reads the sheet's own equipment
+        // tags, and those labels are the point of it — they are how an `AC-C-1` proposal finds the
+        // existing `AC-C-1` in the inventory and places it instead of creating a second one.
         setProposals((p) => ({ ...p, devices: res.proposals }));
         if (res.proposals.length === 0) setWizardNotice("none-found");
       }
@@ -1046,8 +1078,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         setWizardNotice(res.error);
         return;
       }
-      setProposals((p) => ({ ...p, devices: res.proposals }));
-      if (res.proposals.length === 0) setWizardNotice("none-found");
+      // Numbered here, not by the action: the code space is site-wide and only the client holds it.
+      const numbered = numberDeviceProposals(res.proposals, siteCodesRef.current);
+      setProposals((p) => ({ ...p, devices: numbered }));
+      if (numbered.length === 0) setWizardNotice("none-found");
     } finally {
       setDiscovering(null);
     }
@@ -3072,6 +3106,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               setSelectedProposalVertex(null);
             }}
             onAcceptDevice={(dp) => void acceptOne(() => acceptDevice(dp))}
+            onFocusDevice={(dp) => focusOnPoint(dp.point)}
             onAcceptRoom={(rp) => void acceptOne(() => acceptRoom(rp))}
             onDismissDevice={dropDevice}
             onDismissRoom={dropRoom}

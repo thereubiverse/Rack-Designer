@@ -2,7 +2,6 @@
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { getFloorPlan } from "@/features/locations/repository";
-import type { PlanLabel } from "@/lib/supabase/types";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
 import {
@@ -44,11 +43,6 @@ const MAX_HITS = 200;
 /** Below this the "symbol" is a few pixels of noise: correlating it would return a wall of
  *  meaningless hits rather than nothing, which is the worse failure. */
 const MIN_TEMPLATE_PX = 6;
-/** How far from a hit's centre a plan label may sit and still be that symbol's code. Symbols run
- *  13-24px on this raster and their callouts sit right beside them. */
-const LABEL_RADIUS_PX = 40;
-/** A device code, not prose. The text layer is ~400 entries of both. */
-const CODE_SHAPED = /^[A-Za-z0-9_-]{2,12}$/;
 /** One message for every "that click resolved to nothing" case, so the user is told what to do
  *  rather than which internal gate refused. */
 const NO_SYMBOL_THERE = "No symbol there — click directly on a device symbol.";
@@ -87,26 +81,6 @@ function toConfidence(score: number): Confidence {
   return "low";
 }
 
-/** The nearest CODE-SHAPED plan label within LABEL_RADIUS_PX of the hit, or "". Empty is a fine
- *  answer — the accept path falls back to suggestDeviceCode — and far better than handing a device
- *  a code lifted from a note ("FOR CARD MACHINE"), which is why the shape gate comes first and the
- *  distance contest runs only among survivors. */
-function nearestCode(labels: PlanLabel[], hit: SymbolHit, imgW: number, imgH: number): string {
-  let best = "";
-  let bestDist = LABEL_RADIUS_PX;
-  for (const l of labels) {
-    const text = typeof l?.text === "string" ? l.text.trim() : "";
-    if (!CODE_SHAPED.test(text)) continue;
-    if (!isFiniteNum(l.x) || !isFiniteNum(l.y)) continue;
-    const dist = Math.hypot(l.x * imgW - hit.x, l.y * imgH - hit.y);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = text;
-    }
-  }
-  return best;
-}
-
 /**
  * Structural pass: find the picked symbol by its geometry.
  *
@@ -126,7 +100,6 @@ async function structuralProposals(
   page: number,
   box: { x: number; y: number; w: number; h: number },
   img: GreyImage,
-  labels: PlanLabel[],
   typeCode: string
 ): Promise<DeviceProposal[]> {
   const { paths } = await decodePlanPage(bytes, page);
@@ -160,7 +133,10 @@ async function structuralProposals(
 
   return same.map((h: StructHit, i) => ({
     id: `str-${i}`,
-    label: nearestCode(labels, { x: h.x, y: h.y, score: 1 } as SymbolHit, img.width, img.height),
+    // Labelled by the CALLER, which numbers a whole batch against the site's existing codes.
+    // Plan text is deliberately not consulted: it sits where it fits on the sheet, not where its
+    // device is, so the nearest label is regularly another symbol's.
+    label: "",
     typeCode,
     // Hits are CENTRES in page pixels; the canvas works in 0..1 against the same raster.
     point: [clamp(h.x / img.width, 0, 1), clamp(h.y / img.height, 0, 1)] as [number, number],
@@ -176,8 +152,8 @@ async function structuralProposals(
  * NOT an AI pass despite living beside one: this is exact raster template matching (symbolMatch),
  * measured on the real sheet. No model, no key, no network beyond fetching the plan's own PDF.
  *
- * `floorId` is the ONLY client input trusted for scope — the plan, its PDF and its labels are all
- * derived from it server-side. The box is clamped into the page and the type code is coerced
+ * `floorId` is the ONLY client input trusted for scope — the plan and its PDF are both derived
+ * from it server-side. The box is clamped into the page and the type code is coerced
  * against the known floor types, so neither can carry a client's mistake into the database.
  *
  * NOTHING may escape as a rejection: getFloorPlan, downloadPlanObject, renderPlanGrey and
@@ -208,7 +184,6 @@ export async function discoverSymbolsAction(input: {
     }
 
     const typeCode = coerceTypeCode(input.typeCode);
-    const labels = plan.plan_labels ?? [];
 
     // ---- Structural matching first ----------------------------------------------------------
     //
@@ -222,7 +197,6 @@ export async function discoverSymbolsAction(input: {
       page,
       box,
       img,
-      labels,
       typeCode
     );
     if (structural.length > 0) return { ok: true, proposals: structural };
@@ -259,7 +233,7 @@ export async function discoverSymbolsAction(input: {
     // the same type.
     const proposals: DeviceProposal[] = hits.map((h, i) => ({
       id: `sym-${i}`,
-      label: nearestCode(labels, h, img.width, img.height),
+      label: "", // numbered by the caller — see the note in structuralProposals
       typeCode,
       // Hits are CENTRES in page pixels; the canvas works in 0..1 against the same raster.
       point: [clamp(h.x / img.width, 0, 1), clamp(h.y / img.height, 0, 1)],

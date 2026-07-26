@@ -171,7 +171,38 @@ describe("ProposalPanel", () => {
 
   it("shows each proposal's confidence", () => {
     renderPanel();
-    expect(screen.getByTestId("proposal-confidence-dev-1")).toHaveAttribute("title", "Confidence: low");
     expect(screen.getByTestId("proposal-confidence-room-0")).toHaveAttribute("title", "Confidence: high");
+    expect(screen.getByTestId("proposal-confidence-dev-1")).toHaveAttribute("title", "Confidence: low");
+  });
+
+  it("still says what the colour means once the dot becomes the reveal control", () => {
+    renderPanel({ onFocusDevice: vi.fn() });
+    expect(screen.getByTestId("proposal-confidence-dev-1")).toHaveAttribute(
+      "title",
+      "Show on plan (confidence: low)"
+    );
+  });
+
+  it("asks to reveal a device on the plan when its dot is clicked", () => {
+    const onFocusDevice = vi.fn();
+    renderPanel({ onFocusDevice });
+    fireEvent.click(screen.getByTestId("proposal-confidence-dev-1"));
+    expect(onFocusDevice).toHaveBeenCalledTimes(1);
+    // The PROPOSAL, not its id — the caller needs its point to centre on.
+    expect(onFocusDevice.mock.calls[0][0]).toMatchObject({ id: "dev-1" });
+  });
+
+  it("keeps the dot inert when no focus handler is given", () => {
+    renderPanel();
+    const dot = screen.getByTestId("proposal-confidence-dev-1");
+    expect(dot.tagName).toBe("SPAN");
+  });
+
+  it("reaches the reveal control from the keyboard, like every other row control", () => {
+    const onFocusDevice = vi.fn();
+    renderPanel({ onFocusDevice });
+    const dot = screen.getByTestId("proposal-confidence-dev-1");
+    expect(dot.tagName).toBe("BUTTON");
+    expect(dot).toHaveAttribute("aria-label", "Show on plan");
   });
 });

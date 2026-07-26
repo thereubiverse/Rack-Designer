@@ -17,13 +17,36 @@ const CONFIDENCE_COLOR: Record<Confidence, string> = {
   low: "bg-neutral-300",
 };
 
-function ConfidenceDot({ id, confidence }: { id: string; confidence: Confidence }) {
+function ConfidenceDot({
+  id,
+  confidence,
+  onFocus,
+}: {
+  id: string;
+  confidence: Confidence;
+  /** When given, the dot becomes the "show me where this is" control for its row. */
+  onFocus?: () => void;
+}) {
+  const dot = `h-2 w-2 shrink-0 rounded-full ${CONFIDENCE_COLOR[confidence]}`;
+  if (!onFocus) {
+    return (
+      <span data-testid={`proposal-confidence-${id}`} title={`Confidence: ${confidence}`} className={`mt-1 ${dot}`} />
+    );
+  }
+  // A button, not a span with a handler: this is the one control that answers "which one is this?",
+  // and it has to be reachable from the keyboard like every other control in the row. The padding
+  // gives it a real hit area — a 8px dot is not a target — while the dot itself stays 8px.
   return (
-    <span
+    <button
+      type="button"
       data-testid={`proposal-confidence-${id}`}
-      title={`Confidence: ${confidence}`}
-      className={`mt-1 h-2 w-2 shrink-0 rounded-full ${CONFIDENCE_COLOR[confidence]}`}
-    />
+      aria-label="Show on plan"
+      title={`Show on plan (confidence: ${confidence})`}
+      onClick={onFocus}
+      className="-m-1 flex shrink-0 items-center justify-center rounded-full p-1 hover:bg-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+    >
+      <span className={dot} />
+    </button>
   );
 }
 
@@ -43,6 +66,8 @@ export interface ProposalPanelProps {
   onEditRoom: (id: string, patch: Partial<RoomProposal>) => void;
   onToggleRoomOutline: (id: string) => void;
   onAcceptDevice: (dp: DeviceProposal) => void;
+  /** Centre and zoom the plan on a proposed device — the dot beside the row is the control. */
+  onFocusDevice?: (dp: DeviceProposal) => void;
   onAcceptRoom: (rp: RoomProposal) => void;
   onDismissDevice: (id: string) => void;
   onDismissRoom: (id: string) => void;
@@ -60,6 +85,7 @@ export function ProposalPanel({
   onEditRoom,
   onToggleRoomOutline,
   onAcceptDevice,
+  onFocusDevice,
   onAcceptRoom,
   onDismissDevice,
   onDismissRoom,
@@ -167,7 +193,11 @@ export function ProposalPanel({
             data-testid={`proposal-item-${dp.id}`}
             className="flex items-start gap-1.5 rounded-xl px-1 py-1.5 hover:bg-neutral-50"
           >
-            <ConfidenceDot id={dp.id} confidence={dp.confidence} />
+            <ConfidenceDot
+              id={dp.id}
+              confidence={dp.confidence}
+              onFocus={onFocusDevice ? () => onFocusDevice(dp) : undefined}
+            />
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <input
                 data-testid={`proposal-label-${dp.id}`}

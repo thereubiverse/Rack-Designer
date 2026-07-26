@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
-import { planDeviceCommit, planRoomCommit, filterAlreadyTraced } from "./planProposals";
+import {
+  numberDeviceProposals,
+  planDeviceCommit,
+  planRoomCommit,
+  filterAlreadyTraced,
+} from "./planProposals";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 function dev(over: Partial<FloorDeviceRow>): FloorDeviceRow {
@@ -155,5 +160,50 @@ describe("filterAlreadyTraced", () => {
   it("returns everything when there are no traced rooms at all", () => {
     const p = prop("room-0", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
     expect(filterAlreadyTraced([p], []).map((r) => r.id)).toEqual(["room-0"]);
+  });
+});
+
+describe("numberDeviceProposals", () => {
+  const dp = (id: string, typeCode: string, label = "GFI"): DeviceProposal => ({
+    id,
+    label,
+    typeCode,
+    point: [0.5, 0.5],
+    confidence: "high",
+  });
+
+  it("replaces the plan's text with PREFIX + number", () => {
+    // The whole point: a telecom outlet must not be named after the `GFI` tag that happened to be
+    // nearest it on the sheet.
+    const out = numberDeviceProposals([dp("a", "TO"), dp("b", "TO")], []);
+    expect(out.map((p) => p.label)).toEqual(["TO01", "TO02"]);
+  });
+
+  it("gives a batch DISTINCT codes, not N copies of the first free one", () => {
+    const out = numberDeviceProposals(Array.from({ length: 19 }, (_, i) => dp(`d${i}`, "TO")), []);
+    expect(new Set(out.map((p) => p.label)).size).toBe(19);
+    expect(out[18].label).toBe("TO19");
+  });
+
+  it("steps over codes the site already uses", () => {
+    const out = numberDeviceProposals([dp("a", "TO")], ["TO01", "TO02"]);
+    expect(out[0].label).toBe("TO03");
+  });
+
+  it("numbers each type independently", () => {
+    const out = numberDeviceProposals([dp("a", "TO"), dp("b", "CAM"), dp("c", "TO")], []);
+    expect(out.map((p) => p.label)).toEqual(["TO01", "CAM01", "TO02"]);
+  });
+
+  it("leaves everything except the label alone", () => {
+    const [out] = numberDeviceProposals([dp("a", "TO")], []);
+    expect(out).toMatchObject({ id: "a", typeCode: "TO", point: [0.5, 0.5], confidence: "high" });
+  });
+
+  it("produces codes that commit as CREATE — never silently binding to an existing device", () => {
+    // A generated code is free by construction, so planDeviceCommit can't read it as "place that
+    // one". Numbering must not quietly attach nineteen proposals to whatever is in the inventory.
+    const [out] = numberDeviceProposals([dp("a", "TO")], ["TO01"]);
+    expect(planDeviceCommit(out, [], ["TO01"])).toEqual({ kind: "create", code: "TO02" });
   });
 });

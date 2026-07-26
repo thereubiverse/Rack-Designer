@@ -2511,6 +2511,57 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     expect(screen.getByTestId("proposal-item-sym-1")).toBeInTheDocument();
   });
 
+  it("NUMBERS the results after the type prefix, ignoring the plan's own text", async () => {
+    // The sheet's text sits where it fits, not where its device is, so a telecom outlet was
+    // regularly named after the GFI tag nearest it. Labels are generated now.
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "GFI", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "41,43", typeCode: "CAM", point: [0.25, 0.75], confidence: "high" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    // CAM03/CAM04, not CAM01/CAM02: the fixture site already owns those two, and a generated code
+    // has to step over what exists or the create would collide on `unique (site_id, code)`.
+    expect(screen.getByTestId<HTMLInputElement>("proposal-label-sym-0").value).toBe("CAM03");
+    expect(screen.getByTestId<HTMLInputElement>("proposal-label-sym-1").value).toBe("CAM04");
+  });
+
+  it("centres and zooms the plan on a proposal when its dot is clicked", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "", typeCode: "CAM", point: [0.25, 0.75], confidence: "high" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    const g = () => screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform");
+    const before = g();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("proposal-confidence-sym-1"));
+    });
+    // It TWEENS (the shared fit easing), so the view arrives over several frames rather than
+    // jumping — waitFor lets it land instead of asserting a mid-flight value.
+    await waitFor(() => {
+      const m = /translate\(([-\d.]+) ([-\d.]+)\) scale\(([\d.]+)\)/.exec(g()!)!;
+      const [panX, panY, zoom] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      // The proposal's own point ends up in the middle of the pane (870x560 in jsdom — see the
+      // fit-on-mount note above), at the focus zoom.
+      expect(zoom).toBeCloseTo(2.5, 3);
+      expect(panX + 0.25 * 1200 * zoom).toBeCloseTo(870 / 2, 1);
+      expect(panY + 0.75 * 800 * zoom).toBeCloseTo(560 / 2, 1);
+    });
+    expect(g()).not.toBe(before);
+  });
+
   it("says so when nothing matched, rather than falling silent", async () => {
     vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({ ok: true, proposals: [] });
     const { container } = renderWithTypes();
