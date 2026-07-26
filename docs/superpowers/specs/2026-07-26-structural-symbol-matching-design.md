@@ -189,3 +189,21 @@ returns **19** where §6 says 20: the twentieth was a leader ARROWHEAD that the 
 and this rejects, confirmed by cropping it. The engine is more accurate than the number set for it.
 
 Assembly costs ~30ms per sheet, so §7's concern about cost is answered and no cache is needed.
+
+## 10. Found by live verification (2026-07-26)
+
+The engine reproduced every offline count but the running app returned **2** proposals, not 19. Two
+real defects, both in the integration rather than the geometry, found by instrumenting the action
+and reading the numbers instead of reasoning about them:
+
+1. **`signatureFor` described the neighbourhood, not the symbol.** It took every primitive whose
+   centroid fell in the seed box. Measured against a verified outlet: a +-9px box gives 5 corners and
+   19 matches, a +-30px box gives 15 corners and **0**. It now clusters first and takes the cluster
+   nearest the box centre, so the pick's deliberate over-selection is genuinely harmless.
+2. **The fill filter required the EXACT class.** The 19 genuine outlets straddle "solid" and "half"
+   by fractions of a percent of ink, so exact equality kept 2. Filled-vs-open is the only distinction
+   the legend actually draws, and is what the filter now uses.
+
+Neither was visible offline, because offline probes filtered on `!== "hollow"` and used tight boxes —
+the two things the app does differently. **Verified in the browser: picking one telecom outlet on the
+Cellar plan returns 19 proposals with ghost pins on each.**

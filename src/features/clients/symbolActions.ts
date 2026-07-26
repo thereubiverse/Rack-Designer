@@ -149,8 +149,14 @@ async function structuralProposals(
   const seed = hits.reduce((best, h) =>
     Math.hypot(h.x - cx, h.y - cy) < Math.hypot(best.x - cx, best.y - cy) ? h : best
   );
-  const seedFill = classifyFill(img, seed);
-  const same = hits.filter((h) => classifyFill(img, h) === seedFill).slice(0, MAX_HITS);
+  // SHADED-OR-NOT, not the exact fill class. Requiring the exact class was tried against the real
+  // sheet and is far too strict: the 19 genuine telecom outlets straddle "solid" and "half" on
+  // fractions of a percent of ink, so exact equality kept 2 of them and the search looked broken.
+  // Filled-vs-open is also the only distinction the legend actually draws — solid triangle is
+  // "telephone/data outlet with two RJ-45", open triangle is "data outlet".
+  const shaded = (h: StructHit) => classifyFill(img, h) !== "hollow";
+  const seedShaded = shaded(seed);
+  const same = hits.filter((h) => shaded(h) === seedShaded).slice(0, MAX_HITS);
 
   return same.map((h: StructHit, i) => ({
     id: `str-${i}`,

@@ -261,3 +261,44 @@ describe("classifyFill", () => {
     expect(() => classifyFill(field(4), { x: 39, y: 39, r: 10, parts: 1 })).not.toThrow();
   });
 });
+
+describe("signatureFor with an over-selecting pick box", () => {
+  const seg = (a: [number, number], b: [number, number]): StructPath => ({
+    segs: [{ a, b }],
+    minX: Math.min(a[0], b[0]),
+    minY: Math.min(a[1], b[1]),
+    maxX: Math.max(a[0], b[0]),
+    maxY: Math.max(a[1], b[1]),
+    grey: false,
+  });
+  const tri = (ox: number, oy: number): StructPath[] => [
+    seg([ox, oy], [ox + 8, oy]),
+    seg([ox + 8, oy], [ox + 4, oy + 6.93]),
+    seg([ox + 4, oy + 6.93], [ox, oy]),
+  ];
+  /** A neighbouring tag box, of the sort a real pick drags in alongside the symbol. */
+  const tag = (ox: number, oy: number): StructPath[] => [
+    seg([ox, oy], [ox + 20, oy]),
+    seg([ox + 20, oy], [ox + 20, oy + 12]),
+    seg([ox + 20, oy + 12], [ox, oy + 12]),
+    seg([ox, oy + 12], [ox, oy]),
+  ];
+
+  it("describes only the symbol nearest the click, not the tag dragged in beside it", () => {
+    // Measured failure this guards: a real pick box is 15-70px, which swallowed the neighbour's
+    // corners, matched nothing, and silently dropped discovery back to correlation.
+    const alone = extractPrimitives(tri(100, 100));
+    const tight = signatureFor(alone, { minX: 96, minY: 96, maxX: 114, maxY: 114 })!;
+
+    const crowded = extractPrimitives([...tri(100, 100), ...tag(125, 100)]);
+    const wide = signatureFor(crowded, { minX: 80, minY: 80, maxX: 160, maxY: 130 })!;
+
+    expect(wide.points).toBe(tight.points);
+    expect(signaturesMatch(tight, wide)).toBe(true);
+  });
+
+  it("returns null when no symbol's centre falls in the box at all", () => {
+    const prims = extractPrimitives(tri(100, 100));
+    expect(signatureFor(prims, { minX: 900, minY: 900, maxX: 950, maxY: 950 })).toBeNull();
+  });
+});

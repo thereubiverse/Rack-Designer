@@ -351,19 +351,38 @@ function signatureOf(group: Primitive[], joinPx = DEF.joinPx): SymbolSignature {
 }
 
 /**
- * The signature of whatever the user picked.
+ * The signature of whatever the user picked: the ONE symbol nearest the middle of the seed box.
  *
- * The seed box comes from `pickSymbolAction`, which is known to over-select — it hands back the
- * symbol plus whatever tag or wall it is drawn against. Taking only primitives whose CENTROID falls
- * inside the box is what makes that over-selection harmless: a wall crossing the box contributes no
- * closed polygon, and an adjacent tag's rectangle is centred outside it.
+ * Not every primitive inside the box. `pickSymbolAction` deliberately over-selects — its groups run
+ * 15-70px and routinely carry the symbol PLUS the tag box or assembly beside it — so "everything
+ * whose centroid is in the box" describes a neighbourhood, not a symbol. Measured on the real sheet,
+ * against a verified telecom outlet:
+ *
+ *   box +-9px   -> 5 corners  -> 19 matches
+ *   box +-20px  -> 5 corners  -> 19 matches
+ *   box +-30px  -> 15 corners -> 0 matches   <- a real pick is this size
+ *
+ * Past ~20px the signature acquires the neighbours' corners and then nothing on the page matches it,
+ * so discovery silently fell back to correlation and returned two proposals instead of nineteen.
+ * Clustering first and taking the cluster nearest the box centre is what makes the pick's
+ * over-selection genuinely harmless.
  */
 export function signatureFor(prims: Primitive[], box: Box): SymbolSignature | null {
-  const inside = prims.filter(
-    (p) => p.cx >= box.minX && p.cx <= box.maxX && p.cy >= box.minY && p.cy <= box.maxY
-  );
-  if (inside.length === 0) return null;
-  return signatureOf(inside);
+  const cx = (box.minX + box.maxX) / 2;
+  const cy = (box.minY + box.maxY) / 2;
+  let best: Primitive[] | null = null;
+  let bestDist = Infinity;
+  for (const group of clusterPrimitives(prims)) {
+    const gx = group.reduce((t, p) => t + p.cx, 0) / group.length;
+    const gy = group.reduce((t, p) => t + p.cy, 0) / group.length;
+    if (gx < box.minX || gx > box.maxX || gy < box.minY || gy > box.maxY) continue;
+    const d = dist(gx, gy, cx, cy);
+    if (d < bestDist) {
+      bestDist = d;
+      best = group;
+    }
+  }
+  return best ? signatureOf(best) : null;
 }
 
 export interface StructHit {
