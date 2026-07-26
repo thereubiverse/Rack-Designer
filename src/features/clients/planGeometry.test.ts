@@ -175,4 +175,25 @@ describe("collapseWallPairs", () => {
     const out = collapseWallPairs([a, b, c], 2600, 2600);
     expect(out).toHaveLength(2);
   });
+
+  it("collapses two wall faces whose θ straddles the [0, π) seam", () => {
+    // Both runs describe near-perfectly-horizontal wall faces ~10px apart (real wall thickness),
+    // but sign-flipping sub-pixel dy noise pushes their independently-computed θ to opposite sides
+    // of atan2's [0, π) cut: `a`'s dy is slightly negative (dx>0, dy<0 -> atan2 negative -> folds to
+    // just UNDER π), `b`'s dy is slightly positive (dx>0, dy>0 -> atan2 positive, no fold -> just
+    // OVER 0). Without aligning them onto a common θ branch before comparing ρ, these look like two
+    // unrelated near-antiparallel lines and never collapse -- the same class of bug that cost 36
+    // points of edge coverage earlier in this slice (and needed its own fix in buildWallRuns).
+    const a = run(0, 0, 1000, -0.05);
+    const b = run(0, 10, 1000, 10.05);
+    const out = collapseWallPairs([a, b], 2600, 2600);
+    expect(out).toHaveLength(1);
+    const y1 = out[0].y1, y2 = out[0].y2;
+    const x1 = out[0].x1, x2 = out[0].x2;
+    expect(Math.min(x1, x2)).toBeCloseTo(0, 0);
+    expect(Math.max(x1, x2)).toBeCloseTo(1000, 0);
+    // Centreline sits at the midpoint of the two faces (~y=5), not collapsed onto either face.
+    expect(y1).toBeCloseTo(5, 0);
+    expect(y2).toBeCloseTo(5, 0);
+  });
 });
