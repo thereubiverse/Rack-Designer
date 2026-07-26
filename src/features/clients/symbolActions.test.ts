@@ -4,13 +4,18 @@ vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn(() => ({}))
 vi.mock("@/features/locations/repository", () => ({ getFloorPlan: vi.fn() }));
 vi.mock("./planStorage", () => ({ downloadPlanObject: vi.fn() }));
 vi.mock("./planRaster", () => ({ renderPlanGrey: vi.fn() }));
-vi.mock("./symbolMatch", () => ({ extractTemplate: vi.fn(), matchSymbol: vi.fn() }));
+vi.mock("./symbolMatch", () => ({
+  extractTemplate: vi.fn(),
+  matchSymbol: vi.fn(),
+  cropToInk: vi.fn(),
+  hasInk: vi.fn(),
+}));
 
 import { discoverSymbolsAction } from "./symbolActions";
 import { getFloorPlan } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
-import { extractTemplate, matchSymbol } from "./symbolMatch";
+import { extractTemplate, matchSymbol, cropToInk, hasInk } from "./symbolMatch";
 import type { SymbolHit } from "./symbolMatch";
 
 // The rendered page. Deliberately NOT square and NOT the stored width_px/height_px, so a value
@@ -52,6 +57,10 @@ beforeEach(() => {
   vi.mocked(renderPlanGrey).mockResolvedValue(IMG);
   vi.mocked(extractTemplate).mockReturnValue(TEMPLATE);
   vi.mocked(matchSymbol).mockReturnValue([hit()]);
+  // Identity by default: existing tests assert exact pixel boxes computed straight from `input.box`,
+  // so cropToInk must be a pass-through unless a test deliberately overrides it.
+  vi.mocked(cropToInk).mockImplementation((_img, box) => box);
+  vi.mocked(hasInk).mockReturnValue(true);
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -146,6 +155,34 @@ describe("discoverSymbolsAction", () => {
     await expect(discoverSymbolsAction(input())).resolves.toEqual(
       expect.objectContaining({ ok: false })
     );
+  });
+
+  it("applies cropToInk before extractTemplate, using the cropped box not the raw one (test 8)", async () => {
+    // Would catch: extracting the template from the raw pixel box, which is exactly the reported
+    // bug — a generously-drawn selection stays mostly background and correlates with blank paper.
+    const raw = { x: 260, y: 347, w: 130, h: 87 };
+    const cropped = { x: 270, y: 355, w: 40, h: 38 };
+    vi.mocked(cropToInk).mockReturnValue(cropped);
+    const res = await discoverSymbolsAction(input());
+    expect(cropToInk).toHaveBeenCalledWith(IMG, raw);
+    expect(extractTemplate).toHaveBeenCalledWith(IMG, cropped);
+    expect(res.ok).toBe(true);
+  });
+
+  it("a selection whose crop has no ink -> {ok:false}, the matcher is never called (test 7)", async () => {
+    // Would catch: searching a blank template anyway, which returns hundreds of meaningless hits —
+    // the whole point of this gate.
+    const cropped = { x: 270, y: 355, w: 40, h: 38 };
+    vi.mocked(cropToInk).mockReturnValue(cropped);
+    vi.mocked(hasInk).mockReturnValue(false);
+    const res = await discoverSymbolsAction(input());
+    expect(res).toEqual({
+      ok: false,
+      error: "That selection looks empty — draw the box around a symbol.",
+    });
+    expect(hasInk).toHaveBeenCalledWith(IMG, cropped);
+    expect(extractTemplate).not.toHaveBeenCalled();
+    expect(matchSymbol).not.toHaveBeenCalled();
   });
 
   it("a box under 6x6 page pixels -> {ok:false}, the matcher is never called", async () => {

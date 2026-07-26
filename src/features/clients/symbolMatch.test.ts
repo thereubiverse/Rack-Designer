@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractTemplate, matchSymbol, type GreyImage } from "./symbolMatch";
+import { extractTemplate, matchSymbol, cropToInk, hasInk, type GreyImage } from "./symbolMatch";
 
 // ---------------------------------------------------------------------------
 // Synthetic canvas helpers. The module is pure, so every test here draws its
@@ -16,6 +16,11 @@ function blank(width: number, height: number, value = WHITE): GreyImage {
 function put(img: GreyImage, x: number, y: number, v: number) {
   if (x < 0 || y < 0 || x >= img.width || y >= img.height) return;
   img.data[y * img.width + x] = v;
+}
+
+/** A size x size solid black square, used as a minimal "glyph" for the ink-focused tests below. */
+function drawDot(img: GreyImage, ox: number, oy: number, size = 4, v = BLACK) {
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) put(img, ox + x, oy + y, v);
 }
 
 /** 12x12 plus sign: a 2px vertical bar and a 2px horizontal bar. 4-fold symmetric. */
@@ -495,5 +500,133 @@ describe("matchSymbol", () => {
     expect(hits).toHaveLength(2);
     expect(hits[0]).toMatchObject({ x: centreOf(14, 24), y: centreOf(14, 24) });
     expect(hits[1]).toMatchObject({ x: centreOf(114, 24), y: centreOf(84, 24) });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The ink-density gate. Regression coverage for: "it discovers all the symbols
+  // based on my selection but also discovers a whole lot of other things that
+  // are not the symbol" — a generously-drawn selection is mostly background, and
+  // a low-variance template correlates with blank paper everywhere. Measured on
+  // the real Cellar sheet: a box on blank paper (0% ink) hit the 400-hit cap at
+  // minScore 0.65, versus 7 genuine hits for a tight box (27.4% ink).
+  // ---------------------------------------------------------------------------
+
+  // A 40x40 fixture with a deterministic per-OFFSET background texture (so the same
+  // pattern reproduces exactly wherever it is tiled) plus, for the glyph variant, a
+  // solid 10x10 black square. The glyph dominates the template's own variance (as a
+  // real symbol's ink does), so a window sharing only the background texture is
+  // structurally "mostly not this symbol" despite the shared context — exactly the
+  // shape of the reported bug, just small enough to reason about by hand.
+  const GS = 40;
+  function paintTexture(img: GreyImage, ox: number, oy: number) {
+    for (let dy = 0; dy < GS; dy++)
+      for (let dx = 0; dx < GS; dx++) put(img, ox + dx, oy + dy, 245 - ((dx * 7 + dy * 13) % 10));
+  }
+  function paintTextureGlyph(img: GreyImage, ox: number, oy: number) {
+    paintTexture(img, ox, oy);
+    for (let dy = 15; dy < 25; dy++) for (let dx = 15; dx < 25; dx++) put(img, ox + dx, oy + dy, BLACK);
+  }
+  const nearGlyph = (h: { x: number; y: number }) =>
+    h.x > centreOf(30, GS) - GS / 2 && h.x < centreOf(30, GS) + GS / 2 && h.y > 30 && h.y < 70;
+  const nearBlank = (h: { x: number; y: number }) => h.x >= 200 && h.x < 240 && h.y >= 100 && h.y < 140;
+
+  it("rejects a blank region that would otherwise correlate (test 5)", () => {
+    const img = blank(400, 300);
+    paintTextureGlyph(img, 30, 30); // the real symbol: shared texture + a solid glyph
+    paintTexture(img, 200, 100); // "blank": identical texture, no glyph at all
+
+    const tpl = extractTemplate(img, { x: 30, y: 30, w: GS, h: GS });
+    // minScore is deliberately low (0.3, not the real 0.65 operating point): a synthetic texture
+    // strong enough to clear 0.65 on its own would have to be so glyph-like it stops being a fair
+    // stand-in for "blank paper". The point survives at any threshold the shared texture clears.
+    const opts = { minScore: 0.3, rotations: [0] as number[] };
+
+    // Without the gate: this is the reported bug, reproduced in miniature. Must fail without the
+    // gate — that is what makes this a regression test rather than a demonstration.
+    const noGate = matchSymbol(img, tpl, { ...opts, inkRatioMin: 0 });
+    expect(noGate.some(nearBlank)).toBe(true);
+    expect(noGate.some(nearGlyph)).toBe(true); // the genuine instance must still be found
+
+    // With the gate (default inkRatioMin 0.5): the blank region is gone, the real hit remains.
+    const withGate = matchSymbol(img, tpl, opts);
+    expect(withGate.some(nearBlank)).toBe(false);
+    expect(withGate.some(nearGlyph)).toBe(true);
+  });
+
+  it("inkRatioMin: 0 reproduces the pre-gate behaviour exactly (test 6)", () => {
+    const img = blank(400, 300);
+    paintTextureGlyph(img, 30, 30);
+    paintTexture(img, 200, 100);
+    const tpl = extractTemplate(img, { x: 30, y: 30, w: GS, h: GS });
+
+    const disabled = matchSymbol(img, tpl, { minScore: 0.3, rotations: [0], inkRatioMin: 0 });
+    // Same scene as test 5's "without the gate" call: inkRatioMin 0 must restore exactly the hits
+    // the gate otherwise removes, not just "some" of them.
+    expect(disabled.some(nearBlank)).toBe(true);
+    expect(disabled.some(nearGlyph)).toBe(true);
+  });
+});
+
+describe("cropToInk", () => {
+  it("tightens a generously-drawn box to the glyph's ink plus a margin (test 1)", () => {
+    const img = blank(200, 200);
+    drawDot(img, 100, 100, 6); // ink spans x:100-105, y:100-105
+    const box = { x: 50, y: 50, w: 120, h: 120 }; // large blank area, glyph off-centre
+    const cropped = cropToInk(img, box);
+    // ink bbox [100,105]x[100,105] + margin 2 on every side: [98,108)x[98,108).
+    expect(cropped).toEqual({ x: 98, y: 98, w: 10, h: 10 });
+  });
+
+  it("returns the box unchanged when it contains no ink (test 2)", () => {
+    const img = blank(200, 200);
+    const box = { x: 20, y: 30, w: 40, h: 25 };
+    expect(cropToInk(img, box)).toEqual(box);
+  });
+
+  it("never returns smaller than minSizePx (test 3)", () => {
+    const img = blank(200, 200);
+    drawDot(img, 100, 100, 1); // a single ink pixel
+    const box = { x: 90, y: 90, w: 30, h: 30 };
+    const cropped = cropToInk(img, box, { minSizePx: 20 });
+    expect(cropped.w).toBeGreaterThanOrEqual(20);
+    expect(cropped.h).toBeGreaterThanOrEqual(20);
+  });
+
+  it("leaves an already-tight box roughly unchanged, within the margin (test 4)", () => {
+    const img = blank(200, 200);
+    drawDot(img, 100, 100, 6); // ink spans x:100-105, y:100-105
+    const tight = { x: 100, y: 100, w: 6, h: 6 }; // already pixel-tight around the ink
+    const cropped = cropToInk(img, tight);
+    expect(cropped).toEqual({ x: 98, y: 98, w: 10, h: 10 });
+    expect(Math.abs(cropped.x - tight.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(cropped.y - tight.y)).toBeLessThanOrEqual(2);
+    expect(cropped.w - tight.w).toBeLessThanOrEqual(4);
+    expect(cropped.h - tight.h).toBeLessThanOrEqual(4);
+  });
+
+  it("never throws on a box that runs off the edge of the image", () => {
+    const img = blank(50, 50);
+    drawDot(img, 46, 46, 4); // clipped by the image edge
+    expect(() => cropToInk(img, { x: 40, y: 40, w: 20, h: 20 })).not.toThrow();
+  });
+});
+
+describe("hasInk", () => {
+  it("is true when the box contains a pixel darker than the threshold", () => {
+    const img = blank(50, 50);
+    drawDot(img, 10, 10, 3);
+    expect(hasInk(img, { x: 0, y: 0, w: 50, h: 50 })).toBe(true);
+  });
+
+  it("is false on an all-blank box", () => {
+    const img = blank(50, 50);
+    expect(hasInk(img, { x: 0, y: 0, w: 50, h: 50 })).toBe(false);
+  });
+
+  it("respects a custom inkThreshold", () => {
+    const img = blank(50, 50, 200); // uniform mid-grey, not white
+    // 200 is "ink" only under a looser threshold than the 160 default.
+    expect(hasInk(img, { x: 0, y: 0, w: 50, h: 50 })).toBe(false);
+    expect(hasInk(img, { x: 0, y: 0, w: 50, h: 50 }, { inkThreshold: 210 })).toBe(true);
   });
 });

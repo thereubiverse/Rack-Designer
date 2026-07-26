@@ -5,7 +5,7 @@ import { getFloorPlan } from "@/features/locations/repository";
 import type { PlanLabel } from "@/lib/supabase/types";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
-import { extractTemplate, matchSymbol, type GreyImage, type SymbolHit } from "./symbolMatch";
+import { extractTemplate, matchSymbol, cropToInk, hasInk, type GreyImage, type SymbolHit } from "./symbolMatch";
 import { coerceTypeCode, type Confidence, type DeviceProposal } from "./planDetect";
 
 export type DiscoverSymbolsResult =
@@ -116,7 +116,17 @@ export async function discoverSymbolsAction(input: {
       return { ok: false, error: "That selection is too small — drag a box around one whole symbol." };
     }
 
-    const tpl = extractTemplate(img, box);
+    // The user frames a symbol generously, not pixel-tight; a mostly-background template
+    // correlates with blank paper everywhere (measured: 400 hits on the real sheet for a box drawn
+    // on blank paper, vs 7 genuine ones for a tight box on the same symbol). Tighten to the ink
+    // before it becomes a template, and refuse outright if there was none to tighten to — searching
+    // a blank template returns hundreds of meaningless hits, which is exactly the bug being fixed.
+    const cropped = cropToInk(img, box);
+    if (!hasInk(img, cropped)) {
+      return { ok: false, error: "That selection looks empty — draw the box around a symbol." };
+    }
+
+    const tpl = extractTemplate(img, cropped);
     const hits = matchSymbol(img, tpl, {
       minScore: MIN_SCORE,
       rotations: ROTATIONS,

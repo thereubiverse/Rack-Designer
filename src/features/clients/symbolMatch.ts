@@ -58,10 +58,35 @@ export interface MatchOpts {
   maxHits?: number;
   /** Non-max suppression radius between hit centres. Default max(w,h)/2. */
   suppressRadiusPx?: number;
+  /**
+   * A candidate window whose ink density is below `inkRatioMin * templateDensity` is rejected
+   * before it can become a hit, however well it correlates. Default 0.5. Set to 0 to disable
+   * (exact previous behaviour) — this is what every pre-existing caller and test relies on.
+   *
+   * WHY: measured on the real Cellar sheet, a generously-drawn selection (mostly background) makes
+   * a low-variance template that correlates with blank paper everywhere — 400 hits at minScore 0.65,
+   * versus 7 genuine hits for a tight box around the same symbol. NCC alone does not catch this: a
+   * faint-but-correctly-shaped window is SUPPOSED to score well (that's the contrast-invariance this
+   * module relies on for genuine faint instances), so the gate has to be ink density, not score.
+   */
+  inkRatioMin?: number;
 }
 
 const DEFAULT_ROTATIONS = [0, 90, 180, 270];
 const DEFAULT_MIN_SCORE = 0.7;
+const DEFAULT_INK_RATIO_MIN = 0.5;
+/** cropToInk / hasInk default — a pixel darker than this counts as ink for trimming a selection. */
+const INK_THRESHOLD = 160;
+/**
+ * The matcher's OWN ink cut, deliberately looser than INK_THRESHOLD. This gate exists to reject
+ * windows that are grossly unlike the template (blank paper scoring well against a low-variance
+ * template — the reported bug), NOT to second-guess a genuine low-contrast instance. NCC is
+ * explicitly contrast-invariant by design (see the module header), so a faint-but-real stroke must
+ * still count as ink here even though a tight crop would not treat it as ink at all. 230 sits well
+ * clear of any real stroke value seen on the measured sheet (dark strokes run well under 160) while
+ * still sitting below plain white/background.
+ */
+const MATCH_INK_THRESHOLD = 230;
 
 /**
  * How far below the coarse threshold a refined peak may start. Downsampling
@@ -108,6 +133,113 @@ export function extractTemplate(
 }
 
 // ---------------------------------------------------------------------------
+// Auto-crop to ink
+// ---------------------------------------------------------------------------
+
+export interface CropOpts {
+  /** A pixel darker than this counts as ink. Default 160. */
+  inkThreshold?: number;
+  /** Border kept around the ink bounding box. Default 2. */
+  marginPx?: number;
+  /** The crop never returns smaller than this on either side. Default 6. */
+  minSizePx?: number;
+}
+
+const DEFAULT_CROP_MARGIN_PX = 2;
+const DEFAULT_CROP_MIN_SIZE_PX = 6;
+
+/** Bounding box of pixels darker than `threshold` inside [x0,x1) x [y0,y1). Null if none. */
+function inkBounds(
+  img: GreyImage,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  threshold: number
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let y = y0; y < y1; y++) {
+    const row = y * img.width;
+    for (let x = x0; x < x1; x++) {
+      if (img.data[row + x] < threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return minX === Infinity ? null : { minX, minY, maxX, maxY };
+}
+
+/**
+ * Shrink a user-drawn box to the bounding box of its ink, plus a small margin.
+ *
+ * WHY: the user frames a symbol; they should not have to draw a pixel-tight box. A generously-drawn
+ * box is mostly background, and a low-variance template correlates with blank paper everywhere —
+ * measured on the real Cellar sheet at 400 hits (the cap) for a blank template vs 7 genuine hits for
+ * a tight one. Tightening the box before it becomes a template is the real fix; matchSymbol's
+ * inkRatioMin gate is only a second line of defence.
+ *
+ * If the box contains no ink at all, the original box is returned UNCHANGED — this function never
+ * throws, and it is the caller's job to decide what an empty selection means (see hasInk).
+ */
+export function cropToInk(
+  img: GreyImage,
+  box: { x: number; y: number; w: number; h: number },
+  opts: CropOpts = {}
+): { x: number; y: number; w: number; h: number } {
+  const threshold = opts.inkThreshold ?? INK_THRESHOLD;
+  const margin = opts.marginPx ?? DEFAULT_CROP_MARGIN_PX;
+  const minSize = opts.minSizePx ?? DEFAULT_CROP_MIN_SIZE_PX;
+
+  const x0 = clampInt(Math.round(box.x), 0, img.width);
+  const y0 = clampInt(Math.round(box.y), 0, img.height);
+  const x1 = clampInt(Math.round(box.x + box.w), 0, img.width);
+  const y1 = clampInt(Math.round(box.y + box.h), 0, img.height);
+
+  const bounds = inkBounds(img, x0, y0, x1, y1, threshold);
+  if (!bounds) return { x: box.x, y: box.y, w: box.w, h: box.h };
+
+  let nx0 = clampInt(bounds.minX - margin, 0, img.width);
+  let ny0 = clampInt(bounds.minY - margin, 0, img.height);
+  let nx1 = clampInt(bounds.maxX + 1 + margin, 0, img.width);
+  let ny1 = clampInt(bounds.maxY + 1 + margin, 0, img.height);
+
+  if (nx1 - nx0 < minSize) {
+    const cx = (nx0 + nx1) / 2;
+    const cap = Math.max(0, img.width - minSize);
+    nx0 = clampInt(Math.round(cx - minSize / 2), 0, cap);
+    nx1 = Math.min(img.width, nx0 + minSize);
+  }
+  if (ny1 - ny0 < minSize) {
+    const cy = (ny0 + ny1) / 2;
+    const cap = Math.max(0, img.height - minSize);
+    ny0 = clampInt(Math.round(cy - minSize / 2), 0, cap);
+    ny1 = Math.min(img.height, ny0 + minSize);
+  }
+
+  return { x: nx0, y: ny0, w: nx1 - nx0, h: ny1 - ny0 };
+}
+
+/** Whether any pixel in `box` is darker than `inkThreshold` (default 160). Never throws. */
+export function hasInk(
+  img: GreyImage,
+  box: { x: number; y: number; w: number; h: number },
+  opts: { inkThreshold?: number } = {}
+): boolean {
+  const threshold = opts.inkThreshold ?? INK_THRESHOLD;
+  const x0 = clampInt(Math.round(box.x), 0, img.width);
+  const y0 = clampInt(Math.round(box.y), 0, img.height);
+  const x1 = clampInt(Math.round(box.x + box.w), 0, img.width);
+  const y1 = clampInt(Math.round(box.y + box.h), 0, img.height);
+  return inkBounds(img, x0, y0, x1, y1, threshold) !== null;
+}
+
+// ---------------------------------------------------------------------------
 // Matching
 // ---------------------------------------------------------------------------
 
@@ -115,10 +247,16 @@ export function matchSymbol(img: GreyImage, tpl: Template, opts: MatchOpts = {})
   const minScore = opts.minScore ?? DEFAULT_MIN_SCORE;
   const maxHits = opts.maxHits ?? Number.POSITIVE_INFINITY;
   const rotations = normaliseRotations(opts.rotations ?? DEFAULT_ROTATIONS);
+  const inkRatioMin = opts.inkRatioMin ?? DEFAULT_INK_RATIO_MIN;
 
   if (!isUsable(img) || !isUsable(tpl)) return [];
   if (img.data.length < img.width * img.height) return [];
   if (tpl.data.length < tpl.width * tpl.height) return [];
+
+  // Computed ONCE, from the template as given (not per rotation — a 90-degree turn is an exact
+  // permutation of the same pixels, so its ink fraction cannot change).
+  const templateDensity = inkFraction(tpl.data, tpl.width * tpl.height, MATCH_INK_THRESHOLD);
+  const minInkFrac = inkRatioMin * templateDensity;
 
   const found: SymbolHit[] = [];
   // The coarse image depends only on the downsample factor, and every rotation
@@ -131,11 +269,19 @@ export function matchSymbol(img: GreyImage, tpl: Template, opts: MatchOpts = {})
     // A flat template correlates with nothing; its denominator is zero. Bail
     // rather than divide by it.
     if (stats.denom <= 0) continue;
-    scanRotation(img, variant, stats, deg, minScore, found, coarseImages);
+    scanRotation(img, variant, stats, deg, minScore, minInkFrac, found, coarseImages);
   }
 
   const suppressRadius = opts.suppressRadiusPx ?? Math.max(tpl.width, tpl.height) / 2;
   return suppressNonMaxima(found, suppressRadius, maxHits);
+}
+
+/** Fraction of `data[0..n)` darker than `threshold`. 0 for an empty patch. */
+function inkFraction(data: Uint8Array, n: number, threshold: number): number {
+  if (n <= 0) return 0;
+  let count = 0;
+  for (let i = 0; i < n; i++) if (data[i] < threshold) count++;
+  return count / n;
 }
 
 /** Scan one rotated template over the image: coarse pass, then stride-1 refinement. */
@@ -145,6 +291,7 @@ function scanRotation(
   tplStats: PatchStats,
   rotationDeg: number,
   minScore: number,
+  minInkFrac: number,
   out: SymbolHit[],
   coarseImages: Map<number, GreyImage>
 ): void {
@@ -153,7 +300,7 @@ function scanRotation(
   if (k === 1) {
     // Template (or image) too small to downsample usefully — a stride-1 scan of
     // the whole image is cheap at this size, so just do it directly.
-    const peaks = fullScan(img, tpl, tplStats, minScore);
+    const peaks = fullScan(img, tpl, tplStats, minScore, minInkFrac);
     for (const p of peaks) out.push({ ...p, rotationDeg });
     return;
   }
@@ -167,7 +314,7 @@ function scanRotation(
   const cStats = patchStats(cTpl.data, cTpl.data.length);
   if (cStats.denom <= 0) {
     // Downsampling flattened the symbol away (very fine detail). Fall back.
-    const peaks = fullScan(img, tpl, tplStats, minScore);
+    const peaks = fullScan(img, tpl, tplStats, minScore, minInkFrac);
     for (const p of peaks) out.push({ ...p, rotationDeg });
     return;
   }
@@ -195,7 +342,7 @@ function scanRotation(
     let by = y0;
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
-        const s = nccAt(img, tpl, tplStats, x, y);
+        const s = nccAt(img, tpl, tplStats, x, y, minInkFrac);
         if (s > best) {
           best = s;
           bx = x;
@@ -304,7 +451,8 @@ function fullScan(
   img: GreyImage,
   tpl: Template,
   tplStats: PatchStats,
-  minScore: number
+  minScore: number,
+  minInkFrac: number
 ): { x: number; y: number; score: number }[] {
   const spanX = img.width - tpl.width;
   const spanY = img.height - tpl.height;
@@ -321,11 +469,20 @@ function fullScan(
       const varSum = n * sums.sq - sums.sum * sums.sum;
       if (!(varSum > minVarSum) || varSum <= 0) continue;
       let dot = 0;
+      let ink = 0;
       for (let ty = 0; ty < tpl.height; ty++) {
         let ii = (y + ty) * img.width + x;
         let ti = ty * tpl.width;
-        for (let tx = 0; tx < tpl.width; tx++) dot += tpl.data[ti++] * img.data[ii++];
+        for (let tx = 0; tx < tpl.width; tx++) {
+          const v = img.data[ii++];
+          if (v < MATCH_INK_THRESHOLD) ink++;
+          dot += tpl.data[ti++] * v;
+        }
       }
+      // Ink gate: a window with far less ink than the template is not that symbol, however well
+      // it correlates. minInkFrac is 0 whenever the gate is disabled or the template itself has no
+      // ink, so this never rejects anything in either of those cases.
+      if (ink / n < minInkFrac) continue;
       const score = (n * dot - tplStats.sum * sums.sum) / (tplStats.denom * Math.sqrt(varSum));
       if (score >= minScore) {
         hits.push({ x: x + (tpl.width - 1) / 2, y: y + (tpl.height - 1) / 2, score });
@@ -342,23 +499,37 @@ function fullScan(
  * over exactly the pixels that feed the correlation sum. Never source them from
  * a different pixel set (a subsample, a wider patch, the whole image) — that
  * produces plausible-looking scores that are quietly meaningless.
+ *
+ * `minInkFrac` gates a window whose ink fraction falls short of it: such a window returns
+ * -Infinity rather than its correlation, so it can never win the local "best" search below and can
+ * never clear `minScore`. 0 (the disabled state) never rejects, since a fraction is never < 0.
  */
-function nccAt(img: GreyImage, tpl: Template, tplStats: PatchStats, x: number, y: number): number {
+function nccAt(
+  img: GreyImage,
+  tpl: Template,
+  tplStats: PatchStats,
+  x: number,
+  y: number,
+  minInkFrac: number
+): number {
   const { width: tw, height: th } = tpl;
   const n = tw * th;
   let sum = 0;
   let sq = 0;
   let dot = 0;
+  let ink = 0;
   for (let ty = 0; ty < th; ty++) {
     let ii = (y + ty) * img.width + x;
     let ti = ty * tw;
     for (let tx = 0; tx < tw; tx++) {
       const v = img.data[ii++];
+      if (v < MATCH_INK_THRESHOLD) ink++;
       sum += v;
       sq += v * v;
       dot += tpl.data[ti++] * v;
     }
   }
+  if (ink / n < minInkFrac) return -Infinity;
   const varSum = n * sq - sum * sum;
   if (varSum <= 0) return 0; // flat window: no variance, no correlation, no NaN
   return (n * dot - tplStats.sum * sum) / (tplStats.denom * Math.sqrt(varSum));
