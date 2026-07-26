@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, act } from "@testing-library/react";
 import { PlanUploadZone } from "./PlanUploadZone";
 import { uploadFloorPlanAction } from "./actions";
+import { extractPlanGeometryAction } from "./planExtractActions";
 import { convertImageFile, convertPdfPage, getPdfPageCount } from "./planUpload";
 
 const refreshMock = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock }) }));
 vi.mock("./actions", () => ({
   uploadFloorPlanAction: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("./planExtractActions", () => ({
+  extractPlanGeometryAction: vi.fn(async () => ({ ok: true, walls: 0, labels: 0 })),
 }));
 // Conversion is entirely mocked here: jsdom renders neither PDFs nor canvases, so
 // PlanUploadZone.test.tsx only proves the component wires files -> conversion fns -> the action
@@ -41,6 +45,7 @@ beforeEach(() => {
   vi.mocked(convertImageFile).mockResolvedValue({ blob: IMAGE_BLOB, source: "image" });
   vi.mocked(convertPdfPage).mockResolvedValue({ blob: PDF_PAGE_BLOB, source: "pdf" });
   vi.mocked(getPdfPageCount).mockResolvedValue(1);
+  vi.mocked(extractPlanGeometryAction).mockResolvedValue({ ok: true, walls: 0, labels: 0 });
 });
 
 describe("PlanUploadZone", () => {
@@ -219,5 +224,74 @@ describe("PlanUploadZone", () => {
     expect(convertImageFile).not.toHaveBeenCalled();
     expect(getPdfPageCount).not.toHaveBeenCalled();
     expect(uploadFloorPlanAction).not.toHaveBeenCalled();
+  });
+
+  // Wall geometry is only extractable from a retained SOURCE PDF. Nothing else in the app calls
+  // the extraction action, so if the upload flow doesn't fire it, every plan a real user uploads
+  // arrives with zero walls and no wall snapping — the feature exists but never runs.
+  it("extracts wall geometry after a PDF upload, before refreshing", async () => {
+    render(<PlanUploadZone floorId="floor-7" hasPlan={false} />);
+
+    await act(async () => {
+      selectFile(makePdfFile());
+    });
+
+    expect(extractPlanGeometryAction).toHaveBeenCalledTimes(1);
+    expect(extractPlanGeometryAction).toHaveBeenCalledWith("floor-7");
+    // Refresh must come AFTER extraction, or the page re-renders before the walls exist and the
+    // user sees a plan with no wall snapping until the next navigation.
+    const extractOrder = vi.mocked(extractPlanGeometryAction).mock.invocationCallOrder[0];
+    expect(refreshMock.mock.invocationCallOrder[0]).toBeGreaterThan(extractOrder);
+  });
+
+  it("does NOT attempt extraction after a plain image upload — there is no PDF to extract from", async () => {
+    render(<PlanUploadZone floorId="floor-7" hasPlan={false} />);
+
+    await act(async () => {
+      selectFile(makeImageFile());
+    });
+
+    expect(uploadFloorPlanAction).toHaveBeenCalledTimes(1);
+    expect(extractPlanGeometryAction).not.toHaveBeenCalled();
+    expect(refreshMock).toHaveBeenCalled();
+  });
+
+  it("never lets an extraction failure fail the upload — a plan without geometry is a working plan", async () => {
+    // Both shapes of failure: the action rejecting outright (network/server-action transport), and
+    // the action reporting a handled error. Neither may surface as an upload error or skip refresh.
+    vi.mocked(extractPlanGeometryAction).mockRejectedValueOnce(new Error("network down"));
+    render(<PlanUploadZone floorId="floor-7" hasPlan={false} />);
+
+    await act(async () => {
+      selectFile(makePdfFile());
+    });
+
+    expect(screen.queryByTestId("plan-upload-error")).toBeNull();
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+
+    vi.mocked(extractPlanGeometryAction).mockResolvedValueOnce({ ok: false, error: "nope" });
+    await act(async () => {
+      selectFile(makePdfFile("plan2.pdf"));
+    });
+
+    expect(screen.queryByTestId("plan-upload-error")).toBeNull();
+    expect(refreshMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("extracts after a page is chosen from a multi-page PDF too", async () => {
+    vi.mocked(getPdfPageCount).mockResolvedValue(5);
+    render(<PlanUploadZone floorId="floor-7" hasPlan={false} />);
+
+    await act(async () => {
+      selectFile(makePdfFile());
+    });
+    expect(extractPlanGeometryAction).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("pdf-page-picker"), { target: { value: "3" } });
+    });
+
+    expect(extractPlanGeometryAction).toHaveBeenCalledTimes(1);
+    expect(extractPlanGeometryAction).toHaveBeenCalledWith("floor-7");
   });
 });

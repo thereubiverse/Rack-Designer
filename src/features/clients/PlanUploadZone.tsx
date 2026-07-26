@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { uploadFloorPlanAction } from "./actions";
+import { extractPlanGeometryAction } from "./planExtractActions";
 import { convertImageFile, convertPdfPage, getPdfPageCount } from "./planUpload";
 import { Tip } from "./IconButton";
 
@@ -74,6 +75,28 @@ export function PlanUploadZone({
     setNotice(hasPlan ? "Placements kept — check them against the new plan." : null);
     setBusy(false);
     setPendingPdf(null);
+
+    // Wall geometry, straight off the back of the upload. This is the ONLY caller of the extraction
+    // action, so without it every uploaded plan has zero walls and wall snapping silently never
+    // works for anyone who didn't run extraction by hand.
+    //
+    // Only for PDF uploads: extraction reads the RETAINED SOURCE PDF, and an image upload has none
+    // (the action would just early-out with "This plan has no source PDF"). Retention can still
+    // fail server-side after a PDF upload — that's a wasted round trip, not a bug.
+    //
+    // Deliberately inline (measured ~1.6s on a real sheet) and deliberately BEFORE the refresh, so
+    // the re-rendered plan already has its walls. Equally deliberately un-awaited for success: a
+    // rejection (server-action transport) or an `ok: false` result is swallowed whole. A plan
+    // without geometry is a working plan — it simply falls back to no wall snapping — and failing
+    // the upload over it would throw away a PNG that already landed.
+    if (pdfSource) {
+      try {
+        await extractPlanGeometryAction(floorId);
+      } catch {
+        /* see above: geometry is an enhancement, never a precondition */
+      }
+    }
+
     router.refresh();
   }
 
