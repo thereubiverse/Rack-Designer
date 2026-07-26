@@ -13,7 +13,7 @@ const pdfMocks = vi.hoisted(() => {
   // exactly as pdf.js does (with a RenderingCancelledException) — that rejection is
   // indistinguishable from a real failure at the catch site, which is the whole reason the
   // component has to disambiguate the two.
-  const render = vi.fn(() => {
+  const render = vi.fn((_params: { transform?: number[]; canvas?: HTMLCanvasElement }) => {
     let reject: (reason: unknown) => void = () => {};
     const promise = new Promise<void>((_resolve, rej) => {
       reject = rej;
@@ -75,27 +75,64 @@ const PDF_URL = "https://signed.test/plan.pdf";
 const IMG_W = 1200;
 const IMG_H = 800;
 
+/** The pane these tests pretend to be looking through. The whole point of viewport rendering is
+ *  that the bitmap is sized by THIS, not by IMG_W x IMG_H — so every expectation below is derived
+ *  from it. */
+const PANE_W = 800;
+const PANE_H = 600;
+
+type View = { zoom: number; panX?: number; panY?: number };
+
+/** The visible slice of the plan, in PLAN pixels — the exact derivation FloorPlanCanvas does from
+ *  its own pan/zoom and measured pane. Screen (0,0) is plan ((0 - panX) / zoom, ...), and the pane
+ *  spans paneW/zoom plan pixels across. Kept here in the same shape so these tests exercise the
+ *  arithmetic the canvas actually feeds in rather than a convenient fiction. */
+function visible({ zoom, panX = 0, panY = 0 }: View) {
+  return {
+    visX: -panX / zoom,
+    visY: -panY / zoom,
+    visW: PANE_W / zoom,
+    visH: PANE_H / zoom,
+  };
+}
+
 /** The layer is an `<svg>` child (a `<foreignObject>`), so it can only be mounted inside one. */
-function renderLayer(zoom: number, onError?: () => void) {
-  const tree = (z: number, url: string) => (
+function renderLayer(zoomOrView: number | View, onError?: () => void) {
+  const initial: View = typeof zoomOrView === "number" ? { zoom: zoomOrView } : zoomOrView;
+  const tree = (view: View, url: string) => (
     <svg data-testid="svg-root">
       <PlanVectorLayer
         pdfUrl={url}
         pageIndex={0}
         imgW={IMG_W}
         imgH={IMG_H}
-        zoom={z}
+        zoom={view.zoom}
+        {...visible(view)}
         onError={onError}
       />
     </svg>
   );
-  const utils = render(tree(zoom, PDF_URL));
+  const utils = render(tree(initial, PDF_URL));
+  let current = initial;
   return {
     ...utils,
-    rerenderAt: (nextZoom: number) => utils.rerender(tree(nextZoom, PDF_URL)),
+    /** Zoom changed, view still centred at the same pan. */
+    rerenderAt: (nextZoom: number) => {
+      current = { ...current, zoom: nextZoom };
+      utils.rerender(tree(current, PDF_URL));
+    },
+    /** Pan only — the zoom (and so the rasterisation scale) is untouched. */
+    rerenderPanned: (panX: number, panY = 0) => {
+      current = { ...current, panX, panY };
+      utils.rerender(tree(current, PDF_URL));
+    },
     /** A refreshed signed URL: same plan, new short-lived link. */
-    rerenderWithUrl: (url: string) => utils.rerender(tree(zoom, url)),
+    rerenderWithUrl: (url: string) => utils.rerender(tree(current, url)),
   };
+}
+
+function canvasOf(container: HTMLElement) {
+  return container.querySelector("canvas") as HTMLCanvasElement;
 }
 
 /** Lets the document load finish, then runs the promise chain (getDocument -> getPage) AND the
@@ -139,16 +176,36 @@ afterEach(() => {
 });
 
 describe("PlanVectorLayer", () => {
-  it("occupies exactly the imgW x imgH box the <image> used to, so no plan coordinate moves", async () => {
+  it("sits at exactly the overscanned visible region, in PLAN coordinates", async () => {
+    // zoom 1, no pan: the pane sees plan pixels 0..800 x 0..600. Overscan adds 15% of each extent
+    // on every side (120 x 90), and the top/left margins clamp away at the page edge:
+    //   x 0..920, y 0..690.
+    // These are PLAN coordinates, so the box still sits correctly inside the canvas's live
+    // translate(pan) scale(zoom) group and nothing positioned in plan space moves.
     const { container } = renderLayer(1);
     await flush();
 
     const fo = container.querySelector("foreignObject")!;
     expect(fo).not.toBeNull();
-    expect(fo.getAttribute("width")).toBe(String(IMG_W));
-    expect(fo.getAttribute("height")).toBe(String(IMG_H));
     expect(fo.getAttribute("x")).toBe("0");
     expect(fo.getAttribute("y")).toBe("0");
+    expect(fo.getAttribute("width")).toBe("920");
+    expect(fo.getAttribute("height")).toBe("690");
+  });
+
+  it("still covers the whole imgW x imgH box when the whole plan is on screen", async () => {
+    // The fitted view — the state the canvas mounts in. The visible region plus overscan spills off
+    // every edge and clamps back to the page, so the layer occupies exactly the box the <image>
+    // does, exactly as it did before viewport rendering. This is the case FloorPlanCanvas's own
+    // "leaves every plan coordinate where the raster path put it" test is standing on.
+    const { container } = renderLayer(0.5);
+    await flush();
+
+    const fo = container.querySelector("foreignObject")!;
+    expect(fo.getAttribute("x")).toBe("0");
+    expect(fo.getAttribute("y")).toBe("0");
+    expect(fo.getAttribute("width")).toBe(String(IMG_W));
+    expect(fo.getAttribute("height")).toBe(String(IMG_H));
   });
 
   it("rasterises the page once for the initial zoom", async () => {
@@ -164,7 +221,14 @@ describe("PlanVectorLayer", () => {
     // page 3. Getting this wrong silently renders a different floor under the right pins.
     render(
       <svg>
-        <PlanVectorLayer pdfUrl={PDF_URL} pageIndex={2} imgW={IMG_W} imgH={IMG_H} zoom={1} />
+        <PlanVectorLayer
+          pdfUrl={PDF_URL}
+          pageIndex={2}
+          imgW={IMG_W}
+          imgH={IMG_H}
+          zoom={1}
+          {...visible({ zoom: 1 })}
+        />
       </svg>
     );
     await flush();
@@ -195,6 +259,46 @@ describe("PlanVectorLayer", () => {
     expect(pdfMocks.render).toHaveBeenCalledTimes(2);
   });
 
+  it("re-rasterises on a PAN that leaves the rendered region, at unchanged zoom", async () => {
+    // Now that only the visible slice is rasterised, panning moves the thing that has to be drawn.
+    // Before viewport rendering a pan cost nothing because the whole page was already on the
+    // canvas; if this doesn't fire, the user drags into blank canvas / stale PNG and stays there.
+    const { rerenderPanned, container } = renderLayer(1);
+    await flush(1);
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("foreignObject")!.getAttribute("x")).toBe("0");
+
+    // 600 plan px left, at zoom 1: the pane now sees 600..1200, entirely outside the 0..920 that
+    // was rendered.
+    rerenderPanned(-600);
+    await flush();
+    expect(pdfMocks.render).toHaveBeenCalledTimes(2);
+    // ...and it followed: region x 600 - 15% of 800 = 480, running to the right-hand page edge.
+    const fo = container.querySelector("foreignObject")!;
+    expect(fo.getAttribute("x")).toBe("480");
+    expect(fo.getAttribute("width")).toBe("720");
+  });
+
+  it("does NOT re-rasterise for a pan that stays inside the overscan margin", async () => {
+    // The 15% margin exists so ordinary dragging doesn't re-rasterise an 84k-path sheet on every
+    // frame. 50 plan px is well inside the 120px margin rendered at zoom 1.
+    const { rerenderPanned, container } = renderLayer(1);
+    await flush();
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+    const before = container.querySelector("foreignObject")!.getAttribute("width");
+
+    rerenderPanned(-50);
+    await flush();
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+    // The region is untouched too — it must not creep with the pan, or the margin never holds.
+    expect(container.querySelector("foreignObject")!.getAttribute("width")).toBe(before);
+
+    // Sub-pixel jitter (a trackpad drag settling) is likewise a non-event.
+    rerenderPanned(-50.0001);
+    await flush();
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+  });
+
   it("coalesces bucket crossings that arrive within the 150ms debounce into one rasterisation", async () => {
     // Only 1ms of slack after the leading-edge first render, so the crossings below genuinely land
     // inside its 150ms window.
@@ -212,31 +316,92 @@ describe("PlanVectorLayer", () => {
     expect(pdfMocks.render).toHaveBeenCalledTimes(2);
   });
 
-  it("caps the rasterisation scale at 4x device pixel ratio", async () => {
-    const { container } = renderLayer(50);
+  // THE POINT OF THE WHOLE COMPONENT: "text, lines and symbols stay sharp no matter how much we
+  // zoom in". Rasterising the whole page put a hard ceiling on that — the page had to fit in one
+  // canvas, so the scale ran out of budget at ~2.7x on a real sheet and everything past that was an
+  // upscaled bitmap. Rasterising only what's on screen moves the ceiling off the DOCUMENT and onto
+  // the VIEWPORT, which does not grow when you zoom.
+  it("sizes the bitmap by the PANE, not the page — so zooming in does not grow it", async () => {
+    // Two views 16x apart in magnification, both looking at the middle of the sheet so neither
+    // region is clipped by a page edge. Hand-computed at 4x: the pane sees 800/4 = 200 plan px
+    // across, overscanned by 15% a side to 260, rasterised at 4 device px per plan px = 1040. At
+    // 64x it sees 12.5, overscanned to 16.25, rasterised at 64 = 1040. Identical, because the slice
+    // shrinks at exactly the rate the scale grows. That is the whole fix.
+    const shallow = renderLayer({ zoom: 4, panX: -1000, panY: -600 });
+    await flush();
+    const near = canvasOf(shallow.container);
+    expect([near.width, near.height]).toEqual([1040, 780]);
+    shallow.unmount();
+
+    // 64x is far past the ~2.7x the whole-page path could reach on a real sheet.
+    const deep = renderLayer({ zoom: 64, panX: -30000, panY: -20000 });
+    await flush();
+    const canvas = canvasOf(deep.container);
+    expect([canvas.width, canvas.height]).toEqual([1040, 780]);
+
+    // The general invariant, independent of where the root-2 bucket happens to land: the bitmap can
+    // never exceed pane * overscan * dpr, times at most one bucket's worth of ceiling (sqrt 2).
+    expect(canvas.width).toBeLessThanOrEqual(Math.ceil(PANE_W * 1.3 * Math.SQRT2));
+    expect(canvas.height).toBeLessThanOrEqual(Math.ceil(PANE_H * 1.3 * Math.SQRT2));
+    // Nowhere near the page-sized bitmap the old path would have asked for at this zoom
+    // (1200 * 64 = 76800px across, clamped back to a blurry 8192 — the blur being reported).
+    expect(canvas.width).toBeLessThan(IMG_W);
+  });
+
+  it("translates the render to the region's origin, so the right slice of the page lands on it", async () => {
+    // Same 64x view as above. The region starts at plan (466.875, 311.09375); the scaled pdf.js
+    // viewport is plan-pixel space multiplied by 64, so the region's top-left sits at device
+    // (29880, 19910) within it and the page must be shifted back by exactly that to land at the
+    // canvas origin. Get this wrong and the plan is drawn offset — silently, and only when panned.
+    const { container } = renderLayer({ zoom: 64, panX: -30000, panY: -20000 });
     await flush();
 
-    // scale = min(bucketed zoom, 4) * dpr; jsdom's dpr is 1. The canvas backing store is therefore
-    // 4 * imgW wide, not 50 * imgW (which would be a ~7GB allocation).
-    const canvas = container.querySelector("canvas") as HTMLCanvasElement;
-    expect(canvas.width).toBe(IMG_W * 4);
+    expect(pdfMocks.render).toHaveBeenCalledTimes(1);
+    const args = pdfMocks.render.mock.calls[0][0] as {
+      transform?: number[];
+      canvas?: HTMLCanvasElement;
+    };
+    expect(args.transform).toBeDefined();
+    const [a, b, c, d, e, f] = args.transform!;
+    // Pure translation — no extra scaling; the viewport already carries the scale.
+    expect([a, b, c, d]).toEqual([1, 0, 0, 1]);
+    expect(e).toBeCloseTo(-29880, 6);
+    expect(f).toBeCloseTo(-19910, 6);
+
+    // ...and the viewport it is applied to is the FULL page at the region's scale: imgW * 64 device
+    // px wide, i.e. pdf.js scale (1200 * 64) / 1000 = 76.8 against this mock's 1000pt-wide page.
+    const vpScale = pdfMocks.getViewport.mock.calls.at(-1)![0].scale;
+    expect(vpScale).toBeCloseTo(76.8, 6);
+    expect(args.canvas).toBe(canvasOf(container));
   });
 
   it("walks the scale back rather than asking for a bitmap the browser will refuse", async () => {
-    // A real sheet: 2600px stored, retina display. 4x dpr would be 8x = ~20800px across, past
-    // Chrome's 16384px maximum — the canvas would allocate nothing and the plan would be BLANK.
+    // A safety net, not a working limit: a pane-sized bitmap is naturally modest, so nothing a real
+    // display produces gets near this. It takes an absurd 9000 x 6000 CSS-pixel pane at 8x zoom to
+    // reach it — asserted rather than assumed, because a canvas past the browser's maximum
+    // allocates nothing and draws a BLANK plan, which is the one outcome worse than a soft one.
     const utils = render(
       <svg>
-        <PlanVectorLayer pdfUrl={PDF_URL} pageIndex={0} imgW={2600} imgH={1840} zoom={50} />
+        <PlanVectorLayer
+          pdfUrl={PDF_URL}
+          pageIndex={0}
+          imgW={2600}
+          imgH={1840}
+          zoom={8}
+          visX={100}
+          visY={100}
+          visW={9000 / 8}
+          visH={6000 / 8}
+        />
       </svg>
     );
     await flush();
 
-    const canvas = utils.container.querySelector("canvas") as HTMLCanvasElement;
+    const canvas = canvasOf(utils.container);
+    expect(canvas.width).toBeGreaterThan(0);
     expect(canvas.width).toBeLessThanOrEqual(8192);
-    expect(canvas.width * canvas.height).toBeLessThanOrEqual(32 * 1024 * 1024);
-    // ...but still meaningfully sharper than the 2600px raster it replaces.
-    expect(canvas.width).toBeGreaterThan(2600 * 2);
+    expect(canvas.height).toBeLessThanOrEqual(8192);
+    expect(canvas.width * canvas.height).toBeLessThanOrEqual(16 * 1024 * 1024);
   });
 
   it("cancels the in-flight render the moment it is superseded, not when its replacement starts", async () => {

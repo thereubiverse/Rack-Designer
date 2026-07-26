@@ -145,6 +145,26 @@ interface LiveView {
   zoom: number;
 }
 
+/** The slice of the plan currently on screen, in PLAN (image-pixel) coordinates.
+ *
+ *  Inverts the one live transform: a screen point s maps back to (s - pan) / zoom, so the pane's
+ *  top-left corner is at (-panX / zoom, -panY / zoom) and the pane spans paneW/zoom by paneH/zoom
+ *  plan pixels. May extend outside 0..imgW / 0..imgH when the plan doesn't fill the pane; the
+ *  consumer clips.
+ *
+ *  Fed to PlanVectorLayer, which rasterises only this region from the source PDF so sharpness stops
+ *  being bounded by the size of the SHEET. This component is the only thing that knows both the
+ *  live pan/zoom and the measured pane, so it is the only place this may be computed — the layer
+ *  deliberately does not re-derive it. */
+function visiblePlanRect(view: LiveView, paneW: number, paneH: number) {
+  return {
+    visX: -view.panX / view.zoom,
+    visY: -view.panY / view.zoom,
+    visW: paneW / view.zoom,
+    visH: paneH / view.zoom,
+  };
+}
+
 /** A vertex being dragged, or a vertex just committed via insert-on-edge, superimposed over the
  *  room's own committed polygon for the SINGLE room it belongs to — never carries a room id,
  *  because the caller only ever passes it into the RoomPolygon instance it applies to. */
@@ -2218,6 +2238,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 imgW={imgW}
                 imgH={imgH}
                 zoom={view.zoom}
+                {...visiblePlanRect(view, paneW, paneH)}
                 onError={() => setFailedPdfUrl(pdfUrl)}
               />
             )}

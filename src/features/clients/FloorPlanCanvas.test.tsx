@@ -2218,6 +2218,37 @@ describe("FloorPlanCanvas (vector plan rendering)", () => {
     expect(live.getAttribute("transform")).toBe("translate(15 0) scale(0.7)");
   });
 
+  it("hands the vector layer the visible slice of the plan, derived from the live view and the pane", () => {
+    // The layer rasterises only what's on screen, and it does NOT re-derive "on screen" itself —
+    // this component is the only thing that knows both the live pan/zoom and the measured pane, so
+    // the derivation lives here and is wired through. If it were wrong, the plan would rasterise
+    // the wrong slice of the sheet, which looks like a correctly-drawn plan in the wrong place.
+    renderWithPdf();
+
+    // Two zoom-in clicks about the pane centre: 0.7 -> 1.09375, pan (15, 0) -> (-221.25, -157.5),
+    // on jsdom's fallback 870 x 560 pane. The pane then sees plan x 202.29..997.71, y 144..656,
+    // which overscanned by 15% a side and clipped to the page is (82.97, 67.2) 1034.06 x 665.6.
+    act(() => {
+      fireEvent.click(screen.getByTestId("plan-zoom-in"));
+      fireEvent.click(screen.getByTestId("plan-zoom-in"));
+    });
+
+    const live = screen.getByTestId("floor-plan-canvas").querySelector("g")!;
+    expect(live.getAttribute("transform")).toBe("translate(-221.25 -157.5) scale(1.09375)");
+
+    const fo = screen.getByTestId("plan-vector-layer");
+    expect(Number(fo.getAttribute("x"))).toBeCloseTo(82.97, 2);
+    expect(Number(fo.getAttribute("y"))).toBeCloseTo(67.2, 2);
+    expect(Number(fo.getAttribute("width"))).toBeCloseTo(1034.06, 2);
+    expect(Number(fo.getAttribute("height"))).toBeCloseTo(665.6, 2);
+
+    // ...and the PNG underneath still spans the WHOLE page. It is now what fills the plan outside
+    // the rasterised region, so it matters more than it did, not less.
+    const image = screen.getByTestId("floor-plan-canvas").querySelector("image")!;
+    expect(image.getAttribute("width")).toBe("1200");
+    expect(image.getAttribute("height")).toBe("800");
+  });
+
   it("keeps the raster <image> when no source PDF was retained (image uploads, failed retention)", () => {
     renderWithPdf({ pdfUrl: null, pdfPage: null });
     const svg = screen.getByTestId("floor-plan-canvas");
