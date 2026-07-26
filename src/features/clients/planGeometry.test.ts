@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildWallRuns, collapseWallPairs, normalizeRuns, MAX_WALL_RUNS } from "./planGeometry";
+import { buildWallRuns, collapseWallPairs, normalizeRuns, deriveWallCorners, MAX_WALL_RUNS } from "./planGeometry";
 import type { WallRun } from "@/lib/supabase/types";
 
 const seg = (ax: number, ay: number, bx: number, by: number, grey = true) =>
@@ -195,5 +195,83 @@ describe("collapseWallPairs", () => {
     // Centreline sits at the midpoint of the two faces (~y=5), not collapsed onto either face.
     expect(y1).toBeCloseTo(5, 0);
     expect(y2).toBeCloseTo(5, 0);
+  });
+});
+
+describe("deriveWallCorners", () => {
+  const run = (x1: number, y1: number, x2: number, y2: number): WallRun => ({ x1, y1, x2, y2 });
+
+  it("finds the exact crossing point of two perpendicular runs", () => {
+    const a = run(0, 50, 100, 50);
+    const b = run(50, 0, 50, 100);
+    const out = deriveWallCorners([a, b], 100, 100);
+    expect(out).toHaveLength(1);
+    expect(out[0][0]).toBeCloseTo(0.5, 6);
+    expect(out[0][1]).toBeCloseTo(0.5, 6);
+  });
+
+  it("still finds the corner when both runs stop 6px short of meeting (nearPx overshoot)", () => {
+    // Both runs would meet at (100,100) if extended, but each stops 6px short — the realistic
+    // case where wall extraction doesn't quite reach the true corner. Default nearPx is 12, so
+    // this 6px gap must still register.
+    const a = run(0, 100, 94, 100);
+    const b = run(100, 0, 100, 94);
+    const out = deriveWallCorners([a, b], 200, 200);
+    expect(out).toHaveLength(1);
+    expect(out[0][0]).toBeCloseTo(0.5, 2);
+    expect(out[0][1]).toBeCloseTo(0.5, 2);
+  });
+
+  it("does NOT find a corner when the runs stop 40px short — overshoot is bounded", () => {
+    const a = run(0, 100, 60, 100);
+    const b = run(100, 0, 100, 60);
+    const out = deriveWallCorners([a, b], 200, 200);
+    expect(out).toEqual([]);
+  });
+
+  it("ignores parallel runs — no divide-by-zero, no garbage off-page corner", () => {
+    const a = run(0, 0, 100, 0);
+    const b = run(0, 10, 100, 10);
+    const out = deriveWallCorners([a, b], 100, 100);
+    expect(out).toEqual([]);
+    expect(out.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
+  });
+
+  it("collapses duplicate crossings within dedupePx onto one corner", () => {
+    // A horizontal run crossed by two parallel verticals only 3px apart (default dedupePx is 6).
+    // The two verticals never cross each other (parallel), so this is two DISTINCT computed
+    // intersections that must collapse to one in the output.
+    const a = run(50, 100, 150, 100);
+    const b = run(100, 50, 100, 150);
+    const c = run(103, 50, 103, 150);
+    const out = deriveWallCorners([a, b, c], 200, 200);
+    expect(out).toHaveLength(1);
+  });
+
+  it("finds the crossing of two 45-degree runs — axis-only handling has been a recurring bug here", () => {
+    const a = run(0, 0, 100, 100);
+    const b = run(0, 100, 100, 0);
+    const out = deriveWallCorners([a, b], 100, 100);
+    expect(out).toHaveLength(1);
+    expect(out[0][0]).toBeCloseTo(0.5, 6);
+    expect(out[0][1]).toBeCloseTo(0.5, 6);
+  });
+
+  it("returns normalized 0..1 points, clamped, and keeps a real (0,0) corner", () => {
+    // One pair crosses off-page (150,50) against a 100x100 page — must clamp to x=1, not overflow.
+    const offPage1 = run(0, 50, 200, 50);
+    const offPage2 = run(150, 0, 150, 100);
+    // Another pair crosses exactly at the origin — must NOT be treated as "missing" (Null Island).
+    const origin1 = run(0, 0, 100, 0);
+    const origin2 = run(0, 0, 0, 100);
+    const out = deriveWallCorners([offPage1, offPage2, origin1, origin2], 100, 100);
+    for (const [x, y] of out) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(1);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(1);
+    }
+    expect(out.some(([x, y]) => x === 1 && Math.abs(y - 0.5) < 1e-6)).toBe(true);
+    expect(out.some(([x, y]) => x === 0 && y === 0)).toBe(true);
   });
 });

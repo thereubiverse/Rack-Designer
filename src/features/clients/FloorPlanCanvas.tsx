@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   forwardRef,
@@ -44,6 +45,7 @@ import type { RoomProposal, DeviceProposal } from "./planDetect";
 import { planDeviceCommit, planRoomCommit } from "./planProposals";
 import { normaliseCode } from "./validation";
 import { ProposalPanel } from "./ProposalPanel";
+import { deriveWallCorners } from "./planGeometry";
 
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
 // pointer drift every physical click carries, small enough that a deliberate pan never selects.
@@ -1229,6 +1231,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     [view, imgW, imgH]
   );
 
+  // Real room corners, derived from the wall runs ONCE and memoised. `deriveWallCorners` is O(n²)
+  // over every pair of runs — 704 runs is ~247k pairs, fine as a one-off but never something to run
+  // per pointermove, which is why this lives in a `useMemo` keyed on `wallRuns` rather than inside
+  // `snapToWallIntersection` below. `wallRuns` is normalized 0..1; `deriveWallCorners` works in PAGE
+  // PIXELS (its overshoot/dedupe tolerances are pixel quantities), so runs are scaled up to imgW ×
+  // imgH going in, and the normalized 0..1 result comes back out unchanged.
+  const wallCorners = useMemo<NormPoint[]>(() => {
+    if (wallRuns.length === 0) return [];
+    const pixelRuns = wallRuns.map((w) => ({
+      x1: w.x1 * imgW, y1: w.y1 * imgH,
+      x2: w.x2 * imgW, y2: w.y2 * imgH,
+    }));
+    return deriveWallCorners(pixelRuns, imgW, imgH);
+  }, [wallRuns, imgW, imgH]);
+
   // Candidate snap points: every vertex of every OTHER outlined room on this floor. The room being
   // re-outlined (drawingRoomId) is excluded so a trace never snaps to its own corners; a brand-new
   // room (creatingRoom) has no id, so nothing is excluded.
@@ -1315,6 +1332,24 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return best;
   }
 
+  /** Nearest true WALL INTERSECTION (two wall runs actually crossing) within SNAP_PX, or null —
+   *  ranked above `snapToWallCorner` below. A run's raw endpoint is wherever extraction happened to
+   *  stop, often mid-wall; an intersection is where two walls actually meet, which is what a real
+   *  room corner is. Picks the NEAREST corner in `wallCorners`, not the first one within range, the
+   *  same "nearest wins" contract every other snap function here follows. */
+  function snapToWallIntersection(n: NormPoint): NormPoint | null {
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const c of wallCorners) {
+      const dist = Math.hypot(toScreenX(c[0] - n[0]), toScreenY(c[1] - n[1]));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = c;
+      }
+    }
+    return best;
+  }
+
   /** Nearest point ON an extracted wall run within SNAP_PX, or null — the same point-to-segment
    *  projection snapToEdge uses (clamped to t ∈ [0,1]), against the PDF's wall geometry instead of
    *  an already-outlined room. Last in the chain: a wall's line is the weakest of the four targets.
@@ -1347,16 +1382,28 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return best;
   }
 
-  /** Snap a traced point, strongest target first: an existing room's corner, then a wall run's
-   *  corner, then a point on an existing room's wall, then a point on a wall run.
+  /** Snap a traced point, strongest target first: an existing room's corner, then a true wall
+   *  intersection, then a wall run's raw endpoint, then a point on an existing room's wall, then a
+   *  point on a wall run.
    *
    *  Existing ROOM geometry deliberately outranks the PDF's walls even when a wall is nearer:
    *  rooms that share a wall must land on exactly the same vertices (the Slice B contract), and an
    *  extracted run can sit half a wall thickness away from the corner a neighbouring room was
    *  already outlined on. Corners beat lines within each source for the same reason a corner is
-   *  worth more than a line: it's a point two walls agree on. */
+   *  worth more than a line: it's a point two walls agree on.
+   *
+   *  `snapToWallIntersection` outranks `snapToWallCorner`: a run's endpoint is wherever extraction
+   *  happened to stop, often mid-wall, while an intersection is where two walls actually cross —
+   *  the real room corner. `snapToWallCorner` stays in the chain as a weaker fallback for the runs
+   *  a corner-pair analysis doesn't cover (e.g. a run with no matching partner in range). */
   function snapPoint(n: NormPoint): NormPoint | null {
-    return snapToVertex(n) ?? snapToWallCorner(n) ?? snapToEdge(n) ?? snapToWallLine(n);
+    return (
+      snapToVertex(n) ??
+      snapToWallIntersection(n) ??
+      snapToWallCorner(n) ??
+      snapToEdge(n) ??
+      snapToWallLine(n)
+    );
   }
 
   // ---- Action commits — each is called exactly once per completed gesture ----

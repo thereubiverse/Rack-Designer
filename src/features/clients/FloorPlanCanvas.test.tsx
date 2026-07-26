@@ -1900,7 +1900,13 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     { x1: 0.225, y1: 0.318, x2: 0.225, y2: 0.45 },
     // A run parallel to, and 5.6 screen px below, that same bottom edge — so a click between the
     // two is NEARER this line than the room's, for the "room edge beats wall line" ordering test.
-    { x1: 0.05, y1: 0.31, x2: 0.25, y2: 0.31 },
+    // x2 stops at 0.20, not 0.25: at 0.25 this run's line, extended by the wall-INTERSECTION
+    // deriver's default 12px overshoot, would cross the wall stub above (x=0.225) at (0.225, 0.31)
+    // — 6.4px short of that stub's own top endpoint, well inside the 12px allowance — and that
+    // accidental crossing would outrank the stub's endpoint in the "wall corner beats room edge"
+    // test below. 0.20 keeps this run's line (still covering every click used against it here) out
+    // of range of x=0.225 by a wide margin.
+    { x1: 0.05, y1: 0.31, x2: 0.20, y2: 0.31 },
     // Two runs whose endpoints both fall inside the 12px radius of one click, the FARTHER one
     // listed FIRST — so "nearest wins" and "first hit wins" give different answers. Endpoint
     // (653.4, 364) is 8.4px from the click; (642.9, 364) is 2.1px.
@@ -2027,6 +2033,55 @@ describe("FloorPlanCanvas (wall snapping)", () => {
     const polygon = await traceFrom({ x: 700, y: 200 });
     expect(polygon[0][0]).toBeCloseTo((700 - 15) / 840, 10);
     expect(polygon[0][1]).toBeCloseTo(200 / 560, 10);
+  });
+
+  // These three exercise `snapToWallIntersection` — the actual crossing of two wall runs, which
+  // ranks ABOVE a raw run endpoint (`snapToWallCorner`) because a run's endpoint is wherever
+  // extraction happened to stop, often mid-wall, while an intersection is where two walls actually
+  // meet: the real room corner. A dedicated small `wallRuns` array is used for each so the derived
+  // corner set stays small and easy to reason about (deriveWallCorners runs over every pair).
+  describe("wall INTERSECTION snapping", () => {
+    // A clean perpendicular crossing, isolated from every fixture room and from WALL_RUNS above:
+    // horizontal run y=0.42 (pixel 336) crosses vertical run x=0.42 (pixel 504) at exactly
+    // (504, 336) -> norm (0.42, 0.42) -> screen (367.8, 235.2).
+    const CROSS_A: WallRun = { x1: 0.35, y1: 0.42, x2: 0.49, y2: 0.42 };
+    const CROSS_B: WallRun = { x1: 0.42, y1: 0.35, x2: 0.42, y2: 0.49 };
+
+    it("snaps a trace click near a wall INTERSECTION exactly onto it", async () => {
+      // (370, 236) is ~2.3 screen px from the crossing, well inside SNAP_PX, and far from every
+      // room vertex/edge and from either run's own endpoints.
+      const polygon = await traceFrom({ x: 370, y: 236 }, [CROSS_A, CROSS_B]);
+      expect(polygon[0][0]).toBeCloseTo(0.42, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.42, 6);
+    });
+
+    it("prefers the wall INTERSECTION over a STRICTLY CLOSER wall-run endpoint", async () => {
+      // A third run, C, shares the crossing's y (0.42) — parallel to CROSS_A, so it can never form
+      // its own spurious intersection with it — and its near endpoint sits EXACTLY at the click
+      // point: pixel (518, 336) -> norm (518/1200, 0.42). That endpoint is 0 screen px from the
+      // click; the true crossing (367.8, 235.2 screen) is ~9.8 screen px away — the endpoint is
+      // unambiguously the nearer target. (C does cross CROSS_B, but at the same pixel (504, 336)
+      // as CROSS_A x CROSS_B, so it only reinforces the one true corner, not a second one.)
+      const cThroughClick: WallRun = { x1: 518 / 1200, y1: 0.42, x2: 488 / 1200, y2: 0.42 };
+      const click = { x: 15 + (518 / 1200) * 840, y: 235.2 }; // = the endpoint's own screen position
+      const polygon = await traceFrom(click, [CROSS_A, CROSS_B, cThroughClick]);
+      // Must land on the CROSSING (0.42, 0.42), not the nearer endpoint (518/1200, 0.42).
+      expect(polygon[0][0]).toBeCloseTo(0.42, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.42, 6);
+    });
+
+    it("still lets an existing ROOM vertex beat a NEARER wall intersection", async () => {
+      // Two runs crossing exactly at (100, 58) in screen space -- 0 screen px from the click -- while
+      // room MDF's vertex [0.1, 0.1] sits at screen (99, 56), ~2.24 screen px from the same click.
+      // The intersection is nearer, but the room vertex must still win (Slice B contract: rooms
+      // sharing a wall must keep landing on exactly the same vertex).
+      const clickNorm: [number, number] = [(100 - 15) / 840, 58 / 560];
+      const runA: WallRun = { x1: 0.08, y1: clickNorm[1], x2: 0.12, y2: clickNorm[1] };
+      const runB: WallRun = { x1: clickNorm[0], y1: 0.09, x2: clickNorm[0], y2: 0.12 };
+      const polygon = await traceFrom({ x: 100, y: 58 }, [runA, runB]);
+      expect(polygon[0][0]).toBeCloseTo(0.1, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.1, 6);
+    });
   });
 
   it("with wallRuns=[] behaves exactly as before — the wall-corner click does not snap", async () => {

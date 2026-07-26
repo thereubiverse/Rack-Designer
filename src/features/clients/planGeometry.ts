@@ -1,4 +1,5 @@
 import type { WallRun } from "@/lib/supabase/types";
+import type { NormPoint } from "./floorPlanOps";
 
 export interface RawSeg { a: [number, number]; b: [number, number]; grey: boolean }
 export interface WallOpts {
@@ -174,4 +175,73 @@ export function normalizeRuns(runs: WallRun[], W: number, H: number): WallRun[] 
     x1: clamp01(r.x1 / W), y1: clamp01(r.y1 / H),
     x2: clamp01(r.x2 / W), y2: clamp01(r.y2 / H),
   }));
+}
+
+export interface CornerOpts { nearPx?: number; dedupePx?: number; maxCorners?: number }
+
+// nearPx=12: walls that meet at a real corner routinely stop a few pixels short of touching —
+// extraction sees the poché boundary, not an idealised drafting intent. Rejecting anything that
+// doesn't touch exactly loses real corners (see planGeometry.test.ts's "6px short" case). dedupePx=6
+// matches the poché-face gap tuning in COLLAPSE_DEFAULTS above: two intersections closer than that
+// are the same corner computed from different (already-doubled) wall faces, not two distinct corners.
+const CORNER_DEFAULTS: Required<CornerOpts> = {
+  nearPx: 12,
+  dedupePx: 6,
+  maxCorners: 4000,
+};
+
+// Below this, treat two runs as parallel: their intersection is numerically unstable and, if used,
+// lands far off-page. This is sin(angle-between) — the cross product of the two UNIT direction
+// vectors — so it is scale-independent, unlike a raw cross-product epsilon which would need
+// re-tuning for every sheet size.
+const PARALLEL_SIN_EPS = 1e-6;
+
+/** Intersections of the wall runs — the actual room corners. A run's ENDPOINT is wherever
+ *  extraction stopped, often mid-wall; a corner is where two walls cross.
+ *
+ *  O(n²) over every pair of runs — 704 runs is ~247k pairs, fine as a one-off but NOT something to
+ *  call on every pointer move. Callers must memoise this, keyed on the run list. */
+export function deriveWallCorners(runs: WallRun[], W: number, H: number, opts: CornerOpts = {}): NormPoint[] {
+  const o = { ...CORNER_DEFAULTS, ...opts };
+  // Keyed on a `dedupePx` pixel grid cell; the first intersection to land in a cell wins and later
+  // ones in the same cell are dropped — cheap O(1) de-duplication without a distance search.
+  const cells = new Map<string, [number, number]>();
+
+  outer: for (let i = 0; i < runs.length; i++) {
+    const a = runs[i];
+    const ax = a.x2 - a.x1, ay = a.y2 - a.y1;
+    const aLen = Math.hypot(ax, ay);
+    if (aLen < 1e-9) continue;
+
+    for (let j = i + 1; j < runs.length; j++) {
+      const b = runs[j];
+      const bx = b.x2 - b.x1, by = b.y2 - b.y1;
+      const bLen = Math.hypot(bx, by);
+      if (bLen < 1e-9) continue;
+
+      const denom = ax * by - ay * bx;
+      const sinAngle = denom / (aLen * bLen);
+      if (Math.abs(sinAngle) < PARALLEL_SIN_EPS) continue; // near-parallel: skip before dividing by denom
+
+      const dx = b.x1 - a.x1, dy = b.y1 - a.y1;
+      const t = (dx * by - dy * bx) / denom; // param along a, 0..1 is on-segment
+      const u = (dx * ay - dy * ax) / denom; // param along b, 0..1 is on-segment
+
+      const tOvershoot = o.nearPx / aLen;
+      const uOvershoot = o.nearPx / bLen;
+      if (t < -tOvershoot || t > 1 + tOvershoot) continue;
+      if (u < -uOvershoot || u > 1 + uOvershoot) continue;
+
+      const px = a.x1 + t * ax;
+      const py = a.y1 + t * ay;
+
+      const key = `${Math.round(px / o.dedupePx)}_${Math.round(py / o.dedupePx)}`;
+      if (!cells.has(key)) {
+        cells.set(key, [px, py]);
+        if (cells.size >= o.maxCorners) break outer;
+      }
+    }
+  }
+
+  return Array.from(cells.values(), ([px, py]): NormPoint => [clamp01(px / W), clamp01(py / H)]);
 }
