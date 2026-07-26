@@ -18,7 +18,7 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
-import { discoverSymbolsAction } from "./symbolActions";
+import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 const refreshMock = vi.fn();
@@ -68,6 +68,11 @@ vi.mock("./discoverActions", () => ({
 // the canvas only awaits its result shape.
 vi.mock("./symbolActions", () => ({
   discoverSymbolsAction: vi.fn(async () => ({ ok: true, proposals: [] })),
+  pickSymbolAction: vi.fn(async () => ({
+    ok: true,
+    box: { x: 0.1, y: 0.2, w: 0.05, h: 0.06 },
+    pathCount: 12,
+  })),
 }));
 
 /** Open the wizard and run the AI device pass. It now lives one level down, under "Discover
@@ -2325,21 +2330,30 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     );
   }
 
-  /** Open the wizard, open the device-type submenu, and arm box-select for one type. */
+  /** Open the wizard, open the device-type submenu, and enter pick mode for one type. */
   function armSymbolSelect(code = "CAM") {
     fireEvent.click(screen.getByTestId("plan-wizard"));
     fireEvent.click(screen.getByTestId("discover-devices"));
     fireEvent.click(screen.getByTestId(`symbol-type-${code}`));
   }
 
-  /** Drag a box on the plan: press, two moves, release. */
-  async function dragBox(x0: number, y0: number, x1: number, y1: number) {
+  /** Click a point on the plan — press, release, click, exactly as a real tap arrives. */
+  async function clickPlan(x: number, y: number) {
     const svg = screen.getByTestId("floor-plan-canvas");
-    fireEvent.pointerDown(svg, { clientX: x0, clientY: y0, button: 0, pointerId: 11 });
-    fireEvent.pointerMove(svg, { clientX: (x0 + x1) / 2, clientY: (y0 + y1) / 2, pointerId: 11 });
-    fireEvent.pointerMove(svg, { clientX: x1, clientY: y1, pointerId: 11 });
+    fireEvent.pointerDown(svg, { clientX: x, clientY: y, button: 0, pointerId: 11 });
     await act(async () => {
-      fireEvent.pointerUp(svg, { clientX: x1, clientY: y1, pointerId: 11 });
+      fireEvent.pointerUp(svg, { clientX: x, clientY: y, pointerId: 11 });
+    });
+    await act(async () => {
+      fireEvent.click(svg, { clientX: x, clientY: y });
+    });
+  }
+
+  /** Click the symbol, then confirm the highlighted pick — the whole two-step gesture. */
+  async function pickAndConfirm(x = 200, y = 100) {
+    await clickPlan(x, y);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("symbol-pick-confirm"));
     });
   }
 
@@ -2358,80 +2372,119 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     expect(screen.queryByTestId("symbol-type-SW")).toBeNull();
   });
 
-  it("choosing a type closes the menu, arms box-select and prompts with the type NAME", () => {
+  it("choosing a type closes the menu, enters pick mode and prompts with the type NAME", () => {
     renderWithTypes();
     armSymbolSelect("CAM");
     expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
     expect(screen.getByTestId("symbol-prompt").textContent).toContain("Camera");
     expect(screen.getByTestId("symbol-prompt").textContent).toContain("Esc to cancel");
-    // Nothing has been searched yet — arming is not a pass.
+    // Nothing has been picked or searched yet — entering pick mode is not a pass.
+    expect(pickSymbolAction).not.toHaveBeenCalled();
     expect(discoverSymbolsAction).not.toHaveBeenCalled();
   });
 
-  it("draws the live selection rectangle in image-pixel space, zoom-compensated", () => {
-    // Would catch: rounding the rect (which would make a small symbol box jitter), or drawing it
-    // in screen space inside a group that is already pan/zoom transformed.
+  it("a click sends the hand-computed NORMALIZED point, and searches nothing yet", async () => {
+    // Would catch: sending screen pixels, or firing the multi-second full-sheet search off the
+    // click instead of off the confirmation.
     renderWithTypes();
     armSymbolSelect("CAM");
-    const svg = screen.getByTestId("floor-plan-canvas");
-    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
+    await clickPlan(200, 100);
 
-    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 12 });
-    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 12 });
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
+    const [arg] = vi.mocked(pickSymbolAction).mock.calls[0];
+    expect(arg.floorId).toBe("floor-1");
+    // normX(200) = (200 - 15) / 840, normY(100) = 100 / 560 — the jsdom fallback view.
+    expect(arg.point.x).toBeCloseTo(185 / 840, 10);
+    expect(arg.point.y).toBeCloseTo(100 / 560, 10);
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
 
-    const box = screen.getByTestId("symbol-select-box");
-    // normX(200)*1200 = (185/840)*1200 = 264.2857…, normY(100)*800 = (100/560)*800 = 142.857…
-    expect(Number(box.getAttribute("x"))).toBeCloseTo(264.2857, 3);
-    expect(Number(box.getAttribute("y"))).toBeCloseTo(142.8571, 3);
-    // (60/840)*1200 = 85.714…, (60/560)*800 = 85.714…
-    expect(Number(box.getAttribute("width"))).toBeCloseTo(85.7143, 3);
-    expect(Number(box.getAttribute("height"))).toBeCloseTo(85.7143, 3);
+  it("draws the picked box as a highlight in image-pixel space, zoom-compensated", async () => {
+    // Would catch: rounding the rect (a picked symbol is ~15px on the sheet), or drawing it in
+    // screen space inside a group that is already pan/zoom transformed.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    await clickPlan(200, 100);
+
+    const box = screen.getByTestId("symbol-pick-box");
+    // The mocked pick is {x:0.1, y:0.2, w:0.05, h:0.06} on this 1200 x 800 plan:
+    expect(Number(box.getAttribute("x"))).toBeCloseTo(120, 6);
+    expect(Number(box.getAttribute("y"))).toBeCloseTo(160, 6);
+    expect(Number(box.getAttribute("width"))).toBeCloseTo(60, 6);
+    expect(Number(box.getAttribute("height"))).toBeCloseTo(48, 6);
     // Hairline at any magnification: 1 / the fallback fit zoom of 0.7.
     expect(Number(box.getAttribute("stroke-width"))).toBeCloseTo(1 / 0.7, 6);
+    // ...and both confirm affordances are offered.
+    expect(screen.getByTestId("symbol-pick-confirm")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-pick-cancel")).toBeInTheDocument();
   });
 
-  it("sends the hand-computed NORMALIZED box and the chosen type, then clears the rectangle", async () => {
-    // Would catch: sending screen pixels, sending the plan's own pixel box, or sending the type
-    // NAME instead of its code.
+  it("confirming searches with the EXACT picked box and the chosen type", async () => {
+    // Would catch: re-deriving the box from the click point, rounding it, or sending the type NAME
+    // instead of its code.
     renderWithTypes();
     armSymbolSelect("TO");
-    await dragBox(200, 100, 260, 160);
+    await pickAndConfirm(200, 100);
 
     expect(discoverSymbolsAction).toHaveBeenCalledTimes(1);
-    const [arg] = vi.mocked(discoverSymbolsAction).mock.calls[0];
-    expect(arg.floorId).toBe("floor-1");
-    expect(arg.typeCode).toBe("TO");
-    expect(arg.box.x).toBeCloseTo(185 / 840, 10);
-    expect(arg.box.y).toBeCloseTo(100 / 560, 10);
-    expect(arg.box.w).toBeCloseTo(60 / 840, 10);
-    expect(arg.box.h).toBeCloseTo(60 / 560, 10);
-    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
+    expect(vi.mocked(discoverSymbolsAction).mock.calls[0][0]).toEqual({
+      floorId: "floor-1",
+      box: { x: 0.1, y: 0.2, w: 0.05, h: 0.06 },
+      typeCode: "TO",
+    });
+    // The highlight and the whole gesture are done once the search is running.
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.queryByTestId("symbol-prompt")).toBeNull();
   });
 
-  it("normalizes a bottom-right -> top-left drag before sending it", async () => {
-    // Would catch: passing the raw press/release order through, so a backwards drag arrives with
-    // a negative width the server would have to guess at.
+  it("cancelling drops the highlight and returns to pick mode WITHOUT searching", async () => {
+    // A bad pick must cost a click, not a search.
     renderWithTypes();
     armSymbolSelect("CAM");
-    await dragBox(260, 160, 200, 100);
+    await clickPlan(200, 100);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("symbol-pick-cancel"));
+    });
 
-    const [arg] = vi.mocked(discoverSymbolsAction).mock.calls[0];
-    expect(arg.box.x).toBeCloseTo(185 / 840, 10);
-    expect(arg.box.y).toBeCloseTo(100 / 560, 10);
-    expect(arg.box.w).toBeCloseTo(60 / 840, 10);
-    expect(arg.box.h).toBeCloseTo(60 / 560, 10);
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    // Still in pick mode, so the next click picks again.
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Camera");
+    await clickPlan(300, 200);
+    expect(pickSymbolAction).toHaveBeenCalledTimes(2);
   });
 
-  it("box-select does NOT pan the plan", async () => {
-    // Would catch: leaving the root's pan bookkeeping armed during box-select, which would drag
-    // the whole sheet out from under the symbol the user is trying to box.
+  it("says so when the click hit no symbol, and stays in pick mode", async () => {
+    vi.mocked(pickSymbolAction).mockResolvedValueOnce({
+      ok: false,
+      error: "No symbol there — click directly on a device symbol.",
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await clickPlan(200, 100);
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("No symbol there");
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.getByTestId("symbol-prompt")).toBeInTheDocument();
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("pick mode does NOT pan the plan", async () => {
+    // Would catch: leaving the root's pan bookkeeping armed during pick mode, which would drag the
+    // whole sheet out from under the symbol the user is trying to click.
     renderWithTypes();
     const before = screen
       .getByTestId("floor-plan-canvas")
       .querySelector("g")!
       .getAttribute("transform");
     armSymbolSelect("CAM");
-    await dragBox(200, 100, 400, 300);
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 21 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 300, pointerId: 21 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 300, pointerId: 21 });
+    });
     expect(
       screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform")
     ).toBe(before);
@@ -2447,7 +2500,7 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     });
     renderWithTypes();
     armSymbolSelect("CAM");
-    await dragBox(200, 100, 260, 160);
+    await pickAndConfirm();
 
     // Same IMAGE-PIXEL placement every committed and proposed pin uses: [0.5,0.5] on 1200x800.
     expect(screen.getByTestId("proposal-pin-sym-0").getAttribute("transform")).toBe("translate(600 400)");
@@ -2462,7 +2515,7 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({ ok: true, proposals: [] });
     const { container } = renderWithTypes();
     armSymbolSelect("CAM");
-    await dragBox(200, 100, 260, 160);
+    await pickAndConfirm();
 
     expect(screen.getByTestId("wizard-notice").textContent).toContain("Nothing found");
     expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
@@ -2475,49 +2528,32 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     });
     const { container } = renderWithTypes();
     armSymbolSelect("CAM");
-    await dragBox(200, 100, 260, 160);
+    await pickAndConfirm();
 
     expect(screen.getByTestId("wizard-notice").textContent).toContain("no source PDF");
     expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
   });
 
-  it("Esc cancels box-select cleanly — no prompt, no rectangle, no action", async () => {
+  it("Esc exits the whole flow cleanly — no prompt, no highlight, neither action", async () => {
     renderWithTypes();
     armSymbolSelect("CAM");
-    const svg = screen.getByTestId("floor-plan-canvas");
-    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 13 });
-    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 13 });
-    expect(screen.getByTestId("symbol-select-box")).toBeInTheDocument();
+    await clickPlan(200, 100);
+    expect(screen.getByTestId("symbol-pick-box")).toBeInTheDocument();
 
     await act(async () => {
       fireEvent.keyDown(window, { key: "Escape" });
     });
 
     expect(screen.queryByTestId("symbol-prompt")).toBeNull();
-    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
-    // ...and the release of the cancelled drag must not fire the pass after the fact.
-    await act(async () => {
-      fireEvent.pointerUp(svg, { clientX: 260, clientY: 160, pointerId: 13 });
-    });
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.queryByTestId("symbol-pick-confirm")).toBeNull();
     expect(discoverSymbolsAction).not.toHaveBeenCalled();
+    // ...and a click after Esc is an ordinary canvas click again, not another pick.
+    await clickPlan(260, 160);
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores a degenerate press-and-release with no drag", async () => {
-    // Would catch: firing a full-sheet search off a stray click, which is a multi-second server
-    // pass returning garbage.
-    renderWithTypes();
-    armSymbolSelect("CAM");
-    const svg = screen.getByTestId("floor-plan-canvas");
-    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 14 });
-    await act(async () => {
-      fireEvent.pointerUp(svg, { clientX: 200, clientY: 100, pointerId: 14 });
-    });
-    expect(discoverSymbolsAction).not.toHaveBeenCalled();
-    // Still armed, so the user can simply try again.
-    expect(screen.getByTestId("symbol-prompt")).toBeInTheDocument();
-  });
-
-  it("box-select stands the committed pins down, so a drag starting on one still boxes", async () => {
+  it("pick mode stands the committed pins down, so a click on one still picks", async () => {
     // Would catch: leaving the edit-mode pin handlers live, which stopPropagation and would eat
     // the press before the root ever saw it.
     renderWithTypes();
@@ -2526,11 +2562,13 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     const pin = screen.getByTestId("plan-pin-CAM01");
     const svg = screen.getByTestId("floor-plan-canvas");
     fireEvent.pointerDown(pin, { clientX: 200, clientY: 100, button: 0, pointerId: 15 });
-    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 15 });
     await act(async () => {
-      fireEvent.pointerUp(svg, { clientX: 260, clientY: 160, pointerId: 15 });
+      fireEvent.pointerUp(svg, { clientX: 200, clientY: 100, pointerId: 15 });
     });
-    expect(discoverSymbolsAction).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 200, clientY: 100 });
+    });
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
     // The pin itself must not have been moved by the gesture.
     expect(placeFloorDeviceAction).not.toHaveBeenCalled();
   });

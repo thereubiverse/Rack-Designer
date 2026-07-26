@@ -10,13 +10,16 @@ vi.mock("./symbolMatch", () => ({
   cropToInk: vi.fn(),
   hasInk: vi.fn(),
 }));
+vi.mock("./planPaths", () => ({ decodePlanPage: vi.fn() }));
 
-import { discoverSymbolsAction } from "./symbolActions";
+import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import { getFloorPlan } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
 import { extractTemplate, matchSymbol, cropToInk, hasInk } from "./symbolMatch";
 import type { SymbolHit } from "./symbolMatch";
+import { decodePlanPage } from "./planPaths";
+import type { PlanPath } from "./planPaths";
 
 // The rendered page. Deliberately NOT square and NOT the stored width_px/height_px, so a value
 // hand-computed against these dimensions can only come from the rendered raster.
@@ -178,7 +181,7 @@ describe("discoverSymbolsAction", () => {
     const res = await discoverSymbolsAction(input());
     expect(res).toEqual({
       ok: false,
-      error: "That selection looks empty — draw the box around a symbol.",
+      error: "Nothing to match there — try a different symbol.",
     });
     expect(hasInk).toHaveBeenCalledWith(IMG, cropped);
     expect(extractTemplate).not.toHaveBeenCalled();
@@ -319,5 +322,182 @@ describe("discoverSymbolsAction", () => {
   it("zero hits is a success with an empty list, not an error", async () => {
     vi.mocked(matchSymbol).mockReturnValue([]);
     await expect(discoverSymbolsAction(input())).resolves.toEqual({ ok: true, proposals: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// pickSymbolAction — resolve a CLICK to the symbol's own vector paths.
+// ---------------------------------------------------------------------------------------------
+
+const NO_SYMBOL = "No symbol there — click directly on a device symbol.";
+
+/** One decoded path, reduced to what picking reads: its bbox and its colour class. `segs` is
+ *  irrelevant here (picking never looks at them), so it stays empty. */
+function pathAt(minX: number, minY: number, maxX: number, maxY: number, grey = false): PlanPath {
+  return { segs: [], minX, minY, maxX, maxY, grey };
+}
+
+/** A page whose paths are exactly what the test constructs, at the same 2600 x 1733 raster the
+ *  discovery tests above use — so a normalized coordinate means the same thing in both blocks. */
+function page(paths: PlanPath[]) {
+  return { paths, texts: [], width: IMG_W, height: IMG_H };
+}
+
+/** The device-symbol fixture: a 14 x 14 circle at (100,200)-(114,214) page pixels. */
+const SYMBOL = pathAt(100, 200, 114, 214);
+/** Its centre, normalized — what the canvas would send for a click on it. */
+const ON_SYMBOL = { x: 107 / IMG_W, y: 207 / IMG_H };
+
+describe("pickSymbolAction", () => {
+  beforeEach(() => {
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL]));
+  });
+
+  it("happy path: decodes the STORED page and returns the symbol's bbox, normalized", async () => {
+    // Would catch: hardcoding page 0, returning PAGE PIXELS instead of 0..1, or returning the
+    // click point rather than the path it landed on.
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+
+    expect(getFloorPlan).toHaveBeenCalledWith(expect.anything(), "f1");
+    expect(downloadPlanObject).toHaveBeenCalledWith(expect.anything(), "SITE-A/f1.pdf");
+    expect(decodePlanPage).toHaveBeenCalledWith(MOCK_BYTES, 3);
+    // Hand-computed against the RENDERED raster (2600 x 1733): x = 100 / 2600 = 0.0384615384…
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(0.03846153846154, 12);
+    expect(res.box.y).toBeCloseTo(200 / IMG_H, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.box.h).toBeCloseTo(14 / IMG_H, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("grows the group through a NEARBY path — the symbol's own text comes with it", async () => {
+    // Would catch: returning only the path under the cursor, which on the real sheet is one arc of
+    // a circle rather than the whole symbol.
+    const text = pathAt(86, 205, 96, 212); // right edge 4px from the symbol's left edge = LINK
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, text]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(86 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo((114 - 86) / IMG_W, 12);
+    expect(res.pathCount).toBe(2);
+  });
+
+  it("REFUSES a neighbour that would push the group past the max side — the wall guard", async () => {
+    // The regression test for the failure this whole approach exists to avoid: a symbol drawn on a
+    // wall, or beside a leader line, must not drag that line's whole length into the template.
+    // The neighbour starts 2px from the symbol (well inside the 4px link distance) so ONLY the
+    // size refusal can keep it out. Delete the guard and the box becomes 300px wide.
+    const wall = pathAt(116, 206, 400, 208);
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, wall]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("a long path under the click is never the seed", async () => {
+    // Would catch: seeding on the wall the symbol sits on. With the symbol gone there is nothing
+    // small to pick, so the answer must be "no symbol" rather than a 500px box.
+    vi.mocked(decodePlanPage).mockResolvedValue(page([pathAt(0, 200, 500, 214)]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res).toEqual({ ok: false, error: NO_SYMBOL });
+  });
+
+  it("seeds on the SMALLEST path under the click, not the first one", async () => {
+    // Would catch: taking whichever qualifying path came first in the operator list — on the real
+    // sheet that is usually the enclosing box, not the glyph the user aimed at.
+    const enclosing = pathAt(80, 190, 140, 240);   // 60 x 50, still under the max side
+    vi.mocked(decodePlanPage).mockResolvedValue(page([enclosing]));
+    const wide = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(wide.ok && Math.round(wide.box.w * IMG_W)).toBe(60);
+
+    // With the small symbol present too, the small one must win — and the enclosing path then
+    // joins by growth (it is within link distance), so the box is the union, seeded correctly.
+    vi.mocked(decodePlanPage).mockResolvedValue(page([pathAt(200, 600, 214, 614), SYMBOL]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("ignores SCREENED-BACK paths: a click on the architecture finds no symbol", async () => {
+    // Would catch: dropping the grey/foreground split, which would let a click anywhere on the
+    // sheet return a chunk of the base building as the template.
+    vi.mocked(decodePlanPage).mockResolvedValue(page([pathAt(100, 200, 114, 214, true)]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res).toEqual({ ok: false, error: NO_SYMBOL });
+  });
+
+  it("a grey path never joins the group either", async () => {
+    const greyNeighbour = pathAt(116, 190, 130, 240, true);
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, greyNeighbour]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok && res.pathCount).toBe(1);
+    expect(res.ok && Math.round(res.box.h * IMG_H)).toBe(14);
+  });
+
+  it("a click on blank paper -> {ok:false} with the click-the-symbol message", async () => {
+    const res = await pickSymbolAction({ floorId: "f1", point: { x: 0.9, y: 0.9 } });
+    expect(res).toEqual({ ok: false, error: NO_SYMBOL });
+  });
+
+  it("an out-of-range point is CLAMPED into the page, not rejected", async () => {
+    // Would catch: bailing out on a click the canvas reported just off the sheet edge. Clamped to
+    // (2600, 0), the click lands on the corner path (with the ~3px hit tolerance).
+    const corner = pathAt(2592, 0, 2600, 8);
+    vi.mocked(decodePlanPage).mockResolvedValue(page([corner]));
+    const res = await pickSymbolAction({ floorId: "f1", point: { x: 1.4, y: -0.2 } });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(2592 / IMG_W, 12);
+    expect(res.box.y).toBe(0);
+  });
+
+  it("a non-finite point -> {ok:false}, never a throw", async () => {
+    const res = await pickSymbolAction({ floorId: "f1", point: { x: Number.NaN, y: 0.5 } });
+    expect(res).toEqual({ ok: false, error: NO_SYMBOL });
+  });
+
+  it("no plan row -> {ok:false}, nothing downloaded or decoded", async () => {
+    vi.mocked(getFloorPlan).mockResolvedValue(null);
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res).toEqual({ ok: false, error: "Upload a plan first." });
+    expect(downloadPlanObject).not.toHaveBeenCalled();
+    expect(decodePlanPage).not.toHaveBeenCalled();
+  });
+
+  it("pdf_storage_path null -> {ok:false}, nothing downloaded or decoded", async () => {
+    vi.mocked(getFloorPlan).mockResolvedValue({ ...plan, pdf_storage_path: null } as never);
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res).toEqual({ ok: false, error: "This plan has no source PDF." });
+    expect(downloadPlanObject).not.toHaveBeenCalled();
+    expect(decodePlanPage).not.toHaveBeenCalled();
+  });
+
+  it("getFloorPlan rejecting RESOLVES {ok:false}, never a rejection", async () => {
+    // Would catch: the await sitting outside the try/catch — the bug an earlier slice shipped.
+    vi.mocked(getFloorPlan).mockRejectedValue(new Error("db exploded"));
+    await expect(pickSymbolAction({ floorId: "f1", point: ON_SYMBOL })).resolves.toEqual(
+      expect.objectContaining({ ok: false })
+    );
+    expect(downloadPlanObject).not.toHaveBeenCalled();
+  });
+
+  it("decodePlanPage rejecting RESOLVES {ok:false} (encrypted / malformed PDF)", async () => {
+    vi.mocked(decodePlanPage).mockRejectedValue(new Error("bad pdf"));
+    await expect(pickSymbolAction({ floorId: "f1", point: ON_SYMBOL })).resolves.toEqual(
+      expect.objectContaining({ ok: false })
+    );
+  });
+
+  it("a page with no paths at all -> {ok:false}", async () => {
+    vi.mocked(decodePlanPage).mockResolvedValue(page([]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res).toEqual({ ok: false, error: NO_SYMBOL });
   });
 });

@@ -41,7 +41,7 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
-import { discoverSymbolsAction } from "./symbolActions";
+import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
 import { planDeviceCommit, planRoomCommit } from "./planProposals";
 import { normaliseCode } from "./validation";
@@ -777,12 +777,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // device-type submenu the symbol flow starts from. Always reset with the menu itself, so the
   // next open starts at the top level rather than mid-drill.
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
-  // The device-type CODE box-select is armed for, or null. Non-null is a live gesture mode in
+  // The device-type CODE pick mode is armed for, or null. Non-null is a live gesture mode in
   // exactly the sense creatingRoom/creatingDevice are, and gates the same things they do.
   const [symbolType, setSymbolType] = useState<string | null>(null);
-  // The live selection rectangle, as the two NORMALIZED corners of the drag (press, current). Kept
-  // unrounded and unordered — the ordering happens once, where the box is read.
-  const [symbolBox, setSymbolBox] = useState<{ a: NormPoint; b: NormPoint } | null>(null);
+  // The symbol the last click resolved to: its NORMALIZED bounds (straight from the server's
+  // vector hit-test) and the type the search will run for. Non-null means the highlight and its
+  // Search/Cancel affordance are showing — nothing has been searched yet.
+  const [symbolPick, setSymbolPick] = useState<
+    { box: { x: number; y: number; w: number; h: number }; typeCode: string } | null
+  >(null);
+  // True while the hit-test is in flight, so a second click can't queue a second one.
+  const [picking, setPicking] = useState(false);
   const [discovering, setDiscovering] = useState<null | "rooms" | "devices" | "symbols">(null);
   // Either a pass-outcome sentinel the notice renders specially ("no-key" from the action, or the
   // local "none-found"), or an error string to show verbatim.
@@ -808,10 +813,6 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   >(null);
   // The wizard menu's anchor, so a press anywhere else can close the menu.
   const wizardRef = useRef<HTMLSpanElement | null>(null);
-  // The live box-select drag. Like the committed drags this is a REF, not state: pointer-up must
-  // decide from what the gesture actually recorded, and Esc must be able to kill it outright
-  // (clearing only `symbolBox` would hide the rectangle but still fire the search on release).
-  const symbolDragRef = useRef<{ a: NormPoint; b: NormPoint } | null>(null);
 
   // Rows this component has created since the `devices`/`rooms` props last refreshed. The decision
   // layer MUST see them: planDeviceCommit falls through to a GENERATED code whenever the label is
@@ -875,10 +876,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setProposalRoomEditId(null);
     setSelectedProposalVertex(null);
     setWizardNotice(null);
-    // A box-select armed against the previous floor would search THIS floor's plan for a symbol
-    // the user boxed on another one.
-    symbolDragRef.current = null;
-    setSymbolBox(null);
+    // A pick armed against the previous floor would search THIS floor's plan for a symbol the user
+    // clicked on another one.
+    setSymbolPick(null);
     setSymbolType(null);
     // The pending rows go too: they are pruned by CONTENT against this floor's props, so one left
     // over from the previous floor could never be pruned again — and could match a proposal here
@@ -949,7 +949,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     }
   }
 
-  /** Close the wizard and arm box-select for one device type. Clears the geometry selections the
+  /** Close the wizard and enter pick mode for one device type. Clears the geometry selections the
    *  same way runDiscovery does — proposal ids are per-pass, so a stale selection would silently
    *  re-point at a different shape — and drops the committed selections too, because the pins and
    *  vertices they belong to stand down for the duration of the gesture. */
@@ -975,17 +975,59 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setDrawPoints([]);
     setHoverPoint(null);
     setSnapTarget(null);
-    setSymbolBox(null);
-    symbolDragRef.current = null;
+    setSymbolPick(null);
     setSymbolType(typeCode);
   }
 
-  /** Cancel box-select. Kills the in-flight drag as well as the mode: pointer-up decides from
-   *  `symbolDragRef` alone, so leaving it set would still fire the search after an Esc. */
+  /** Leave the symbol flow entirely (Esc, or a floor change): the mode AND any highlighted pick,
+   *  so nothing is left on screen offering to search for a symbol the user has walked away from. */
   function cancelSymbolSelect() {
-    symbolDragRef.current = null;
-    setSymbolBox(null);
+    setSymbolPick(null);
     setSymbolType(null);
+  }
+
+  /** Resolve one click to the symbol's own vector paths. On success the bounds are HELD, not
+   *  searched: the user confirms first, so a bad pick costs a click rather than a full-sheet
+   *  correlation. On failure the message shows and pick mode stays armed, so the next click simply
+   *  tries again. Never throws — the action returns `{ ok: false, error }` for every failure. */
+  async function runSymbolPick(typeCode: string, point: NormPoint) {
+    // Never while an accept is in flight, and never twice at once — same reasoning as runDiscovery.
+    if (accepting || picking) return;
+    setPicking(true);
+    setWizardNotice(null);
+    // A previous highlight goes the moment a new click is being resolved, so the box on screen
+    // always belongs to the click the user just made.
+    setSymbolPick(null);
+    try {
+      const res = await pickSymbolAction({
+        floorId: plan.floor_id,
+        point: { x: point[0], y: point[1] },
+      });
+      if (!res.ok) {
+        setWizardNotice(res.error);
+        return;
+      }
+      setSymbolPick({ box: res.box, typeCode });
+    } finally {
+      setPicking(false);
+    }
+  }
+
+  /** Confirm the highlighted pick: this is the ONLY thing that starts a search. The gesture ends
+   *  here — the review panel takes over from the proposals. */
+  function confirmSymbolPick() {
+    const pick = symbolPick;
+    if (!pick || discovering != null || accepting) return;
+    setSymbolPick(null);
+    setSymbolType(null);
+    void runSymbolSearch(pick.typeCode, pick.box);
+  }
+
+  /** Reject the highlighted pick and go back to pick mode — the user aims at a different symbol.
+   *  Deliberately NOT a full cancel: the chosen device type survives. */
+  function cancelSymbolPick() {
+    setSymbolPick(null);
+    setWizardNotice(null);
   }
 
   /** Run one symbol search and park its hits in `proposals.devices` — the SAME slot the AI pass
@@ -1826,8 +1868,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     !placingRackId &&
     symbolType == null;
 
-  /** Box-select is armed. Every shape on the plan — committed and proposed — stands its pointer
-   *  handlers down while it is: the drag is aimed at the RASTER underneath, and a pin or vertex
+  /** Pick mode is armed. Every shape on the plan — committed and proposed — stands its pointer
+   *  handlers down while it is: the click is aimed at the PLAN underneath, and a pin or vertex
    *  that stopPropagation'd the press would swallow the gesture before the root ever saw it. The
    *  committed shapes have no gate of their own beyond `editMode`, so this rides on that. */
   const symbolSelecting = symbolType != null;
@@ -1859,15 +1901,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (e.button !== 0) return;
     cancelFitAnim();
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    // Box-select owns the press outright: `dragRef` is deliberately left null so the plan cannot
-    // pan out from under the symbol being boxed.
-    if (symbolType != null) {
-      const n = toNorm(e.clientX, e.clientY);
-      if (!n) return;
-      symbolDragRef.current = { a: n, b: n };
-      setSymbolBox({ a: n, b: n });
-      return;
-    }
+    // Pick mode owns the press outright: `dragRef` is deliberately left null so the plan cannot pan
+    // out from under the symbol being aimed at. The pick itself happens on the CLICK (below), the
+    // same route every other tap gesture on this canvas takes.
+    if (symbolType != null) return;
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
     const roomEl = (e.target as Element).closest?.("[data-room-id]");
@@ -1880,18 +1917,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Box-select first, and it returns unconditionally — no snap hover, no pan, no preview.
-    if (symbolDragRef.current) {
-      const drag = symbolDragRef.current;
-      const n = toNorm(e.clientX, e.clientY);
-      // A pointer dragged off the sheet keeps the last in-bounds corner rather than dropping the
-      // rectangle; the server clamps anything that still overshoots.
-      if (n) {
-        drag.b = n;
-        setSymbolBox({ a: drag.a, b: n });
-      }
-      return;
-    }
+    // Pick mode first, and it returns unconditionally — no snap hover, no pan, no preview. There is
+    // no drag to track: the gesture is a single click.
+    if (symbolType != null) return;
     // Ghost drags next: they write straight to proposal state (no preview layer, no commit).
     if (proposalPinDragRef.current) {
       const drag = proposalPinDragRef.current;
@@ -1946,30 +1974,13 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setView((v) => ({ ...v, panX: d.panX + (e.clientX - d.x), panY: d.panY + (e.clientY - d.y) }));
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (symbolDragRef.current) {
-      const { a, b } = symbolDragRef.current;
-      symbolDragRef.current = null;
-      setSymbolBox(null);
+    // Pick mode: nothing to commit or select here — the click handler does the work. Only the
+    // pointer capture taken on press has to be given back, or the NEXT press lands on this element
+    // no matter where it happens.
+    if (symbolType != null) {
       if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
-      // Measured in SCREEN pixels so the threshold means the same thing at any zoom. A press that
-      // never really moved is a stray click, not a selection — firing a multi-second full-sheet
-      // correlation off one would be the worst possible answer, so stay armed and say nothing.
-      const dx = Math.abs(toScreenX(b[0] - a[0]));
-      const dy = Math.abs(toScreenY(b[1] - a[1]));
-      if (dx < TAP_THRESHOLD_PX || dy < TAP_THRESHOLD_PX) return;
-      // Ordered ONCE, here: the drag itself is direction-agnostic, so a bottom-right to top-left
-      // box arrives at the server the same as any other.
-      const box = {
-        x: Math.min(a[0], b[0]),
-        y: Math.min(a[1], b[1]),
-        w: Math.abs(b[0] - a[0]),
-        h: Math.abs(b[1] - a[1]),
-      };
-      const typeCode = symbolType;
-      setSymbolType(null);
-      if (typeCode != null) void runSymbolSearch(typeCode, box);
       return;
     }
     // A finished ghost drag has nothing to commit — the proposal already holds its new geometry.
@@ -2044,10 +2055,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     }
   };
 
-  // Simple taps (not drags) — device placement and room-outline vertex clicks.
+  // Simple taps (not drags) — symbol picking, device placement and room-outline vertex clicks.
   function handleCanvasClick(e: React.MouseEvent<SVGSVGElement>) {
-    // A box-select drag also fires a click on release; it has already been handled on pointer-up.
-    if (symbolType != null) return;
+    // Pick mode wins outright, and a click while a pick is already showing simply re-picks — the
+    // user aiming again is the same gesture as aiming the first time.
+    if (symbolType != null) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      void runSymbolPick(symbolType, n);
+      return;
+    }
     // Create-by-geometry modes run without edit mode (started from the toolbar).
     if (creatingDevice) {
       const n = toNorm(e.clientX, e.clientY);
@@ -2155,8 +2172,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         proposalPinDragRef.current = null;
         proposalVertexDragRef.current = null;
         setSelectedProposalVertex(null);
-        // Box-select, same argument as the drags above: pointer-up fires the search off
-        // `symbolDragRef` alone, so the ref must die here, not just the rectangle.
+        // The symbol flow leaves ENTIRELY: the mode and any highlighted pick. Leaving the pick up
+        // would keep a Search button on screen for a gesture the user just abandoned.
         cancelSymbolSelect();
         return;
       }
@@ -2683,25 +2700,27 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   })()}
               </g>
             )}
-            {/* The live symbol selection rectangle. Drawn LAST so it sits over everything, in the
-                same IMAGE-PIXEL space as the rest of this group, with the stroke divided by the
-                live zoom so it stays hairline at any magnification. Deliberately UNROUNDED: a
-                symbol box is ~15px on the sheet, and rounding to whole pixels would make it jump
-                between values while the user is trying to frame one. */}
-            {symbolBox && (() => {
-              const a = normToScreen(symbolBox.a, identityView(imgW, imgH));
-              const b = normToScreen(symbolBox.b, identityView(imgW, imgH));
+            {/* The picked symbol's bounds, as the server's vector hit-test reported them. Drawn
+                LAST so it sits over everything, in the same IMAGE-PIXEL space as the rest of this
+                group, with the stroke divided by the live zoom so it stays hairline at any
+                magnification. Deliberately UNROUNDED: a picked symbol is ~15-60px on the sheet, and
+                rounding to whole pixels would misreport what is about to be searched for. */}
+            {symbolPick && (() => {
+              const a = normToScreen([symbolPick.box.x, symbolPick.box.y], identityView(imgW, imgH));
+              const b = normToScreen(
+                [symbolPick.box.x + symbolPick.box.w, symbolPick.box.y + symbolPick.box.h],
+                identityView(imgW, imgH)
+              );
               return (
                 <rect
-                  data-testid="symbol-select-box"
-                  x={Math.min(a.x, b.x)}
-                  y={Math.min(a.y, b.y)}
-                  width={Math.abs(b.x - a.x)}
-                  height={Math.abs(b.y - a.y)}
+                  data-testid="symbol-pick-box"
+                  x={a.x}
+                  y={a.y}
+                  width={b.x - a.x}
+                  height={b.y - a.y}
                   fill={PROPOSAL_FILL}
                   stroke={PROPOSAL_STROKE}
                   strokeWidth={1 / view.zoom}
-                  strokeDasharray={`${4 / view.zoom} ${3 / view.zoom}`}
                   style={{ pointerEvents: "none" }}
                 />
               );
@@ -2880,15 +2899,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                     }. Esc to cancel.`}
                 </p>
               )}
-            {/* Box-select's own line, on the same footing as the placement instructions above but
+            {/* Pick mode's own line, on the same footing as the placement instructions above but
                 separate from them: the two gesture families are mutually exclusive, and this one
-                names the TYPE so a mis-pick from the submenu is obvious before the drag. */}
+                names the TYPE so a mis-pick from the submenu is obvious before the click. */}
             {!error && symbolSelecting && (
               <p
                 data-testid="symbol-prompt"
                 className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
               >
-                {`Drag a box around one ${symbolTypeName} symbol. Esc to cancel.`}
+                {picking
+                  ? "Reading the plan's shapes…"
+                  : symbolPick
+                    ? `Search the plan for this ${symbolTypeName} symbol?`
+                    : `Click a ${symbolTypeName} symbol on the plan. Esc to cancel.`}
               </p>
             )}
             {/* Discovery's own line, so a pass can report while a placement gesture is still live.
@@ -2920,6 +2943,42 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             )}
           </div>
         )}
+        {/* Search/Cancel for the picked symbol, anchored just under its highlight so the user is
+            confirming the thing they are looking at rather than a box somewhere off-screen. Plain
+            buttons, like the room popover: a click here can't be lost to a canvas gesture. */}
+        {symbolPick && (() => {
+          const c = normToScreen(
+            [symbolPick.box.x + symbolPick.box.w / 2, symbolPick.box.y + symbolPick.box.h],
+            identityView(imgW, imgH)
+          );
+          const left = view.panX + c.x * view.zoom;
+          const top = view.panY + c.y * view.zoom;
+          return (
+            <div
+              data-testid="symbol-pick-actions"
+              className="pointer-events-auto absolute z-30 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 shadow-md"
+              style={{ left, top: top + 10 }}
+            >
+              <button
+                type="button"
+                data-testid="symbol-pick-confirm"
+                disabled={discovering != null || accepting}
+                onClick={confirmSymbolPick}
+                className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Icon icon="tabler:search" width={14} height={14} /> Search
+              </button>
+              <button
+                type="button"
+                data-testid="symbol-pick-cancel"
+                onClick={cancelSymbolPick}
+                className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+              >
+                Cancel
+              </button>
+            </div>
+          );
+        })()}
         {/* Edit/Delete popover, anchored over the selected room's centroid. Edit promotes the room
             to vertex editing (handles); Delete clears the OUTLINE only (the room survives). Both
             are plain buttons — a click here can't be lost to the pan gesture the way a canvas tap
