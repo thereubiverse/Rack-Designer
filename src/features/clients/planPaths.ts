@@ -35,7 +35,19 @@ export type PlanPath = {
   grey: boolean;
 };
 
-export type PlanTextItem = { text: string; x: number; y: number };
+/** One text-content item, ALREADY in device-pixel space (the RENDER_LONG_EDGE page space, same as
+ *  PlanPath). `x, y` is the run's anchor point (its baseline start) — what planExtract's plan_label
+ *  rows use. `minX..maxY` is the run's own glyph box — what symbol picking hit-tests to tell a
+ *  letter/digit path from a device symbol's own ink. */
+export type PlanTextItem = {
+  text: string;
+  x: number;
+  y: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
 
 export type PlanPageGeometry = {
   paths: PlanPath[];
@@ -145,11 +157,46 @@ export async function decodePlanPage(
 
     const content = await page.getTextContent();
     const texts: PlanTextItem[] = [];
-    for (const item of content.items as { str?: string; transform?: number[] }[]) {
+    for (const item of content.items as { str?: string; transform?: number[]; width?: number; height?: number }[]) {
       const text = (item.str ?? "").trim();
       if (!text || !item.transform) continue;
-      const [x, y] = apply(vp.transform as number[], item.transform[4], item.transform[5]);
-      texts.push({ text, x, y });
+      // Same composition pdf.js's own text layer uses to place a glyph run: the item's transform
+      // (position + rotation, in PDF user space) through the page viewport (scale + rotation +
+      // Y-flip) gives a device-pixel matrix whose translation is the run's baseline start and whose
+      // columns give its direction. `width`/`height` are plain PDF-user-space lengths (pdf.js scales
+      // them by the page's own scale factor alone, never by this matrix), so `scale` — already
+      // computed above for the viewport — converts them to device pixels.
+      const tx = mul(vp.transform as number[], item.transform);
+      const angle = Math.atan2(tx[1], tx[0]);
+      const runW = (item.width ?? 0) * scale;
+      const runH = (item.height ?? 0) * scale;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      // "Up" from the baseline (the ascent direction), matching pdf.js's own text-layer placement
+      // (which computes left/top as tx4 + ascent*sin(angle), tx5 - ascent*cos(angle)): for the
+      // common angle=0 case this is (0, -1) — SMALLER device y, since a Y-flipping viewport already
+      // makes "smaller y" the on-screen up. Getting this backwards was tried and measured: the box
+      // extended BELOW the baseline instead, reaching into a device symbol drawn just under a label
+      // (a GFI outlet's circle sits ~a few px below its own "GFI" tag) and excluding the symbol's own
+      // ink as if it were text.
+      const perpX = sin, perpY = -cos;
+      // Baseline-start and baseline-end corners, plus their ascent-band counterparts. Bounding
+      // these four covers the glyph box at any of the sheet's (axis-aligned) page rotations
+      // without assuming in advance which screen direction is "up".
+      const x0 = tx[4], y0 = tx[5];
+      const x1 = x0 + runW * cos, y1 = y0 + runW * sin;
+      const x2 = x0 + runH * perpX, y2 = y0 + runH * perpY;
+      const x3 = x1 + runH * perpX, y3 = y1 + runH * perpY;
+      const xs = [x0, x1, x2, x3];
+      const ys = [y0, y1, y2, y3];
+      texts.push({
+        text,
+        x: x0,
+        y: y0,
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys),
+      });
     }
 
     return { paths, texts, width, height };

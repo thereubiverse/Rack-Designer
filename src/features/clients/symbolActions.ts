@@ -6,7 +6,7 @@ import type { PlanLabel } from "@/lib/supabase/types";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
 import { extractTemplate, matchSymbol, cropToInk, hasInk, type GreyImage, type SymbolHit } from "./symbolMatch";
-import { decodePlanPage, type PlanPath } from "./planPaths";
+import { decodePlanPage, type PlanPath, type PlanTextItem } from "./planPaths";
 import { coerceTypeCode, type Confidence, type DeviceProposal } from "./planDetect";
 
 export type DiscoverSymbolsResult =
@@ -179,9 +179,30 @@ const PICK_LINK_PX = 4;
  *  group past this, no matter how close it is. Symbols on this sheet run 15-60px. */
 const PICK_MAX_SIDE_PX = 70;
 
+/** How far a text glyph's measured box is padded before a path's centre is tested against it. A
+ *  glyph's OUTLINE can spill a hair past its metrics box (curve endpoints past the ink), so a
+ *  tight test would let a couple of stray path fragments back into the group; small enough that it
+ *  can't reach a genuinely separate symbol a few pixels away. */
+const TEXT_BOX_PAD_PX = 2;
+
 type Box = { minX: number; minY: number; maxX: number; maxY: number };
 
 const longestSide = (b: Box) => Math.max(b.maxX - b.minX, b.maxY - b.minY);
+
+/** True if a path is a letter/digit rather than device ink: its WHOLE bbox is contained inside some
+ *  text item's (padded) box. Tested on full containment, not centre-in-box or any overlap — a
+ *  centre-only test was tried and measured wrong on the real sheet: some symbols have their own
+ *  label drawn INSIDE their ring (a card reader's circle has "CP" written at its centre), so the
+ *  ring's bbox centre sits inside the "CP" text box even though the ring is plainly not a glyph.
+ *  A glyph's own path is always fully bounded by its run's box by construction (the box is derived
+ *  FROM that ink); a symbol's own ink is bigger than one label and will poke past that box on some
+ *  side even when the two overlap or share a centre. */
+function isTextGlyph(p: PlanPath, textBoxes: Box[]): boolean {
+  for (const b of textBoxes) {
+    if (p.minX >= b.minX && p.maxX <= b.maxX && p.minY >= b.minY && p.maxY <= b.maxY) return true;
+  }
+  return false;
+}
 
 /** 0..1, or null if the client sent something that isn't a number. Clamping is deliberate — a
  *  click reported a hair off the sheet edge is a click on the edge, not an error. */
@@ -201,13 +222,28 @@ function clamp01(v: unknown): number | null {
  * the same group): seed on the SMALLEST foreground path the click is inside that is not already
  * symbol-sized-or-larger, then repeatedly absorb any foreground path that comes within
  * PICK_LINK_PX of the group — refusing any addition that would push the group past
- * PICK_MAX_SIDE_PX. Observed: a click anywhere on the card reader yields the circle AND its "CP"
- * text as one 59.0 x 22.9 unit, which is the desired outcome — a text-inclusive template is more
- * distinctive than a bare circle, and bare circles were the source of the false positives.
+ * PICK_MAX_SIDE_PX. Text glyphs are excluded from the group entirely (never seeded on, never
+ * absorbed): the sheet's device tags (e.g. "AC-C-1", "AC-C-3", …) carry different digits at every
+ * instance, so a template that swallows one is distinctive to that ONE instance rather than to the
+ * symbol — measured on the real sheet, a click on a card reader used to grow 59.0 x 22.9 (circle
+ * plus its "AC-C-n" tag) and cost real match recall; excluding the tag brings the box down to the
+ * circle alone, ~24px wide.
  */
-function pickSymbolGroup(paths: PlanPath[], x: number, y: number): { box: Box; pathCount: number } | null {
-  // Foreground only: the architecture is screened back, the devices are not (planPaths).
-  const fg = paths.filter((p) => !p.grey);
+function pickSymbolGroup(
+  paths: PlanPath[],
+  texts: PlanTextItem[],
+  x: number,
+  y: number
+): { box: Box; pathCount: number } | null {
+  const textBoxes: Box[] = texts.map((t) => ({
+    minX: t.minX - TEXT_BOX_PAD_PX,
+    minY: t.minY - TEXT_BOX_PAD_PX,
+    maxX: t.maxX + TEXT_BOX_PAD_PX,
+    maxY: t.maxY + TEXT_BOX_PAD_PX,
+  }));
+  // Foreground, non-text only: the architecture is screened back (planPaths), and a text glyph is
+  // never part of the device's own ink — see the header comment above.
+  const fg = paths.filter((p) => !p.grey && !isTextGlyph(p, textBoxes));
 
   let seed: PlanPath | null = null;
   let seedArea = Infinity;
@@ -290,7 +326,7 @@ export async function pickSymbolAction(input: {
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
     const page = await decodePlanPage(bytes, plan.pdf_page ?? 0);
 
-    const found = pickSymbolGroup(page.paths, nx * page.width, ny * page.height);
+    const found = pickSymbolGroup(page.paths, page.texts, nx * page.width, ny * page.height);
     if (!found) return { ok: false, error: NO_SYMBOL_THERE };
 
     // Back to 0..1 against the SAME raster the canvas and the matcher use. Clamped at the edges:

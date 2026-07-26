@@ -2911,7 +2911,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   ? "Reading the plan's shapes…"
                   : symbolPick
                     ? `Search the plan for this ${symbolTypeName} symbol?`
-                    : `Click a ${symbolTypeName} symbol on the plan. Esc to cancel.`}
+                    : `Click an example of: ${symbolTypeName}. Esc to cancel.`}
               </p>
             )}
             {/* Discovery's own line, so a pass can report while a placement gesture is still live.

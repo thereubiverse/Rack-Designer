@@ -19,7 +19,7 @@ import { renderPlanGrey } from "./planRaster";
 import { extractTemplate, matchSymbol, cropToInk, hasInk } from "./symbolMatch";
 import type { SymbolHit } from "./symbolMatch";
 import { decodePlanPage } from "./planPaths";
-import type { PlanPath } from "./planPaths";
+import type { PlanPath, PlanTextItem } from "./planPaths";
 
 // The rendered page. Deliberately NOT square and NOT the stored width_px/height_px, so a value
 // hand-computed against these dimensions can only come from the rendered raster.
@@ -337,10 +337,18 @@ function pathAt(minX: number, minY: number, maxX: number, maxY: number, grey = f
   return { segs: [], minX, minY, maxX, maxY, grey };
 }
 
-/** A page whose paths are exactly what the test constructs, at the same 2600 x 1733 raster the
- *  discovery tests above use — so a normalized coordinate means the same thing in both blocks. */
-function page(paths: PlanPath[]) {
-  return { paths, texts: [], width: IMG_W, height: IMG_H };
+/** A page whose paths (and, optionally, text items) are exactly what the test constructs, at the
+ *  same 2600 x 1733 raster the discovery tests above use — so a normalized coordinate means the
+ *  same thing in both blocks. */
+function page(paths: PlanPath[], texts: PlanTextItem[] = []) {
+  return { paths, texts, width: IMG_W, height: IMG_H };
+}
+
+/** One decoded text item, reduced to what picking reads: its own glyph-run box. `x`/`y` (the
+ *  baseline anchor planExtract's plan_labels use) are irrelevant here, so they just mirror the
+ *  box's top-left. */
+function textAt(minX: number, minY: number, maxX: number, maxY: number, text = "TXT"): PlanTextItem {
+  return { text, x: minX, y: minY, minX, minY, maxX, maxY };
 }
 
 /** The device-symbol fixture: a 14 x 14 circle at (100,200)-(114,214) page pixels. */
@@ -371,11 +379,58 @@ describe("pickSymbolAction", () => {
     expect(res.pathCount).toBe(1);
   });
 
-  it("grows the group through a NEARBY path — the symbol's own text comes with it", async () => {
+  it("grows the group through a NEARBY path with no text info nearby", async () => {
     // Would catch: returning only the path under the cursor, which on the real sheet is one arc of
-    // a circle rather than the whole symbol.
-    const text = pathAt(86, 205, 96, 212); // right edge 4px from the symbol's left edge = LINK
-    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, text]));
+    // a circle rather than the whole symbol. No text item covers this neighbour (there is no page
+    // text at all here), so it groups normally — the text-exclusion tests below cover the case
+    // where a path IS a glyph.
+    const ring2 = pathAt(86, 205, 96, 212); // right edge 4px from the symbol's left edge = LINK
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, ring2]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(86 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo((114 - 86) / IMG_W, 12);
+    expect(res.pathCount).toBe(2);
+  });
+
+  it("EXCLUDES a path whose centre lies inside a text box — the tag-swallowing regression", async () => {
+    // The regression test for the reported bug: on the real sheet, a click on a card-reader circle
+    // grew LEFT and swallowed the adjacent "AC-C-n" tag, because that tag's glyph paths sat within
+    // PICK_LINK_PX and the group had no reason to refuse them. Those tags carry different digits at
+    // every instance, so a template that includes one is worse than useless for matching the rest.
+    // Same geometry as "grows the group through a NEARBY path" above, except this neighbour now
+    // sits inside a text item's box: it must never join, so the group stays the bare 14px symbol.
+    // Delete the text exclusion (or the isTextGlyph filter) and this box widens to 28px, like above.
+    const tag = pathAt(86, 205, 96, 212);
+    const tagText = textAt(85, 204, 97, 213, "AC-C-1");
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, tag], [tagText]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("a symbol with no text nearby is unaffected — matches pre-change behaviour", async () => {
+    // Would catch: the text-box machinery accidentally excluding ordinary symbol paths even when
+    // there is no text on the page at all.
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL], []));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("text exclusion does not stop a legitimate multi-path symbol from grouping", async () => {
+    // Would catch: an over-broad exclusion (e.g. by proximity rather than by centre-in-box) that
+    // also throws out a symbol's own second path just because some unrelated label is nearby.
+    const ring2 = pathAt(86, 205, 96, 212); // a real second path of the symbol, not a glyph
+    const unrelatedText = textAt(895, 895, 905, 905, "W1"); // far away, must not affect anything
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, ring2], [unrelatedText]));
     const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -391,6 +446,21 @@ describe("pickSymbolAction", () => {
     // size refusal can keep it out. Delete the guard and the box becomes 300px wide.
     const wall = pathAt(116, 206, 400, 208);
     vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, wall]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("the MAX-side wall guard still holds when text boxes are also present", async () => {
+    // Would catch: the text-exclusion pass accidentally short-circuiting the size guard (e.g. by
+    // returning early once any exclusion applies) — the wall must still be refused for being too
+    // long, independent of whether any text is on the page.
+    const wall = pathAt(116, 206, 400, 208);
+    const nearbyText = textAt(195, 202, 205, 212, "CP"); // near the symbol, but not ON any path
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, wall], [nearbyText]));
     const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
