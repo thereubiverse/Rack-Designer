@@ -18,6 +18,7 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import { discoverSymbolsAction } from "./symbolActions";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 const refreshMock = vi.fn();
@@ -63,6 +64,23 @@ vi.mock("./discoverActions", () => ({
     ],
   })),
 }));
+// Symbol discovery is a server action too (Supabase + pdf.js + the raster matcher). Same contract:
+// the canvas only awaits its result shape.
+vi.mock("./symbolActions", () => ({
+  discoverSymbolsAction: vi.fn(async () => ({ ok: true, proposals: [] })),
+}));
+
+/** Open the wizard and run the AI device pass. It now lives one level down, under "Discover
+ *  devices" — clicking that item opens the device-type submenu the symbol flow starts from, and
+ *  the AI entry sits at its head. The drill-down click stays OUTSIDE act so the submenu has
+ *  actually rendered before the AI entry is looked up. */
+async function runDeviceAiPass() {
+  fireEvent.click(screen.getByTestId("plan-wizard"));
+  fireEvent.click(screen.getByTestId("discover-devices"));
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("discover-devices-ai"));
+  });
+}
 
 // PlanVectorLayer lazily imports pdf.js, which evaluates `new DOMMatrix()` at module scope and
 // cannot rasterise in jsdom anyway. These tests only care WHICH layer the canvas chooses, so the
@@ -955,6 +973,10 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
 describe("FloorPlanCanvas (AI discovery wizard)", () => {
   /** Open the wizard menu and run one discovery pass, flushing the action's promise. */
   async function runDiscovery(which: "discover-rooms" | "discover-devices") {
+    if (which === "discover-devices") {
+      await runDeviceAiPass();
+      return;
+    }
     fireEvent.click(screen.getByTestId("plan-wizard"));
     await act(async () => {
       fireEvent.click(screen.getByTestId(which));
@@ -1074,10 +1096,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
   async function stageDevices(proposals: DeviceProposal[], siteCodes: string[] = SITE_CODES) {
     vi.mocked(discoverDevicesAction).mockResolvedValueOnce({ ok: true, proposals });
     renderCanvas(true, siteCodes);
-    fireEvent.click(screen.getByTestId("plan-wizard"));
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("discover-devices"));
-    });
+    await runDeviceAiPass();
   }
   async function stageRooms(proposals: RoomProposal[]) {
     vi.mocked(discoverRoomsAction).mockResolvedValueOnce({ ok: true, proposals });
@@ -1655,10 +1674,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
         deviceProposal({ id: `dev-${i}`, label: "", typeCode: "CAM", point: [0.1 * (i + 1), 0.5] })
       ),
     });
-    fireEvent.click(screen.getByTestId("plan-wizard"));
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("discover-devices"));
-    });
+    await runDeviceAiPass();
     const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
     const releases = deferredOk(vi.mocked(placeFloorDeviceAction), 3);
 
@@ -2272,5 +2288,250 @@ describe("FloorPlanCanvas (vector plan rendering)", () => {
     await waitFor(() => expect(screen.queryByTestId("plan-vector-layer")).toBeNull());
     const svg = screen.getByTestId("floor-plan-canvas");
     expect(svg.querySelector("image")?.getAttribute("href")).toBe(PLAN_URL);
+  });
+});
+
+describe("FloorPlanCanvas (symbol discovery)", () => {
+  // The jsdom fallback view (no ResizeObserver): fit zoom 0.7, panX 15, panY 0 on this 1200x800
+  // plan — the same derivation the placement tests spell out. A pointer at (cx, cy) is therefore
+  // this normalized point, and a drag between two pointers is the box below.
+  // (normX(cx) = (cx - 15) / 840, normY(cy) = cy / 560 — spelled out inline where used.)
+
+  // This file has no global mock reset, so call COUNTS would otherwise accumulate across the
+  // block and "called once" would pass for a handler that fired on every previous test too.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // A rack-category type, so "floor types only" is a real assertion rather than a tautology
+  // against the all-floor default fixture.
+  const TYPES_WITH_RACK: DeviceTypeRow[] = [
+    ...DEVICE_TYPES,
+    { id: "type-sw", name: "Switch", created_at: "2026-01-01T00:00:00Z", category: "rack", code: "SW", is_standard: true, color: null, icon: null },
+  ];
+
+  function renderWithTypes(deviceTypes: DeviceTypeRow[] = TYPES_WITH_RACK) {
+    return render(
+      <FloorPlanCanvas
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={deviceTypes}
+        allSiteDeviceCodes={SITE_CODES}
+        editable
+      />
+    );
+  }
+
+  /** Open the wizard, open the device-type submenu, and arm box-select for one type. */
+  function armSymbolSelect(code = "CAM") {
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    fireEvent.click(screen.getByTestId("discover-devices"));
+    fireEvent.click(screen.getByTestId(`symbol-type-${code}`));
+  }
+
+  /** Drag a box on the plan: press, two moves, release. */
+  async function dragBox(x0: number, y0: number, x1: number, y1: number) {
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: x0, clientY: y0, button: 0, pointerId: 11 });
+    fireEvent.pointerMove(svg, { clientX: (x0 + x1) / 2, clientY: (y0 + y1) / 2, pointerId: 11 });
+    fireEvent.pointerMove(svg, { clientX: x1, clientY: y1, pointerId: 11 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: x1, clientY: y1, pointerId: 11 });
+    });
+  }
+
+  it("'Discover devices' opens a submenu of the FLOOR device types only", () => {
+    // Would catch: forgetting the category filter, so a rack-only type (a switch) could be
+    // proposed as a thing that lives on a floor plan.
+    renderWithTypes();
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    expect(screen.queryByTestId("symbol-type-menu")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("discover-devices"));
+    expect(screen.getByTestId("symbol-type-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-CAM")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-SEN")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-TO")).toBeInTheDocument();
+    expect(screen.queryByTestId("symbol-type-SW")).toBeNull();
+  });
+
+  it("choosing a type closes the menu, arms box-select and prompts with the type NAME", () => {
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Camera");
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Esc to cancel");
+    // Nothing has been searched yet — arming is not a pass.
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("draws the live selection rectangle in image-pixel space, zoom-compensated", () => {
+    // Would catch: rounding the rect (which would make a small symbol box jitter), or drawing it
+    // in screen space inside a group that is already pan/zoom transformed.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
+
+    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 12 });
+    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 12 });
+
+    const box = screen.getByTestId("symbol-select-box");
+    // normX(200)*1200 = (185/840)*1200 = 264.2857…, normY(100)*800 = (100/560)*800 = 142.857…
+    expect(Number(box.getAttribute("x"))).toBeCloseTo(264.2857, 3);
+    expect(Number(box.getAttribute("y"))).toBeCloseTo(142.8571, 3);
+    // (60/840)*1200 = 85.714…, (60/560)*800 = 85.714…
+    expect(Number(box.getAttribute("width"))).toBeCloseTo(85.7143, 3);
+    expect(Number(box.getAttribute("height"))).toBeCloseTo(85.7143, 3);
+    // Hairline at any magnification: 1 / the fallback fit zoom of 0.7.
+    expect(Number(box.getAttribute("stroke-width"))).toBeCloseTo(1 / 0.7, 6);
+  });
+
+  it("sends the hand-computed NORMALIZED box and the chosen type, then clears the rectangle", async () => {
+    // Would catch: sending screen pixels, sending the plan's own pixel box, or sending the type
+    // NAME instead of its code.
+    renderWithTypes();
+    armSymbolSelect("TO");
+    await dragBox(200, 100, 260, 160);
+
+    expect(discoverSymbolsAction).toHaveBeenCalledTimes(1);
+    const [arg] = vi.mocked(discoverSymbolsAction).mock.calls[0];
+    expect(arg.floorId).toBe("floor-1");
+    expect(arg.typeCode).toBe("TO");
+    expect(arg.box.x).toBeCloseTo(185 / 840, 10);
+    expect(arg.box.y).toBeCloseTo(100 / 560, 10);
+    expect(arg.box.w).toBeCloseTo(60 / 840, 10);
+    expect(arg.box.h).toBeCloseTo(60 / 560, 10);
+    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
+  });
+
+  it("normalizes a bottom-right -> top-left drag before sending it", async () => {
+    // Would catch: passing the raw press/release order through, so a backwards drag arrives with
+    // a negative width the server would have to guess at.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await dragBox(260, 160, 200, 100);
+
+    const [arg] = vi.mocked(discoverSymbolsAction).mock.calls[0];
+    expect(arg.box.x).toBeCloseTo(185 / 840, 10);
+    expect(arg.box.y).toBeCloseTo(100 / 560, 10);
+    expect(arg.box.w).toBeCloseTo(60 / 840, 10);
+    expect(arg.box.h).toBeCloseTo(60 / 560, 10);
+  });
+
+  it("box-select does NOT pan the plan", async () => {
+    // Would catch: leaving the root's pan bookkeeping armed during box-select, which would drag
+    // the whole sheet out from under the symbol the user is trying to box.
+    renderWithTypes();
+    const before = screen
+      .getByTestId("floor-plan-canvas")
+      .querySelector("g")!
+      .getAttribute("transform");
+    armSymbolSelect("CAM");
+    await dragBox(200, 100, 400, 300);
+    expect(
+      screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform")
+    ).toBe(before);
+  });
+
+  it("stages the returned proposals as ghost pins AND panel rows", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "CP12", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "", typeCode: "CAM", point: [0.25, 0.75], confidence: "low" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await dragBox(200, 100, 260, 160);
+
+    // Same IMAGE-PIXEL placement every committed and proposed pin uses: [0.5,0.5] on 1200x800.
+    expect(screen.getByTestId("proposal-pin-sym-0").getAttribute("transform")).toBe("translate(600 400)");
+    expect(screen.getByTestId("proposal-pin-sym-1").getAttribute("transform")).toBe("translate(300 600)");
+    // The EXISTING review panel picks them up with no changes of its own.
+    expect(screen.getByTestId("proposal-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-sym-0")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-sym-1")).toBeInTheDocument();
+  });
+
+  it("says so when nothing matched, rather than falling silent", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({ ok: true, proposals: [] });
+    const { container } = renderWithTypes();
+    armSymbolSelect("CAM");
+    await dragBox(200, 100, 260, 160);
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("Nothing found");
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("surfaces the action's error verbatim and stages nothing", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: false,
+      error: "This plan has no source PDF.",
+    });
+    const { container } = renderWithTypes();
+    armSymbolSelect("CAM");
+    await dragBox(200, 100, 260, 160);
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("no source PDF");
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("Esc cancels box-select cleanly — no prompt, no rectangle, no action", async () => {
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 13 });
+    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 13 });
+    expect(screen.getByTestId("symbol-select-box")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Escape" });
+    });
+
+    expect(screen.queryByTestId("symbol-prompt")).toBeNull();
+    expect(screen.queryByTestId("symbol-select-box")).toBeNull();
+    // ...and the release of the cancelled drag must not fire the pass after the fact.
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 260, clientY: 160, pointerId: 13 });
+    });
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("ignores a degenerate press-and-release with no drag", async () => {
+    // Would catch: firing a full-sheet search off a stray click, which is a multi-second server
+    // pass returning garbage.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 14 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 200, clientY: 100, pointerId: 14 });
+    });
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+    // Still armed, so the user can simply try again.
+    expect(screen.getByTestId("symbol-prompt")).toBeInTheDocument();
+  });
+
+  it("box-select stands the committed pins down, so a drag starting on one still boxes", async () => {
+    // Would catch: leaving the edit-mode pin handlers live, which stopPropagation and would eat
+    // the press before the root ever saw it.
+    renderWithTypes();
+    fireEvent.click(screen.getByTestId("edit-layout-toggle"));
+    armSymbolSelect("CAM");
+    const pin = screen.getByTestId("plan-pin-CAM01");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(pin, { clientX: 200, clientY: 100, button: 0, pointerId: 15 });
+    fireEvent.pointerMove(svg, { clientX: 260, clientY: 160, pointerId: 15 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 260, clientY: 160, pointerId: 15 });
+    });
+    expect(discoverSymbolsAction).toHaveBeenCalledTimes(1);
+    // The pin itself must not have been moved by the gesture.
+    expect(placeFloorDeviceAction).not.toHaveBeenCalled();
   });
 });

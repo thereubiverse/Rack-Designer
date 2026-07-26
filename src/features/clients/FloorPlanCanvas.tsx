@@ -41,6 +41,7 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import { discoverSymbolsAction } from "./symbolActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
 import { planDeviceCommit, planRoomCommit } from "./planProposals";
 import { normaliseCode } from "./validation";
@@ -772,7 +773,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     devices: [],
   });
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [discovering, setDiscovering] = useState<null | "rooms" | "devices">(null);
+  // True once "Discover devices" has been chosen: the wizard menu swaps its two-item list for the
+  // device-type submenu the symbol flow starts from. Always reset with the menu itself, so the
+  // next open starts at the top level rather than mid-drill.
+  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
+  // The device-type CODE box-select is armed for, or null. Non-null is a live gesture mode in
+  // exactly the sense creatingRoom/creatingDevice are, and gates the same things they do.
+  const [symbolType, setSymbolType] = useState<string | null>(null);
+  // The live selection rectangle, as the two NORMALIZED corners of the drag (press, current). Kept
+  // unrounded and unordered — the ordering happens once, where the box is read.
+  const [symbolBox, setSymbolBox] = useState<{ a: NormPoint; b: NormPoint } | null>(null);
+  const [discovering, setDiscovering] = useState<null | "rooms" | "devices" | "symbols">(null);
   // Either a pass-outcome sentinel the notice renders specially ("no-key" from the action, or the
   // local "none-found"), or an error string to show verbatim.
   const [wizardNotice, setWizardNotice] = useState<string | null>(null);
@@ -797,6 +808,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   >(null);
   // The wizard menu's anchor, so a press anywhere else can close the menu.
   const wizardRef = useRef<HTMLSpanElement | null>(null);
+  // The live box-select drag. Like the committed drags this is a REF, not state: pointer-up must
+  // decide from what the gesture actually recorded, and Esc must be able to kill it outright
+  // (clearing only `symbolBox` would hide the rectangle but still fire the search on release).
+  const symbolDragRef = useRef<{ a: NormPoint; b: NormPoint } | null>(null);
 
   // Rows this component has created since the `devices`/`rooms` props last refreshed. The decision
   // layer MUST see them: planDeviceCommit falls through to a GENERATED code whenever the label is
@@ -860,6 +875,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setProposalRoomEditId(null);
     setSelectedProposalVertex(null);
     setWizardNotice(null);
+    // A box-select armed against the previous floor would search THIS floor's plan for a symbol
+    // the user boxed on another one.
+    symbolDragRef.current = null;
+    setSymbolBox(null);
+    setSymbolType(null);
     // The pending rows go too: they are pruned by CONTENT against this floor's props, so one left
     // over from the previous floor could never be pruned again — and could match a proposal here
     // into a PLACE against another floor's device.
@@ -873,11 +893,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // outside both.
   useEffect(() => {
     if (!wizardOpen) return;
+    // Closing always drops the device-type drill-down too, so the next open starts at the top.
+    const close = () => {
+      setWizardOpen(false);
+      setSymbolMenuOpen(false);
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setWizardOpen(false);
+      if (e.key === "Escape") close();
     };
     const onDown = (e: PointerEvent) => {
-      if (!wizardRef.current?.contains(e.target as Node)) setWizardOpen(false);
+      if (!wizardRef.current?.contains(e.target as Node)) close();
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
@@ -894,6 +919,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     // could hand a freshly staged proposal the id the accept is about to drop.
     if (accepting) return;
     setWizardOpen(false);
+    setSymbolMenuOpen(false);
     setWizardNotice(null);
     // Proposal ids are per-pass and index-based ("room-0"), so a re-run can hand the SAME id to a
     // different shape. Drop the geometry selections rather than let them re-point silently.
@@ -918,6 +944,68 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         setProposals((p) => ({ ...p, devices: res.proposals }));
         if (res.proposals.length === 0) setWizardNotice("none-found");
       }
+    } finally {
+      setDiscovering(null);
+    }
+  }
+
+  /** Close the wizard and arm box-select for one device type. Clears the geometry selections the
+   *  same way runDiscovery does — proposal ids are per-pass, so a stale selection would silently
+   *  re-point at a different shape — and drops the committed selections too, because the pins and
+   *  vertices they belong to stand down for the duration of the gesture. */
+  function armSymbolSelect(typeCode: string) {
+    if (accepting || discovering != null) return;
+    setWizardOpen(false);
+    setSymbolMenuOpen(false);
+    setWizardNotice(null);
+    setProposalRoomEditId(null);
+    setSelectedProposalVertex(null);
+    setSelectedPinId(null);
+    setSelectedRackId(null);
+    setSelectedRoomId(null);
+    setEditingRoomId(null);
+    setSelectedVertex(null);
+    // The gesture modes are mutually exclusive — arming this one ends any place/trace in progress
+    // rather than leaving two handlers competing for the same press.
+    setPlacingDeviceId(null);
+    setPlacingRackId(null);
+    setDrawingRoomId(null);
+    setCreatingRoom(false);
+    setCreatingDevice(false);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSnapTarget(null);
+    setSymbolBox(null);
+    symbolDragRef.current = null;
+    setSymbolType(typeCode);
+  }
+
+  /** Cancel box-select. Kills the in-flight drag as well as the mode: pointer-up decides from
+   *  `symbolDragRef` alone, so leaving it set would still fire the search after an Esc. */
+  function cancelSymbolSelect() {
+    symbolDragRef.current = null;
+    setSymbolBox(null);
+    setSymbolType(null);
+  }
+
+  /** Run one symbol search and park its hits in `proposals.devices` — the SAME slot the AI pass
+   *  fills, so the review panel, ghost pins and accept path all work unchanged. Never throws: the
+   *  action returns `{ ok: false, error }` for every failure. */
+  async function runSymbolSearch(typeCode: string, box: { x: number; y: number; w: number; h: number }) {
+    // Never while an accept is in flight — same reason runDiscovery refuses: proposal ids are
+    // index-based, so a pass landing mid-accept could hand a fresh proposal the id the accept is
+    // about to drop.
+    if (accepting) return;
+    setDiscovering("symbols");
+    setWizardNotice(null);
+    try {
+      const res = await discoverSymbolsAction({ floorId: plan.floor_id, box, typeCode });
+      if (!res.ok) {
+        setWizardNotice(res.error);
+        return;
+      }
+      setProposals((p) => ({ ...p, devices: res.proposals }));
+      if (res.proposals.length === 0) setWizardNotice("none-found");
     } finally {
       setDiscovering(null);
     }
@@ -1731,7 +1819,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
    *  (which is what keeps the committed pins from eating them — DevicePin only attaches its
    *  handlers when editMode is on). Ghosts have no such gate of their own, so this is it. */
   const ghostInteractive =
-    !creatingDevice && !creatingRoom && !drawingRoomId && !placingDeviceId && !placingRackId;
+    !creatingDevice &&
+    !creatingRoom &&
+    !drawingRoomId &&
+    !placingDeviceId &&
+    !placingRackId &&
+    symbolType == null;
+
+  /** Box-select is armed. Every shape on the plan — committed and proposed — stands its pointer
+   *  handlers down while it is: the drag is aimed at the RASTER underneath, and a pin or vertex
+   *  that stopPropagation'd the press would swallow the gesture before the root ever saw it. The
+   *  committed shapes have no gate of their own beyond `editMode`, so this rides on that. */
+  const symbolSelecting = symbolType != null;
+  const shapesInteractive = editMode && !symbolSelecting;
 
   /** True once the press has travelled past the tap threshold — below it the gesture is a plain
    *  select-click and must not nudge the geometry by the drift every physical click carries. */
@@ -1759,6 +1859,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (e.button !== 0) return;
     cancelFitAnim();
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    // Box-select owns the press outright: `dragRef` is deliberately left null so the plan cannot
+    // pan out from under the symbol being boxed.
+    if (symbolType != null) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      symbolDragRef.current = { a: n, b: n };
+      setSymbolBox({ a: n, b: n });
+      return;
+    }
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
     const roomEl = (e.target as Element).closest?.("[data-room-id]");
@@ -1771,7 +1880,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Ghost drags first: they write straight to proposal state (no preview layer, no commit).
+    // Box-select first, and it returns unconditionally — no snap hover, no pan, no preview.
+    if (symbolDragRef.current) {
+      const drag = symbolDragRef.current;
+      const n = toNorm(e.clientX, e.clientY);
+      // A pointer dragged off the sheet keeps the last in-bounds corner rather than dropping the
+      // rectangle; the server clamps anything that still overshoots.
+      if (n) {
+        drag.b = n;
+        setSymbolBox({ a: drag.a, b: n });
+      }
+      return;
+    }
+    // Ghost drags next: they write straight to proposal state (no preview layer, no commit).
     if (proposalPinDragRef.current) {
       const drag = proposalPinDragRef.current;
       if (!ghostDragEngaged(drag, e.clientX, e.clientY)) return;
@@ -1825,6 +1946,32 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setView((v) => ({ ...v, panX: d.panX + (e.clientX - d.x), panY: d.panY + (e.clientY - d.y) }));
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (symbolDragRef.current) {
+      const { a, b } = symbolDragRef.current;
+      symbolDragRef.current = null;
+      setSymbolBox(null);
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      // Measured in SCREEN pixels so the threshold means the same thing at any zoom. A press that
+      // never really moved is a stray click, not a selection — firing a multi-second full-sheet
+      // correlation off one would be the worst possible answer, so stay armed and say nothing.
+      const dx = Math.abs(toScreenX(b[0] - a[0]));
+      const dy = Math.abs(toScreenY(b[1] - a[1]));
+      if (dx < TAP_THRESHOLD_PX || dy < TAP_THRESHOLD_PX) return;
+      // Ordered ONCE, here: the drag itself is direction-agnostic, so a bottom-right to top-left
+      // box arrives at the server the same as any other.
+      const box = {
+        x: Math.min(a[0], b[0]),
+        y: Math.min(a[1], b[1]),
+        w: Math.abs(b[0] - a[0]),
+        h: Math.abs(b[1] - a[1]),
+      };
+      const typeCode = symbolType;
+      setSymbolType(null);
+      if (typeCode != null) void runSymbolSearch(typeCode, box);
+      return;
+    }
     // A finished ghost drag has nothing to commit — the proposal already holds its new geometry.
     // The pan bookkeeping is still torn down first: the ghost's own stopPropagation should have
     // kept the root's pointer-down from ever arming one, but returning early with a live dragRef
@@ -1899,6 +2046,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
 
   // Simple taps (not drags) — device placement and room-outline vertex clicks.
   function handleCanvasClick(e: React.MouseEvent<SVGSVGElement>) {
+    // A box-select drag also fires a click on release; it has already been handled on pointer-up.
+    if (symbolType != null) return;
     // Create-by-geometry modes run without edit mode (started from the toolbar).
     if (creatingDevice) {
       const n = toNorm(e.clientX, e.clientY);
@@ -1957,7 +2106,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   useEffect(() => {
     // Active in edit mode AND during a toolbar-started create gesture (which runs outside it) AND
     // while a proposal vertex is selected (proposal review also runs outside edit mode).
-    if (!editMode && !creatingRoom && !creatingDevice && !selectedProposalVertex) return;
+    // Box-select runs outside edit mode too, so it earns its own place in this gate.
+    if (!editMode && !creatingRoom && !creatingDevice && !selectedProposalVertex && symbolType == null) {
+      return;
+    }
     function onKeyDown(e: KeyboardEvent) {
       // Never steal a keystroke aimed at a text field. The proposal panel put the first inputs on
       // this screen, and they coexist with a selected ghost vertex — so without this, Backspace to
@@ -2003,6 +2155,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         proposalPinDragRef.current = null;
         proposalVertexDragRef.current = null;
         setSelectedProposalVertex(null);
+        // Box-select, same argument as the drags above: pointer-up fires the search off
+        // `symbolDragRef` alone, so the ref must die here, not just the rectangle.
+        cancelSymbolSelect();
         return;
       }
       if (e.key === "Enter") {
@@ -2046,12 +2201,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     selectedPinId,
     selectedVertex,
     selectedProposalVertex,
+    symbolType,
     rooms,
   ]);
 
   const { placed, unplaced } = partitionPlacement(devices);
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
+  // The armed symbol type's human NAME for the prompt ("Camera", not "CAM"), falling back to the
+  // code so the message is never blank if a type is renamed out from under an armed selection.
+  const symbolTypeName = deviceTypes.find((t) => t.code === symbolType)?.name ?? symbolType ?? "";
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => resolveTypeIcon(deviceTypes.find((t) => t.id === id));
   const typeColor = (id: string) => resolveTypeColor(deviceTypes.find((t) => t.id === id));
@@ -2195,7 +2354,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             display: "block",
             touchAction: "none",
             cursor:
-              placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice
+              placingDeviceId ||
+              placingRackId ||
+              drawingRoomId ||
+              creatingRoom ||
+              creatingDevice ||
+              symbolSelecting
                 ? "crosshair"
                 : undefined,
           }}
@@ -2277,9 +2441,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 imgW={imgW}
                 imgH={imgH}
                 zoom={view.zoom}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedRoomId === room.id || editingRoomId === room.id}
-                editing={editingRoomId === room.id}
+                editing={editingRoomId === room.id && shapesInteractive}
                 vertexPreview={vertexPreviewForRoom(room.id)}
                 onVertexPointerDown={onVertexPointerDown}
                 onInsertVertex={onInsertVertexClick}
@@ -2295,7 +2459,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 typeName={typeName(device.device_type_id)}
                 icon={typeIcon(device.device_type_id)}
                 color={typeColor(device.device_type_id)}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedPinId === device.id}
                 dragPoint={pinPreview && pinPreview.deviceId === device.id ? pinPreview.point : null}
                 onPointerDownPin={onPinPointerDown}
@@ -2310,7 +2474,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 glyphScale={pinScale}
                 color={rackColor}
                 icon={rackIcon}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedRackId === rack.id}
                 dragPoint={rackPreview && rackPreview.rackId === rack.id ? rackPreview.point : null}
                 onPointerDownRack={onRackPointerDown}
@@ -2519,6 +2683,29 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   })()}
               </g>
             )}
+            {/* The live symbol selection rectangle. Drawn LAST so it sits over everything, in the
+                same IMAGE-PIXEL space as the rest of this group, with the stroke divided by the
+                live zoom so it stays hairline at any magnification. Deliberately UNROUNDED: a
+                symbol box is ~15px on the sheet, and rounding to whole pixels would make it jump
+                between values while the user is trying to frame one. */}
+            {symbolBox && (() => {
+              const a = normToScreen(symbolBox.a, identityView(imgW, imgH));
+              const b = normToScreen(symbolBox.b, identityView(imgW, imgH));
+              return (
+                <rect
+                  data-testid="symbol-select-box"
+                  x={Math.min(a.x, b.x)}
+                  y={Math.min(a.y, b.y)}
+                  width={Math.abs(b.x - a.x)}
+                  height={Math.abs(b.y - a.y)}
+                  fill={PROPOSAL_FILL}
+                  stroke={PROPOSAL_STROKE}
+                  strokeWidth={1 / view.zoom}
+                  strokeDasharray={`${4 / view.zoom} ${3 / view.zoom}`}
+                  style={{ pointerEvents: "none" }}
+                />
+              );
+            })()}
           </g>
         </svg>
 
@@ -2585,26 +2772,74 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               {wizardOpen && (
                 <div
                   data-testid="plan-wizard-menu"
-                  className="absolute left-11 top-0 z-40 w-44 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg"
+                  className="absolute left-11 top-0 z-40 w-52 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg"
                 >
-                  <button
-                    type="button"
-                    data-testid="discover-rooms"
-                    disabled={discovering != null || accepting}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
-                    onClick={() => void runDiscovery("rooms")}
-                  >
-                    <Icon icon="tabler:vector" width={16} height={16} /> Discover rooms
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="discover-devices"
-                    disabled={discovering != null || accepting}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
-                    onClick={() => void runDiscovery("devices")}
-                  >
-                    <Icon icon="tabler:circle-plus" width={16} height={16} /> Discover devices
-                  </button>
+                  {!symbolMenuOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        data-testid="discover-rooms"
+                        disabled={discovering != null || accepting}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => void runDiscovery("rooms")}
+                      >
+                        <Icon icon="tabler:vector" width={16} height={16} /> Discover rooms
+                      </button>
+                      {/* Devices DRILL DOWN rather than running: the user picks what kind of thing
+                          they are about to point at, then points at one on the plan. */}
+                      <button
+                        type="button"
+                        data-testid="discover-devices"
+                        disabled={discovering != null || accepting}
+                        aria-expanded={false}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => setSymbolMenuOpen(true)}
+                      >
+                        <Icon icon="tabler:circle-plus" width={16} height={16} /> Discover devices
+                        <Icon icon="tabler:chevron-right" width={15} height={15} className="ml-auto" />
+                      </button>
+                    </>
+                  ) : (
+                    <div data-testid="symbol-type-menu">
+                      <button
+                        type="button"
+                        data-testid="symbol-type-back"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-neutral-500 hover:bg-neutral-100"
+                        onClick={() => setSymbolMenuOpen(false)}
+                      >
+                        <Icon icon="tabler:chevron-left" width={15} height={15} /> Devices
+                      </button>
+                      {/* The AI sweep, kept as the head of this list: it reads the WHOLE sheet and
+                          needs no example, so it is the right first offer — the type entries below
+                          are the exact-match path, one symbol at a time. */}
+                      <button
+                        type="button"
+                        data-testid="discover-devices-ai"
+                        disabled={discovering != null || accepting}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => void runDiscovery("devices")}
+                      >
+                        <Icon icon="tabler:sparkles" width={16} height={16} /> Detect with AI
+                      </button>
+                      <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                        Find a symbol
+                      </p>
+                      <div className="max-h-60 overflow-y-auto">
+                        {floorDeviceTypes.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            data-testid={`symbol-type-${t.code}`}
+                            disabled={discovering != null || accepting}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                            onClick={() => armSymbolSelect(t.code)}
+                          >
+                            <Icon icon={resolveTypeIcon(t)} width={16} height={16} /> {t.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </span>
@@ -2622,6 +2857,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           drawingRoomId ||
           creatingRoom ||
           creatingDevice ||
+          symbolSelecting ||
           discovering != null ||
           wizardNotice) && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-30 flex -translate-x-1/2 flex-col items-center gap-1.5">
@@ -2644,6 +2880,17 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                     }. Esc to cancel.`}
                 </p>
               )}
+            {/* Box-select's own line, on the same footing as the placement instructions above but
+                separate from them: the two gesture families are mutually exclusive, and this one
+                names the TYPE so a mis-pick from the submenu is obvious before the drag. */}
+            {!error && symbolSelecting && (
+              <p
+                data-testid="symbol-prompt"
+                className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
+              >
+                {`Drag a box around one ${symbolTypeName} symbol. Esc to cancel.`}
+              </p>
+            )}
             {/* Discovery's own line, so a pass can report while a placement gesture is still live.
                 `no-key` and `none-found` are SENTINELS, not prose — each gets its own copy; anything
                 else is already a caller-facing message from the action, shown verbatim. */}
@@ -2652,7 +2899,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 data-testid="wizard-notice"
                 className="pointer-events-auto rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
               >
-                {discovering != null ? (
+                {discovering === "symbols" ? (
+                  "Searching the plan for that symbol…"
+                ) : discovering != null ? (
                   "Reading the plan…"
                 ) : wizardNotice === "no-key" ? (
                   <>
