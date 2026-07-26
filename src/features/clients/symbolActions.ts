@@ -193,7 +193,16 @@ export async function discoverSymbolsAction(input: {
 const PICK_HIT_TOLERANCE_PX = 3;
 /** How close another path's bbox must come to the group's for it to join. Small enough that the
  *  next symbol along does not chain in, large enough to bridge a symbol's own gaps (a circle and
- *  the letters inside it are separate paths). */
+ *  the letters inside it are separate paths).
+ *
+ *  MEASURED, and left at 4 deliberately. Tightening this to "touching" was tried against the real
+ *  sheet as the fix for the swallowed tag, at 1, 2 and 3px, and is strictly worse: the card
+ *  reader's picked box comes out 30.3px wide at EVERY one of those values, because the tag is
+ *  joined to the symbol by a drawn leader line and a strict rule just walks along it (see
+ *  swallowsForeignText). Meanwhile genuinely multi-part symbols come apart — at 1px the door card
+ *  machine's pair of squares picks as one square (27.3 -> 12.2px) and the TV jack collapses to a
+ *  7.8px fragment; at 2px the squares still come apart. Proximity is not what tells a tag from a
+ *  symbol. */
 const PICK_LINK_PX = 4;
 /** The longest side a picked group may have. This is the guard that stops the group swallowing the
  *  wall the symbol sits on, or a long leader line: a path is refused if adding it would push the
@@ -225,6 +234,50 @@ function isTextGlyph(p: PlanPath, textBoxes: Box[]): boolean {
   return false;
 }
 
+/** Fraction of `t`'s area that lies inside `b`. 0 if they miss, 1 if `t` is wholly inside. */
+function coverage(b: Box, t: Box): number {
+  const w = Math.min(b.maxX, t.maxX) - Math.max(b.minX, t.minX);
+  const h = Math.min(b.maxY, t.maxY) - Math.max(b.minY, t.minY);
+  if (w <= 0 || h <= 0) return 0;
+  const area = (t.maxX - t.minX) * (t.maxY - t.minY);
+  return area > 0 ? (w * h) / area : 0;
+}
+
+/** How much of a text run the group must newly cover before that counts as swallowing it rather
+ *  than brushing past its edge. */
+const TEXT_SWALLOW_FRAC = 0.5;
+/** How much of a text run the group must ALREADY cover for that run to count as the symbol's own
+ *  label rather than a neighbour's. Deliberately well below TEXT_SWALLOW_FRAC: a symbol drawn
+ *  around its label is already well over it before the last of its parts joins, whereas a group
+ *  that has merely nicked the corner of a neighbouring tag (measured: 11% of "AC-C-1", from a 6px
+ *  tick that belongs to the callout above it) has not earned the right to swallow the rest. */
+const TEXT_OWNED_FRAC = 0.25;
+
+/**
+ * True if growing from `box` to `next` would reach out and cover a text run the group does not
+ * overlap at all today — a whole label belonging to something else.
+ *
+ * WHY THIS EXISTS AND WHY EXCLUDING TEXT GLYPHS IS NOT ENOUGH: on the real sheet a device tag is a
+ * DRAWN RECTANGLE with the text inside it, and the rectangle's four edges are real vector ink no
+ * glyph filter can remove. Worse, the tag is joined to the symbol by a drawn leader — a staircase of
+ * ~2px segments running from the tag's right edge to the card reader's ring, rendered and looked at,
+ * not inferred — so tightening the link distance to "touching" does not separate them either; the
+ * group simply walks along the leader. What actually distinguishes the tag is what it is FOR: it
+ * frames a label whose digits differ at every instance. Reaching out over a whole foreign label is
+ * never how one symbol is drawn.
+ *
+ * "Does not already own it" is the load-bearing qualifier. A symbol whose own label sits INSIDE it
+ * (the card reader has "CP" at the centre of its ring) grows across that label while assembling
+ * itself and must be allowed to — the group already covers that text, so it is not foreign.
+ */
+function swallowsForeignText(box: Box, next: Box, textBoxes: Box[]): boolean {
+  for (const t of textBoxes) {
+    if (coverage(box, t) >= TEXT_OWNED_FRAC) continue; // already the group's own label
+    if (coverage(next, t) >= TEXT_SWALLOW_FRAC) return true;
+  }
+  return false;
+}
+
 /** 0..1, or null if the client sent something that isn't a number. Clamping is deliberate — a
  *  click reported a hair off the sheet edge is a click on the edge, not an error. */
 function clamp01(v: unknown): number | null {
@@ -243,12 +296,17 @@ function clamp01(v: unknown): number | null {
  * the same group): seed on the SMALLEST foreground path the click is inside that is not already
  * symbol-sized-or-larger, then repeatedly absorb any foreground path that comes within
  * PICK_LINK_PX of the group — refusing any addition that would push the group past
- * PICK_MAX_SIDE_PX. Text glyphs are excluded from the group entirely (never seeded on, never
- * absorbed): the sheet's device tags (e.g. "AC-C-1", "AC-C-3", …) carry different digits at every
- * instance, so a template that swallows one is distinctive to that ONE instance rather than to the
- * symbol — measured on the real sheet, a click on a card reader used to grow 59.0 x 22.9 (circle
- * plus its "AC-C-n" tag) and cost real match recall; excluding the tag brings the box down to the
- * circle alone, ~24px wide.
+ * PICK_MAX_SIDE_PX, and refusing any addition that would swallow a foreign label
+ * (swallowsForeignText). Text glyphs are excluded from the group entirely (never seeded on, never
+ * absorbed).
+ *
+ * Both text rules exist for the same reason: the sheet's device tags (e.g. "AC-C-1", "AC-C-3", …)
+ * carry different digits at every instance, so a template that swallows one is distinctive to that
+ * ONE instance rather than to the symbol. Excluding the glyph paths was not enough on its own — the
+ * tag is a DRAWN BOX around the text, and that box's ink is not a glyph. Measured on the real sheet,
+ * a click on a card reader grew to 59.0 x 22.9 (its "AC-C-n" tag plus the circle); with the
+ * foreign-label rule it comes back 30.3 x 22.9, the tag left behind, and the reported hit centre
+ * lands 6px from the symbol instead of 20px away on the tag.
  */
 function pickSymbolGroup(
   paths: PlanPath[],
@@ -303,6 +361,7 @@ function pickSymbolGroup(
       };
       // THE guard. Without it the group walks straight down the wall the symbol sits on.
       if (longestSide(next) > PICK_MAX_SIDE_PX) continue;
+      if (swallowsForeignText(box, next, textBoxes)) continue;
       box.minX = next.minX;
       box.minY = next.minY;
       box.maxX = next.maxX;

@@ -504,6 +504,58 @@ describe("pickSymbolAction", () => {
     expect(res.pathCount).toBe(2);
   });
 
+  it("EXCLUDES a TAG BOX 3px away — its border is real ink, not a glyph", async () => {
+    // The regression test for what text-glyph exclusion could not reach. On the real sheet the
+    // "AC-C-n" tag beside a card reader is a DRAWN RECTANGLE with the label inside it; the
+    // rectangle's own ink is not a glyph, so the glyph filter leaves it, and it sits within link
+    // distance of the symbol. Those tags carry different digits at every instance, so a template
+    // that swallows one is distinctive to that ONE instance — measured, it cost real match recall.
+    // The rectangle here is deliberately BIGGER than the label it frames, so it is not a glyph by
+    // any definition, and it is 3px from the symbol, well inside PICK_LINK_PX. Only the
+    // foreign-label rule can keep it out: delete that and the box widens from 14px to 34px.
+    const tagBox = pathAt(80, 200, 97, 214);
+    const tagText = textAt(88, 205, 93, 209, "AC-C-1");
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, tagBox], [tagText]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(1);
+  });
+
+  it("INCLUDES a sub-path that overlaps the symbol, tag box or not", async () => {
+    // The other half of the same change: refusing a foreign label must not turn into refusing the
+    // symbol's own ink. This second path overlaps the symbol outright, and the only text on the page
+    // belongs to the tag it must NOT reach.
+    const ring2 = pathAt(96, 205, 106, 212);
+    const tagBox = pathAt(80, 200, 94, 214);
+    const tagText = textAt(84, 205, 90, 209, "AC-C-1");
+    vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, ring2, tagBox], [tagText]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(96 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo((114 - 96) / IMG_W, 12);
+    expect(res.pathCount).toBe(2);
+  });
+
+  it("still grows across the symbol's OWN label, which sits inside it", async () => {
+    // Would catch: an over-broad foreign-label rule. The card reader has "CP" written at the centre
+    // of its ring, so the group is bound to close over that text as its parts join. The rule only
+    // refuses labels the group has no claim to yet — this one it already half covers.
+    const arc = pathAt(100, 200, 106, 214); // the seed: smallest path under the click
+    const rest = pathAt(105, 200, 114, 214);
+    const ownLabel = textAt(104, 204, 110, 209, "CP");
+    vi.mocked(decodePlanPage).mockResolvedValue(page([arc, rest], [ownLabel]));
+    const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.box.x).toBeCloseTo(100 / IMG_W, 12);
+    expect(res.box.w).toBeCloseTo(14 / IMG_W, 12);
+    expect(res.pathCount).toBe(2);
+  });
+
   it("REFUSES a neighbour that would push the group past the max side — the wall guard", async () => {
     // The regression test for the failure this whole approach exists to avoid: a symbol drawn on a
     // wall, or beside a leader line, must not drag that line's whole length into the template.
@@ -524,7 +576,9 @@ describe("pickSymbolAction", () => {
     // returning early once any exclusion applies) — the wall must still be refused for being too
     // long, independent of whether any text is on the page.
     const wall = pathAt(116, 206, 400, 208);
-    const nearbyText = textAt(195, 202, 205, 212, "CP"); // near the symbol, but not ON any path
+    // Near the symbol, but not ON any path — and deliberately BELOW the band the wall would add, so
+    // the foreign-label rule has no reason to fire and only the size refusal can keep the wall out.
+    const nearbyText = textAt(150, 240, 160, 250, "CP");
     vi.mocked(decodePlanPage).mockResolvedValue(page([SYMBOL, wall], [nearbyText]));
     const res = await pickSymbolAction({ floorId: "f1", point: ON_SYMBOL });
     expect(res.ok).toBe(true);
