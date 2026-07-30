@@ -70,6 +70,79 @@ export function polygonCentroid(polygon: NormPoint[]): NormPoint {
   ];
 }
 
+/**
+ * Slide one WALL of a room in or out, keeping it parallel to itself.
+ *
+ * Both of the edge's endpoints move by the same amount along the edge's own normal, so the wall
+ * stays straight and the two walls meeting it stretch or shrink to follow. Any component of `delta`
+ * ALONG the wall is discarded — dragging a wall sideways is meaningless, and letting it through
+ * would make the drag feel like it was sliding out from under the cursor.
+ *
+ * `aspect` is the plan's width/height. Normalized space is anisotropic (one unit of X is 2600px and
+ * one of Y is 1733px on this drawing set), so the normal has to be computed in pixel proportions or
+ * a dragged wall drifts off perpendicular on anything but a square plan.
+ *
+ * The offset is scaled back if it would push either endpoint outside the plan, rather than clamping
+ * one endpoint — clamping just one would bend the wall.
+ */
+export function moveEdge(
+  polygon: NormPoint[],
+  edgeIndex: number,
+  delta: NormPoint,
+  aspect = 1
+): NormPoint[] {
+  if (polygon.length < 3) return polygon;
+  if (!Number.isInteger(edgeIndex) || edgeIndex < 0 || edgeIndex >= polygon.length) return polygon;
+  const a = polygon[edgeIndex];
+  const b = polygon[(edgeIndex + 1) % polygon.length];
+  // Pixel proportions for the direction maths, normalized units for the result.
+  const ex = (b[0] - a[0]) * aspect;
+  const ey = b[1] - a[1];
+  const len = Math.hypot(ex, ey);
+  if (len < 1e-9) return polygon; // degenerate edge has no normal to move along
+  const nx = -ey / len;
+  const ny = ex / len;
+  const t = delta[0] * aspect * nx + delta[1] * ny; // signed distance along the normal
+  let sx = (t * nx) / aspect;
+  let sy = t * ny;
+
+  // Largest fraction of the offset that keeps BOTH endpoints on the plan.
+  let scale = 1;
+  for (const p of [a, b]) {
+    for (const [v, s] of [
+      [p[0], sx],
+      [p[1], sy],
+    ]) {
+      if (s === 0) continue;
+      const limit = s > 0 ? (1 - v) / s : -v / s;
+      if (limit < scale) scale = limit;
+    }
+  }
+  if (scale <= 0) return polygon;
+  sx *= scale;
+  sy *= scale;
+
+  const next = polygon.slice();
+  next[edgeIndex] = [a[0] + sx, a[1] + sy];
+  next[(edgeIndex + 1) % polygon.length] = [b[0] + sx, b[1] + sy];
+  return next;
+}
+
+/** The CSS cursor for a wall you can drag: arrows pointing along its normal, so the affordance says
+ *  which way the wall will move. Bucketed to the four resize cursors CSS actually offers. */
+export function edgeResizeCursor(a: NormPoint, b: NormPoint, aspect = 1): string {
+  const ex = (b[0] - a[0]) * aspect;
+  const ey = b[1] - a[1];
+  if (Math.hypot(ex, ey) < 1e-9) return "grab";
+  // Normal direction in SCREEN terms (x right, y down), folded to a half-turn.
+  let deg = ((Math.atan2(ex, -ey) * 180) / Math.PI) % 180;
+  if (deg < 0) deg += 180;
+  if (deg < 22.5 || deg >= 157.5) return "ew-resize";
+  if (deg < 67.5) return "nwse-resize";
+  if (deg < 112.5) return "ns-resize";
+  return "nesw-resize";
+}
+
 /** Ray casting, in normalized plan space. A point exactly on an edge is not guaranteed either way —
  *  callers here are testing device points against room outlines, where a tie is arbitrary anyway. */
 export function pointInPolygon(point: NormPoint, polygon: NormPoint[]): boolean {

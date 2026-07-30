@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow } from "@/lib/supabase/types";
 import {
-  isNorm, isValidPolygon, insertVertexOnEdge, removeVertex,
-  polygonCentroid, partitionPlacement, screenToNorm, normToScreen,
   dedupePolygon,
+  edgeResizeCursor,
+  insertVertexOnEdge,
+  isNorm,
+  isValidPolygon,
+  moveEdge,
+  normToScreen,
+  partitionPlacement,
+  polygonCentroid,
+  removeVertex,
+  screenToNorm,
+  type NormPoint,
 } from "./floorPlanOps";
 
 function device(over: Partial<FloorDeviceRow>): FloorDeviceRow {
@@ -106,5 +115,98 @@ describe("screenToNorm / normToScreen", () => {
   });
   it("maps the origin corner exactly to [0,0]", () => {
     expect(screenToNorm({ x: 10, y: 20 }, view)).toEqual([0, 0]);
+  });
+});
+
+describe("moveEdge", () => {
+  // A unit square, clockwise from the top-left. Edge 0 is the TOP wall, edge 1 the RIGHT wall.
+  const sq = (): NormPoint[] => [
+    [0.2, 0.2],
+    [0.8, 0.2],
+    [0.8, 0.8],
+    [0.2, 0.8],
+  ];
+
+  it("slides a wall along its normal, keeping it parallel and taking its neighbours with it", () => {
+    const out = moveEdge(sq(), 0, [0, 0.1]);
+    expect(out[0]).toEqual([0.2, 0.30000000000000004]);
+    expect(out[1]).toEqual([0.8, 0.30000000000000004]);
+    // The other two corners are untouched — the side walls stretched to follow.
+    expect(out[2]).toEqual([0.8, 0.8]);
+    expect(out[3]).toEqual([0.2, 0.8]);
+  });
+
+  it("DISCARDS the component along the wall — a wall cannot slide sideways", () => {
+    // A big sideways drag with no perpendicular component must do nothing at all.
+    expect(moveEdge(sq(), 0, [0.3, 0])).toEqual(sq());
+    // And a diagonal drag moves it only by its perpendicular part.
+    const out = moveEdge(sq(), 0, [0.3, 0.1]);
+    expect(out[0][0]).toBeCloseTo(0.2, 10);
+    expect(out[0][1]).toBeCloseTo(0.3, 10);
+  });
+
+  it("retracts as well as extends", () => {
+    const out = moveEdge(sq(), 0, [0, -0.1]);
+    expect(out[0][1]).toBeCloseTo(0.1, 10);
+    expect(out[1][1]).toBeCloseTo(0.1, 10);
+  });
+
+  it("moves a vertical wall horizontally", () => {
+    const out = moveEdge(sq(), 1, [0.1, 0]);
+    expect(out[1][0]).toBeCloseTo(0.9, 10);
+    expect(out[2][0]).toBeCloseTo(0.9, 10);
+    expect(out[1][1]).toBeCloseTo(0.2, 10);
+  });
+
+  it("scales the offset back at the plan edge instead of BENDING the wall", () => {
+    // Pushing the top wall up by 0.5 would take it to -0.3; both endpoints must stop together.
+    const out = moveEdge(sq(), 0, [0, -0.5]);
+    expect(out[0][1]).toBeCloseTo(0, 10);
+    expect(out[1][1]).toBeCloseTo(0, 10);
+    expect(out[0][1]).toBeCloseTo(out[1][1], 10); // still parallel — the whole point
+  });
+
+  it("respects the plan's ASPECT when deciding what perpendicular means", () => {
+    // A 45-degree wall in normalized space is NOT 45 degrees on a 3:2 sheet, so the same drag
+    // resolves to a different offset once the aspect is taken into account.
+    const diag: NormPoint[] = [[0.2, 0.2], [0.6, 0.6], [0.2, 0.6]];
+    const square = moveEdge(diag, 0, [0.1, 0], 1);
+    const wide = moveEdge(diag, 0, [0.1, 0], 2600 / 1733);
+    expect(square[0][1]).not.toBeCloseTo(wide[0][1], 6);
+  });
+
+  it("leaves the polygon alone for a bad index, a degenerate edge, or too few points", () => {
+    expect(moveEdge(sq(), 9, [0, 0.1])).toEqual(sq());
+    expect(moveEdge(sq(), -1, [0, 0.1])).toEqual(sq());
+    expect(moveEdge(sq(), 1.5, [0, 0.1])).toEqual(sq());
+    expect(moveEdge([[0.1, 0.1], [0.2, 0.2]], 0, [0, 0.1])).toEqual([[0.1, 0.1], [0.2, 0.2]]);
+    const dup: NormPoint[] = [[0.2, 0.2], [0.2, 0.2], [0.5, 0.5]];
+    expect(moveEdge(dup, 0, [0, 0.1])).toEqual(dup);
+  });
+
+  it("does not mutate the input", () => {
+    const p = sq();
+    moveEdge(p, 0, [0, 0.1]);
+    expect(p).toEqual(sq());
+  });
+});
+
+describe("edgeResizeCursor", () => {
+  it("points the arrows along the wall's normal", () => {
+    // Horizontal wall -> you drag it up/down.
+    expect(edgeResizeCursor([0.2, 0.2], [0.8, 0.2])).toBe("ns-resize");
+    // Vertical wall -> left/right.
+    expect(edgeResizeCursor([0.2, 0.2], [0.2, 0.8])).toBe("ew-resize");
+    // Direction is irrelevant — the same wall drawn backwards drags the same way.
+    expect(edgeResizeCursor([0.8, 0.2], [0.2, 0.2])).toBe("ns-resize");
+  });
+
+  it("uses the diagonal cursors for angled walls", () => {
+    expect(edgeResizeCursor([0.2, 0.2], [0.6, 0.6])).toBe("nesw-resize");
+    expect(edgeResizeCursor([0.2, 0.6], [0.6, 0.2])).toBe("nwse-resize");
+  });
+
+  it("falls back to grab on a degenerate edge rather than picking a meaningless arrow", () => {
+    expect(edgeResizeCursor([0.3, 0.3], [0.3, 0.3])).toBe("grab");
   });
 });

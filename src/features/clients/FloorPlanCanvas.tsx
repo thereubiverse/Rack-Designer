@@ -26,6 +26,8 @@ import {
   partitionPlacement,
   insertVertexOnEdge,
   removeVertex,
+  moveEdge,
+  edgeResizeCursor,
   dedupePolygon,
   type NormPoint,
   type PlanView,
@@ -139,12 +141,11 @@ const WALL_STROKE = "#0ea5e9";
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
-/** The deepened fill a committed room gets while selected — reused by a proposal being reshaped. */
-const ROOM_FILL_ACTIVE = "rgb(37 99 235 / 0.18)";
-
-// Proposed DEVICES stay amber: a ghost pin that looked identical to a placed one would invite
-// accepting a pin the user thought was already committed.
+// AI proposals are drawn in amber, dashed — deliberately NOT the committed blue, so a glance at the
+// plan separates "this is on the floor" from "this is only proposed".
 const PROPOSAL_FILL = "rgb(245 158 11 / 0.12)";
+// The same amber, deepened, for the proposed room whose outline is being reshaped.
+const PROPOSAL_FILL_ACTIVE = "rgb(245 158 11 / 0.24)";
 const PROPOSAL_STROKE = "#d97706";
 
 /** Horizontal strip the proposal panel covers on the right: `w-72` (288px) at `right-14` (56px).
@@ -202,7 +203,9 @@ function RoomPolygon({
   selected,
   editing,
   vertexPreview,
+  polygonPreview,
   onVertexPointerDown,
+  onEdgePointerDown,
   onInsertVertex,
 }: {
   room: RoomRow;
@@ -213,7 +216,10 @@ function RoomPolygon({
   selected?: boolean;
   editing?: boolean;
   vertexPreview?: VertexPreview | null;
+  /** A whole-outline preview, used while a WALL is being dragged (every point can move). */
+  polygonPreview?: NormPoint[] | null;
   onVertexPointerDown?: (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => void;
+  onEdgePointerDown?: (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => void;
   onInsertVertex?: (roomId: string, polygon: NormPoint[], edgeIndex: number) => void;
 }) {
   const basePolygon = room.plan_polygon;
@@ -222,9 +228,11 @@ function RoomPolygon({
   // The live-dragged vertex overrides its index for rendering only — the committed action, on
   // pointer-up, always maps over the ORIGINAL polygon captured at drag-start (see
   // FloorPlanCanvas's vertexDragRef), so this substitution is purely visual.
-  const polygon = vertexPreview
-    ? basePolygon.map((pt, i) => (i === vertexPreview.index ? vertexPreview.point : pt))
-    : basePolygon;
+  const polygon = polygonPreview
+    ? polygonPreview
+    : vertexPreview
+      ? basePolygon.map((pt, i) => (i === vertexPreview.index ? vertexPreview.point : pt))
+      : basePolygon;
 
   const view = identityView(imgW, imgH);
   const points = polygon.map((p) => {
@@ -268,6 +276,35 @@ function RoomPolygon({
           </text>
         </g>
       </g>
+      {editMode &&
+        editing &&
+        // One invisible fat line per WALL. Rendered BEFORE the vertex handles so a press near a
+        // corner still hits the corner — dragging a wall from its very end is ambiguous, and
+        // moving the corner is the more precise intent.
+        polygon.map((p, i) => {
+          const next = polygon[(i + 1) % polygon.length];
+          const a = normToScreen(p, view);
+          const b = normToScreen(next, view);
+          return (
+            <line
+              key={`e-${i}`}
+              data-testid={`edge-${room.code}-${i}`}
+              x1={a.x}
+              y1={a.y}
+              x2={b.x}
+              y2={b.y}
+              stroke="transparent"
+              strokeWidth={12 / zoom}
+              strokeLinecap="butt"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                onEdgePointerDown?.(e, room.id, i, polygon);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ cursor: edgeResizeCursor(p, next, imgW / imgH) }}
+            />
+          );
+        })}
       {editMode &&
         editing &&
         // Vertex handles: index `i` is derived HERE, synchronously, from the polygon this
@@ -1451,6 +1488,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // Vertex-move drag: same shape/contract as pinDragRef. `polygon` is the room's polygon AS
   // RENDERED at drag-start — the commit on pointer-up maps over this exact array using `index`,
   // never a re-derived or stale one (Task 2 review note).
+  /** A wall being dragged: the outline as it was at press, so every move re-derives from the
+   *  ORIGINAL rather than accumulating rounding drift move by move. */
+  const edgeDragRef = useRef<{
+    roomId: string;
+    index: number;
+    polygon: NormPoint[];
+    startX: number;
+    startY: number;
+    moved: boolean;
+    proposal: boolean;
+  } | null>(null);
+  const [edgePreview, setEdgePreview] = useState<{ roomId: string; polygon: NormPoint[] } | null>(null);
+
   const vertexDragRef = useRef<{
     roomId: string;
     index: number;
@@ -1993,6 +2043,40 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return true;
   }
 
+  /** Start dragging a WALL. `proposal` picks where the result lands: proposal state writes live,
+   *  a committed room previews and commits once on release, exactly as vertex dragging does. */
+  const onEdgePointerDown = (
+    e: React.PointerEvent,
+    roomId: string,
+    index: number,
+    polygon: NormPoint[],
+    proposal = false
+  ) => {
+    if (e.button !== 0) return;
+    setSelectedPinId(null);
+    setSelectedRackId(null);
+    setSelectedVertex(null);
+    setSelectedProposalVertex(null);
+    edgeDragRef.current = {
+      roomId,
+      index,
+      polygon,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      proposal,
+    };
+  };
+
+  /** Pointer travel converted to a NORMALIZED delta. A wall drag needs the movement itself, not the
+   *  cursor's absolute position — the grab point is anywhere along the wall. */
+  const dragDeltaNorm = (drag: { startX: number; startY: number }, e: { clientX: number; clientY: number }) => {
+    const from = toNorm(drag.startX, drag.startY);
+    const to = toNorm(e.clientX, e.clientY);
+    if (!from || !to) return null;
+    return [to[0] - from[0], to[1] - from[1]] as NormPoint;
+  };
+
   const onVertexPointerDown = (e: React.PointerEvent, roomId: string, index: number, polygon: NormPoint[]) => {
     if (e.button !== 0) return;
     setSelectedVertex({ roomId, index });
@@ -2030,6 +2114,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       if (!ghostDragEngaged(drag, e.clientX, e.clientY)) return;
       const n = toNorm(e.clientX, e.clientY);
       if (n) editDeviceProposal(drag.id, { point: n });
+      return;
+    }
+    if (edgeDragRef.current) {
+      const drag = edgeDragRef.current;
+      if (!ghostDragEngaged(drag, e.clientX, e.clientY)) return;
+      const delta = dragDeltaNorm(drag, e);
+      if (!delta) return;
+      const next = moveEdge(drag.polygon, drag.index, delta, imgW / imgH);
+      if (drag.proposal) editRoomProposal(drag.roomId, { polygon: next });
+      else setEdgePreview({ roomId: drag.roomId, polygon: next });
       return;
     }
     if (proposalVertexDragRef.current) {
@@ -2091,6 +2185,24 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     // The pan bookkeeping is still torn down first: the ghost's own stopPropagation should have
     // kept the root's pointer-down from ever arming one, but returning early with a live dragRef
     // would leave the NEXT pointer move dragging the whole plan with no button held.
+    if (edgeDragRef.current) {
+      const drag = edgeDragRef.current;
+      edgeDragRef.current = null;
+      setEdgePreview(null);
+      dragRef.current = null;
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      // Sub-threshold press = a click on the wall, not a drag: leave the outline alone. A proposal
+      // has already been written live, so only a committed room has anything left to save.
+      if (drag.moved && !drag.proposal) {
+        const delta = dragDeltaNorm(drag, e);
+        if (delta) {
+          commitRoomPolygonEdit(drag.roomId, drag.polygon, moveEdge(drag.polygon, drag.index, delta, imgW / imgH));
+        }
+      }
+      return;
+    }
     if (proposalPinDragRef.current || proposalVertexDragRef.current) {
       proposalPinDragRef.current = null;
       proposalVertexDragRef.current = null;
@@ -2268,6 +2380,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         pinDragRef.current = null;
         rackDragRef.current = null;
         vertexDragRef.current = null;
+        edgeDragRef.current = null;
+        setEdgePreview(null);
         setPinPreview(null);
         setRackPreview(null);
         setVertexPreview(null);
@@ -2555,7 +2669,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 })()}
               </g>
             )}
-            {rooms.map((room) => (
+            {/* The room being edited paints LAST. Rooms are siblings, so a neighbour drawn after it
+                covers its handles — measured on the real plan: a wall grab on Case Management
+                hit-tested to the Pantry polygon lying over it, and the drag never reached the wall.
+                Only the edited room moves, so the rest of the stacking order is untouched. */}
+            {[...rooms]
+              .sort((a, b) =>
+                Number(editingRoomId === a.id) - Number(editingRoomId === b.id)
+              )
+              .map((room) => (
               <RoomPolygon
                 key={room.id}
                 room={room}
@@ -2566,7 +2688,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 selected={selectedRoomId === room.id || editingRoomId === room.id}
                 editing={editingRoomId === room.id && shapesInteractive}
                 vertexPreview={vertexPreviewForRoom(room.id)}
+                polygonPreview={edgePreview?.roomId === room.id ? edgePreview.polygon : null}
                 onVertexPointerDown={onVertexPointerDown}
+                onEdgePointerDown={onEdgePointerDown}
                 onInsertVertex={onInsertVertexClick}
               />
             ))}
@@ -2619,14 +2743,44 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                         return `${s.x},${s.y}`;
                       })
                       .join(" ")}
-                    // Same blue as a committed room — a proposal is a room you are about to keep,
-                    // and reviewing it against differently-coloured neighbours made it read as a
-                    // different KIND of thing. The dash is what still says "not saved yet".
-                    fill={outlining ? ROOM_FILL_ACTIVE : ROOM_FILL}
-                    stroke={ROOM_STROKE}
+                    fill={outlining ? PROPOSAL_FILL_ACTIVE : PROPOSAL_FILL}
+                    stroke={PROPOSAL_STROKE}
                     strokeWidth={(outlining ? 3 : 2) / view.zoom}
                     strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
                   />
+                  {/* Wall grabs, before the vertex handles so a corner still wins a press near it. */}
+                  {outlining &&
+                    rp.polygon.map((pt, i) => {
+                      const next = rp.polygon[(i + 1) % rp.polygon.length];
+                      const a = normToScreen(pt, identityView(imgW, imgH));
+                      const b = normToScreen(next, identityView(imgW, imgH));
+                      return (
+                        <line
+                          key={`pe-${i}`}
+                          data-testid={`proposal-edge-${rp.id}-${i}`}
+                          x1={a.x}
+                          y1={a.y}
+                          x2={b.x}
+                          y2={b.y}
+                          stroke="transparent"
+                          strokeWidth={12 / view.zoom}
+                          onPointerDown={
+                            ghostInteractive
+                              ? (e) => {
+                                  e.stopPropagation();
+                                  onEdgePointerDown(e, rp.id, i, rp.polygon, true);
+                                }
+                              : undefined
+                          }
+                          onClick={ghostInteractive ? (e) => e.stopPropagation() : undefined}
+                          style={
+                            ghostInteractive
+                              ? { cursor: edgeResizeCursor(pt, next, imgW / imgH) }
+                              : undefined
+                          }
+                        />
+                      );
+                    })}
                   {/* Vertex handles, only while the panel's outline toggle is on for this room —
                       the ghost mirror of the committed rooms' select-then-Edit gate. Index `i` is
                       derived synchronously from the polygon being rendered, never cached. */}
@@ -2642,8 +2796,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                           cx={pos.x}
                           cy={pos.y}
                           r={6 / view.zoom}
-                          fill={selected ? ROOM_STROKE : "#ffffff"}
-                          stroke={ROOM_STROKE}
+                          fill={selected ? PROPOSAL_STROKE : "#ffffff"}
+                          stroke={PROPOSAL_STROKE}
                           strokeWidth={2 / view.zoom}
                           // stopPropagation, or this drag would also pan the canvas — and stands
                           // down while a placement/trace gesture is aiming at the plan.
@@ -2672,7 +2826,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                           cx={pos.x}
                           cy={pos.y}
                           r={4 / view.zoom}
-                          fill={ROOM_STROKE}
+                          fill={PROPOSAL_STROKE}
                           opacity={0.55}
                           onPointerDown={ghostInteractive ? (e) => e.stopPropagation() : undefined}
                           onClick={
@@ -2698,7 +2852,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                         textAnchor="middle"
                         fontSize={12}
                         fontWeight={700}
-                        fill={ROOM_STROKE}
+                        fill={PROPOSAL_STROKE}
                         stroke="#ffffff"
                         strokeWidth={3}
                         paintOrder="stroke"

@@ -593,6 +593,111 @@ describe("FloorPlanCanvas (edit mode)", () => {
     expect(screen.getByTestId("plan-room-TRI").getAttribute("points")).toBe(originalPoints);
   });
 
+  // ---- Dragging a WALL ------------------------------------------------------------------------
+  // TRI is [[0.5,0.5],[0.6,0.5],[0.55,0.6]], so edge 0 is the horizontal top wall. The jsdom fit is
+  // zoom 0.7 / panX 15, i.e. 840px across the plan's width and 560 down — a 56px drag down the
+  // screen is exactly 0.1 in normalized Y.
+
+  it("drags a WALL perpendicular to itself, moving both its corners and leaving the third alone", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI");
+
+    const edge = screen.getByTestId("edge-TRI-0");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(edge, { clientX: 400, clientY: 300, button: 0, pointerId: 31 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 356, pointerId: 31 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 356, pointerId: 31 });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const fd = vi.mocked(setRoomPolygonAction).mock.calls[callsBefore][0] as FormData;
+    const poly = JSON.parse(String(fd.get("polygon"))) as [number, number][];
+    expect(poly[0][0]).toBeCloseTo(0.5, 6);
+    expect(poly[0][1]).toBeCloseTo(0.6, 6);
+    expect(poly[1][0]).toBeCloseTo(0.6, 6);
+    expect(poly[1][1]).toBeCloseTo(0.6, 6);
+    // The corner NOT on this wall must not have moved.
+    expect(poly[2]).toEqual([0.55, 0.6]);
+  });
+
+  it("IGNORES the along-the-wall part of the drag", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI");
+
+    const edge = screen.getByTestId("edge-TRI-0");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    // Mostly sideways along the horizontal wall, with the same 56px downward component.
+    fireEvent.pointerDown(edge, { clientX: 400, clientY: 300, button: 0, pointerId: 32 });
+    fireEvent.pointerMove(svg, { clientX: 600, clientY: 356, pointerId: 32 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 600, clientY: 356, pointerId: 32 });
+    });
+
+    const fd = vi.mocked(setRoomPolygonAction).mock.calls[callsBefore][0] as FormData;
+    const poly = JSON.parse(String(fd.get("polygon"))) as [number, number][];
+    // X is untouched despite 200px of sideways travel; only the perpendicular part landed.
+    expect(poly[0][0]).toBeCloseTo(0.5, 6);
+    expect(poly[1][0]).toBeCloseTo(0.6, 6);
+    expect(poly[0][1]).toBeCloseTo(0.6, 6);
+  });
+
+  it("a mere CLICK on a wall commits nothing — it is not a drag", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI");
+
+    const edge = screen.getByTestId("edge-TRI-0");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(edge, { clientX: 400, clientY: 300, button: 0, pointerId: 33 });
+    fireEvent.pointerMove(svg, { clientX: 401, clientY: 301, pointerId: 33 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 401, clientY: 301, pointerId: 33 });
+    });
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+  });
+
+  it("offers a perpendicular resize cursor on each wall", () => {
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI");
+    // Edge 0 is horizontal, so you drag it up/down.
+    expect(screen.getByTestId("edge-TRI-0")).toHaveStyle({ cursor: "ns-resize" });
+  });
+
+  it("shows wall grabs only while the outline is being edited", () => {
+    renderCanvas(true);
+    enterEditMode();
+    expect(screen.queryByTestId("edge-TRI-0")).toBeNull();
+    editRoomOutline("TRI");
+    expect(screen.getByTestId("edge-TRI-0")).toBeInTheDocument();
+  });
+
+  it("Esc mid-drag abandons a wall drag: nothing commits", async () => {
+    const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
+    renderCanvas(true);
+    enterEditMode();
+    editRoomOutline("TRI");
+    const originalPoints = screen.getByTestId("plan-room-TRI").getAttribute("points");
+
+    const edge = screen.getByTestId("edge-TRI-0");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(edge, { clientX: 400, clientY: 300, button: 0, pointerId: 34 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 380, pointerId: 34 });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 380, pointerId: 34 });
+    });
+
+    expect(setRoomPolygonAction).toHaveBeenCalledTimes(callsBefore);
+    expect(screen.getByTestId("plan-room-TRI").getAttribute("points")).toBe(originalPoints);
+  });
+
   it("refuses to delete a vertex below 3 points, leaving the polygon unchanged", async () => {
     const callsBefore = vi.mocked(setRoomPolygonAction).mock.calls.length;
     renderCanvas(true);
@@ -1835,7 +1940,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     });
     fireEvent.pointerUp(svg, { clientX: 267, clientY: 71, pointerId: 1 });
     // The selected handle is the filled one.
-    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#2563eb");
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
 
     // Backspacing a typo out of the room's name must not delete a corner of its outline.
     const nameField = screen.getByTestId("proposal-name-room-0");
@@ -1843,7 +1948,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     expect(screen.getByTestId("proposal-vertex-room-0-3")).toBeInTheDocument();
     // Nor may Esc in a field drop the selection out from under the user.
     fireEvent.keyDown(nameField, { key: "Escape" });
-    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#2563eb");
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
 
     // The same keys still work when the plan itself has focus.
     await act(async () => {
