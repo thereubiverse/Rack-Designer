@@ -1835,7 +1835,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     });
     fireEvent.pointerUp(svg, { clientX: 267, clientY: 71, pointerId: 1 });
     // The selected handle is the filled one.
-    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#2563eb");
 
     // Backspacing a typo out of the room's name must not delete a corner of its outline.
     const nameField = screen.getByTestId("proposal-name-room-0");
@@ -1843,7 +1843,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
     expect(screen.getByTestId("proposal-vertex-room-0-3")).toBeInTheDocument();
     // Nor may Esc in a field drop the selection out from under the user.
     fireEvent.keyDown(nameField, { key: "Escape" });
-    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#d97706");
+    expect(screen.getByTestId("proposal-vertex-room-0-1").getAttribute("fill")).toBe("#2563eb");
 
     // The same keys still work when the plan itself has focus.
     await act(async () => {
@@ -2596,12 +2596,15 @@ describe("FloorPlanCanvas (symbol discovery)", () => {
     await waitFor(() => {
       const m = /translate\(([-\d.]+) ([-\d.]+)\) scale\(([\d.]+)\)/.exec(g()!)!;
       const [panX, panY, zoom] = [Number(m[1]), Number(m[2]), Number(m[3])];
-      // The proposal's own point ends up in the middle of the pane (870x560 in jsdom — see the
-      // fit-on-mount note above), at the focus zoom.
+      // Centred in the space LEFT OF THE PROPOSAL CARD, not the middle of the pane: the card floats
+      // over the right 344px (w-72 at right-14), so centring on 870/2 would put the thing you asked
+      // to see underneath the card you clicked it in. Pane is 870x560 in jsdom.
       expect(zoom).toBeCloseTo(2.5, 3);
-      expect(panX + 0.25 * 1200 * zoom).toBeCloseTo(870 / 2, 1);
+      expect(panX + 0.25 * 1200 * zoom).toBeCloseTo((870 - 344) / 2, 1);
       expect(panY + 0.75 * 800 * zoom).toBeCloseTo(560 / 2, 1);
-    });
+      // Generous timeout: this waits on a real 340ms rAF tween, and the 1s default has been seen
+      // to lose the race on a loaded machine.
+    }, { timeout: 4000 });
     expect(g()).not.toBe(before);
   });
 

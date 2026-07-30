@@ -71,6 +71,10 @@ const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute 
  *  plus a bit to be legible, whatever the pane happens to be sized to. */
 const FOCUS_ZOOM = 2.5;
 
+/** How much bigger than the room itself the fitted view is, so its own walls stay visible rather
+ *  than sitting exactly on the edge of the pane. */
+const FIT_ROOM_MARGIN = 1.25;
+
 // Fit-to-area easing — the SAME transition the rack designer's Fit toggle uses
 // (transform 340ms cubic-bezier(0.2, 0, 0, 1)), so the plan glides to the fitted view instead of
 // snapping. The rack canvas gets this from a CSS transition on its DOM transform; the plan's
@@ -135,13 +139,18 @@ const WALL_STROKE = "#0ea5e9";
 
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
+/** The deepened fill a committed room gets while selected — reused by a proposal being reshaped. */
+const ROOM_FILL_ACTIVE = "rgb(37 99 235 / 0.18)";
 
-// AI proposals are drawn in amber, dashed — deliberately NOT the committed blue, so a glance at the
-// plan separates "this is on the floor" from "the model thinks this is on the floor".
+// Proposed DEVICES stay amber: a ghost pin that looked identical to a placed one would invite
+// accepting a pin the user thought was already committed.
 const PROPOSAL_FILL = "rgb(245 158 11 / 0.12)";
-// The same amber, deepened, for the proposed room whose outline is being reshaped.
-const PROPOSAL_FILL_ACTIVE = "rgb(245 158 11 / 0.24)";
 const PROPOSAL_STROKE = "#d97706";
+
+/** Horizontal strip the proposal panel covers on the right: `w-72` (288px) at `right-14` (56px).
+ *  Focusing a proposal centres it in the space to the LEFT of that, not the middle of the pane —
+ *  otherwise the thing you asked to be shown lands underneath the card you clicked it in. */
+const PROPOSAL_PANEL_INSET_PX = 288 + 56;
 
 /** The view every child shape is positioned with: zero pan, unit zoom, so normToScreen(p, this)
  *  collapses to (nx * imgW, ny * imgH) — plain IMAGE-PIXEL space. See the coordinate-model
@@ -727,19 +736,57 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
    * Reuses the fit tween so this travels with the same easing as the Fit button rather than
    * teleporting.
    */
+  /** The pane MINUS the proposal card, which floats over the right-hand side. Focusing into the
+   *  full pane width puts the thing you asked to see behind the card you clicked it in. */
+  const focusViewport = useCallback(() => {
+    // The inset is unconditional: the only way to reach either focus helper is a dot inside the
+    // proposal card, so the card is on screen whenever they run. `Math.max` keeps the region usable
+    // if the pane is ever narrower than the card itself.
+    return { w: Math.max(220, paneW - PROPOSAL_PANEL_INSET_PX), h: paneH };
+  }, [paneW, paneH]);
+
   const focusOnPoint = useCallback(
     ([nx, ny]: NormPoint) => {
+      const { w, h } = focusViewport();
       const zoom = clampZoom(Math.max(viewRef.current.zoom, FOCUS_ZOOM));
       animateViewTo({
         zoom,
-        panX: paneW / 2 - nx * imgW * zoom,
-        panY: paneH / 2 - ny * imgH * zoom,
+        panX: w / 2 - nx * imgW * zoom,
+        panY: h / 2 - ny * imgH * zoom,
       });
       // The fit toggle's remembered view belongs to a fit, not to this — leaving it armed would
       // make the next Fit click restore a view the user never asked to come back to.
       setReturnView(null);
     },
-    [animateViewTo, clampZoom, paneW, paneH, imgW, imgH]
+    [animateViewTo, clampZoom, focusViewport, imgW, imgH]
+  );
+
+  /**
+   * Fit one proposed ROOM to the visible area — the room-shaped answer to "which one is this?".
+   *
+   * A room has extent, so centring it at a fixed zoom the way a device pin is centred would leave
+   * a large room half off-screen and a small one a speck. This fits its bounding box instead, into
+   * the region left of the proposal card, with a margin so the walls around it stay in view.
+   */
+  const fitToPolygon = useCallback(
+    (polygon: NormPoint[]) => {
+      if (polygon.length === 0) return;
+      const xs = polygon.map((p) => p[0] * imgW);
+      const ys = polygon.map((p) => p[1] * imgH);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const bw = Math.max(1, maxX - minX);
+      const bh = Math.max(1, maxY - minY);
+      const { w, h } = focusViewport();
+      const zoom = clampZoom(Math.min(w / (bw * FIT_ROOM_MARGIN), h / (bh * FIT_ROOM_MARGIN)));
+      animateViewTo({
+        zoom,
+        panX: w / 2 - ((minX + maxX) / 2) * zoom,
+        panY: h / 2 - ((minY + maxY) / 2) * zoom,
+      });
+      setReturnView(null);
+    },
+    [animateViewTo, clampZoom, focusViewport, imgW, imgH]
   );
 
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
@@ -2572,8 +2619,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                         return `${s.x},${s.y}`;
                       })
                       .join(" ")}
-                    fill={outlining ? PROPOSAL_FILL_ACTIVE : PROPOSAL_FILL}
-                    stroke={PROPOSAL_STROKE}
+                    // Same blue as a committed room — a proposal is a room you are about to keep,
+                    // and reviewing it against differently-coloured neighbours made it read as a
+                    // different KIND of thing. The dash is what still says "not saved yet".
+                    fill={outlining ? ROOM_FILL_ACTIVE : ROOM_FILL}
+                    stroke={ROOM_STROKE}
                     strokeWidth={(outlining ? 3 : 2) / view.zoom}
                     strokeDasharray={`${6 / view.zoom} ${4 / view.zoom}`}
                   />
@@ -2592,8 +2642,8 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                           cx={pos.x}
                           cy={pos.y}
                           r={6 / view.zoom}
-                          fill={selected ? PROPOSAL_STROKE : "#ffffff"}
-                          stroke={PROPOSAL_STROKE}
+                          fill={selected ? ROOM_STROKE : "#ffffff"}
+                          stroke={ROOM_STROKE}
                           strokeWidth={2 / view.zoom}
                           // stopPropagation, or this drag would also pan the canvas — and stands
                           // down while a placement/trace gesture is aiming at the plan.
@@ -2622,7 +2672,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                           cx={pos.x}
                           cy={pos.y}
                           r={4 / view.zoom}
-                          fill={PROPOSAL_STROKE}
+                          fill={ROOM_STROKE}
                           opacity={0.55}
                           onPointerDown={ghostInteractive ? (e) => e.stopPropagation() : undefined}
                           onClick={
@@ -2648,7 +2698,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                         textAnchor="middle"
                         fontSize={12}
                         fontWeight={700}
-                        fill={PROPOSAL_STROKE}
+                        fill={ROOM_STROKE}
                         stroke="#ffffff"
                         strokeWidth={3}
                         paintOrder="stroke"
@@ -3130,6 +3180,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             }}
             onAcceptDevice={(dp) => void acceptOne(() => acceptDevice(dp))}
             onFocusDevice={(dp) => focusOnPoint(dp.point)}
+            onFocusRoom={(rp) => fitToPolygon(rp.polygon)}
             onAcceptRoom={(rp) => void acceptOne(() => acceptRoom(rp))}
             onDismissDevice={dropDevice}
             onDismissRoom={dropRoom}

@@ -68,6 +68,8 @@ export interface ProposalPanelProps {
   onAcceptDevice: (dp: DeviceProposal) => void;
   /** Centre and zoom the plan on a proposed device — the dot beside the row is the control. */
   onFocusDevice?: (dp: DeviceProposal) => void;
+  /** Fit a proposed room to the visible area. A room has extent, so it is fitted, not centred. */
+  onFocusRoom?: (rp: RoomProposal) => void;
   onAcceptRoom: (rp: RoomProposal) => void;
   onDismissDevice: (id: string) => void;
   onDismissRoom: (id: string) => void;
@@ -86,6 +88,7 @@ export function ProposalPanel({
   onToggleRoomOutline,
   onAcceptDevice,
   onFocusDevice,
+  onFocusRoom,
   onAcceptRoom,
   onDismissDevice,
   onDismissRoom,
@@ -134,7 +137,11 @@ export function ProposalPanel({
             data-testid={`proposal-item-${rp.id}`}
             className="flex items-start gap-1.5 rounded-xl px-1 py-1.5 hover:bg-neutral-50"
           >
-            <ConfidenceDot id={rp.id} confidence={rp.confidence} />
+            <ConfidenceDot
+              id={rp.id}
+              confidence={rp.confidence}
+              onFocus={onFocusRoom ? () => onFocusRoom(rp) : undefined}
+            />
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <input
                 data-testid={`proposal-name-${rp.id}`}
