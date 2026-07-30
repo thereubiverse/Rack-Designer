@@ -70,6 +70,19 @@ export function polygonCentroid(polygon: NormPoint[]): NormPoint {
   ];
 }
 
+/** Ray casting, in normalized plan space. A point exactly on an edge is not guaranteed either way —
+ *  callers here are testing device points against room outlines, where a tie is arbitrary anyway. */
+export function pointInPolygon(point: NormPoint, polygon: NormPoint[]): boolean {
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 /** THE both-non-null rule, in one place. `!= null`, never falsy — x === 0 is a real placement. */
 export function partitionPlacement<T extends { x: number | null; y: number | null }>(
   items: T[]

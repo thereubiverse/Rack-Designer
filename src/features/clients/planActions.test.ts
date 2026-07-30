@@ -11,10 +11,12 @@ vi.mock("./planStorage", () => ({
   uploadPlanObject: vi.fn(),
   createPlanSignedUrl: vi.fn(),
   removePlanObject: vi.fn(),
+  uploadPlanPdf: vi.fn(),
+  removePlanPdf: vi.fn(),
 }));
 
 import { createServiceClient } from "@/lib/supabase/server";
-import { uploadPlanObject, removePlanObject } from "./planStorage";
+import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf } from "./planStorage";
 import { uploadFloorPlanAction, deleteFloorPlanAction } from "./actions";
 
 type SelectResult = { data: unknown; error: Error | null } | Promise<never>;
@@ -140,7 +142,7 @@ function makeFakeFormData(fields: Record<string, unknown>): FormData {
 }
 
 function uploadForm(
-  overrides: { floorId?: string; file?: unknown; source?: string; extra?: Record<string, string> } = {}
+  overrides: { floorId?: string; file?: unknown; source?: string; extra?: Record<string, unknown> } = {}
 ): FormData {
   return makeFakeFormData({
     floorId: overrides.floorId ?? "f1",
@@ -160,6 +162,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(uploadPlanObject).mockResolvedValue(undefined);
   vi.mocked(removePlanObject).mockResolvedValue(undefined);
+  vi.mocked(uploadPlanPdf).mockResolvedValue(undefined);
+  vi.mocked(removePlanPdf).mockResolvedValue(undefined);
 });
 
 describe("uploadFloorPlanAction", () => {
@@ -232,6 +236,110 @@ describe("uploadFloorPlanAction", () => {
     expect(res.ok).toBe(false);
     expect(uploadPlanObject).not.toHaveBeenCalled();
   });
+
+  it("uploads a pdf blob alongside the PNG, storing its path and page in the same upsert", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const pdfBytes = hexToBytes(NOT_PNG_HEX); // arbitrary bytes — the action never parses the PDF
+    const pdfBlob = makeBlobLike(pdfBytes, "plan.pdf");
+
+    const res = await uploadFloorPlanAction(
+      uploadForm({ extra: { pdf: pdfBlob, pdfPage: "2" } })
+    );
+
+    expect(res).toEqual({ ok: true });
+
+    expect(uploadPlanPdf).toHaveBeenCalledTimes(1);
+    const [calledDb, calledPath, calledBytes] = vi.mocked(uploadPlanPdf).mock.calls[0];
+    expect(calledDb).toBe(db);
+    expect(calledPath).toBe("SITE-A/f1.pdf");
+    expect(calledBytes).toEqual(pdfBytes);
+
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({
+      pdf_storage_path: "SITE-A/f1.pdf",
+      pdf_page: 2,
+    });
+  });
+
+  it("accepts pdfPage 0 as a real page index, not as falsy/absent", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
+    const res = await uploadFloorPlanAction(uploadForm({ extra: { pdf: pdfBlob, pdfPage: "0" } }));
+
+    expect(res).toEqual({ ok: true });
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({ pdf_page: 0 });
+  });
+
+  it("uploads with no pdf blob: uploadPlanPdf is never called and the row gets pdf_storage_path null", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await uploadFloorPlanAction(uploadForm());
+
+    expect(res).toEqual({ ok: true });
+    expect(uploadPlanPdf).not.toHaveBeenCalled();
+
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({ pdf_storage_path: null, pdf_page: null });
+  });
+
+  it("still returns ok and keeps the PNG when the PDF upload fails, falling back to no stored PDF", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(uploadPlanPdf).mockRejectedValue(new Error("Storage down"));
+
+    const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
+    const res = await uploadFloorPlanAction(uploadForm({ extra: { pdf: pdfBlob, pdfPage: "1" } }));
+
+    // A PDF failure must never lose, block, or roll back the PNG that already landed.
+    expect(res).toEqual({ ok: true });
+    expect(uploadPlanObject).toHaveBeenCalledTimes(1);
+
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({ pdf_storage_path: null });
+  });
+
+  it("treats a non-numeric pdfPage as absent rather than throwing", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await uploadFloorPlanAction(uploadForm({ extra: { pdfPage: "abc" } }));
+
+    expect(res).toEqual({ ok: true });
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({ pdf_page: null });
+  });
+
+  it("treats a negative or non-integer pdfPage as absent rather than throwing", async () => {
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const resNegative = await uploadFloorPlanAction(uploadForm({ extra: { pdfPage: "-1" } }));
+    expect(resNegative).toEqual({ ok: true });
+    expect(upsertCalls.find((c) => c.table === "floor_plans")?.values).toMatchObject({ pdf_page: null });
+
+    upsertCalls.length = 0;
+    const resFraction = await uploadFloorPlanAction(uploadForm({ extra: { pdfPage: "1.5" } }));
+    expect(resFraction).toEqual({ ok: true });
+    expect(upsertCalls.find((c) => c.table === "floor_plans")?.values).toMatchObject({ pdf_page: null });
+  });
 });
 
 describe("deleteFloorPlanAction", () => {
@@ -283,5 +391,76 @@ describe("deleteFloorPlanAction", () => {
     expect(deleteCalls.find((c) => c.table === "floor_plans")?.filters).toEqual({ floor_id: "floor-77" });
     expect(updateCalls.find((c) => c.table === "floor_devices")?.filters).toEqual({ floor_id: "floor-77" });
     expect(updateCalls.find((c) => c.table === "rooms")?.filters).toEqual({ floor_id: "floor-77" });
+  });
+
+  it("still clears the row and both placement fields even when the PDF removal fails", async () => {
+    const { db, deleteCalls, updateCalls } = makeFakeDb({
+      floor_plans: {
+        selectResult: () => ({
+          data: {
+            id: "plan-1",
+            floor_id: "f1",
+            storage_path: "SITE-A/f1.png",
+            width_px: 640,
+            height_px: 480,
+            original_filename: "plan.pdf",
+            source: "pdf",
+            created_at: "",
+            updated_at: "",
+            pdf_storage_path: "SITE-A/f1.pdf",
+            pdf_page: 2,
+            wall_runs: null,
+            plan_labels: null,
+            geometry_extracted_at: null,
+          },
+          error: null,
+        }),
+      },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(removePlanPdf).mockRejectedValue(new Error("Object not found"));
+
+    const res = await deleteFloorPlanAction(deleteForm("f1"));
+
+    expect(res).toEqual({ ok: true });
+    expect(removePlanPdf).toHaveBeenCalledWith(db, "SITE-A/f1.pdf");
+
+    expect(deleteCalls.find((c) => c.table === "floor_plans")).toEqual({ table: "floor_plans", filters: { floor_id: "f1" } });
+    const deviceUpdate = updateCalls.find((c) => c.table === "floor_devices");
+    expect(deviceUpdate?.values).toEqual({ x: null, y: null });
+    const roomUpdate = updateCalls.find((c) => c.table === "rooms");
+    expect(roomUpdate?.values).toEqual({ plan_polygon: null });
+  });
+
+  it("does not call removePlanPdf when the plan has no stored PDF", async () => {
+    const { db } = makeFakeDb({
+      floor_plans: {
+        selectResult: () => ({
+          data: {
+            id: "plan-1",
+            floor_id: "f1",
+            storage_path: "SITE-A/f1.png",
+            width_px: 640,
+            height_px: 480,
+            original_filename: "plan.png",
+            source: "image",
+            created_at: "",
+            updated_at: "",
+            pdf_storage_path: null,
+            pdf_page: null,
+            wall_runs: null,
+            plan_labels: null,
+            geometry_extracted_at: null,
+          },
+          error: null,
+        }),
+      },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await deleteFloorPlanAction(deleteForm("f1"));
+
+    expect(res).toEqual({ ok: true });
+    expect(removePlanPdf).not.toHaveBeenCalled();
   });
 });

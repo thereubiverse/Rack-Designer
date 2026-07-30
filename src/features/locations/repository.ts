@@ -9,6 +9,8 @@ import type {
   RackRow,
   FloorDeviceRow,
   FloorPlanRow,
+  WallRun,
+  PlanLabel,
 } from "@/lib/supabase/types";
 
 export async function createSite(
@@ -224,6 +226,12 @@ export async function upsertFloorPlan(
     heightPx: number;
     originalFilename: string;
     source: "image" | "pdf";
+    /** The retained source PDF (Slice D). Both are optional/nullable: a plan without geometry
+     *  support is a perfectly working plan, so callers pass `null` (not omit) when the PDF upload
+     *  failed or none was sent. `pdfPage` of `0` is a real, valid page index — never coerce with
+     *  `||`, only `??`. */
+    pdfStoragePath?: string | null;
+    pdfPage?: number | null;
   }
 ): Promise<FloorPlanRow> {
   const { data: floor, error: floorErr } = await db.from("floors").select("id").eq("id", input.floorId).single();
@@ -238,6 +246,8 @@ export async function upsertFloorPlan(
         height_px: input.heightPx,
         original_filename: input.originalFilename,
         source: input.source,
+        pdf_storage_path: input.pdfStoragePath ?? null,
+        pdf_page: input.pdfPage ?? null,
       },
       { onConflict: "floor_id" }
     )
@@ -317,4 +327,22 @@ export async function clearRoomPolygon(db: SupabaseClient, roomId: string): Prom
   const { error } = await db.from("rooms")
     .update({ plan_polygon: null }).eq("id", roomId);
   if (error) throw new Error(`clearRoomPolygon: ${error.message}`);
+}
+
+/** Persists the geometry Slice D's PDF extraction pass produced (Task 3), and stamps
+ *  geometry_extracted_at so callers can tell an extracted plan from one still awaiting it. */
+export async function saveFloorPlanGeometry(
+  db: SupabaseClient,
+  floorId: string,
+  input: { walls: WallRun[]; labels: PlanLabel[] }
+): Promise<void> {
+  const { error } = await db
+    .from("floor_plans")
+    .update({
+      wall_runs: input.walls,
+      plan_labels: input.labels,
+      geometry_extracted_at: new Date().toISOString(),
+    })
+    .eq("floor_id", floorId);
+  if (error) throw new Error(`saveFloorPlanGeometry: ${error.message}`);
 }

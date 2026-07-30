@@ -33,3 +33,19 @@ export async function downloadPlanObject(db: SupabaseClient, path: string): Prom
   if (error || !data) throw new Error(`downloadPlanObject: ${error?.message ?? "no data"}`);
   return new Uint8Array(await data.arrayBuffer());
 }
+
+const PDF_CONTENT_TYPE = "application/pdf";
+
+/** The original upload, retained so geometry can be re-extracted when the wall filter improves. */
+export async function uploadPlanPdf(db: SupabaseClient, path: string, bytes: Uint8Array): Promise<void> {
+  const { error } = await db.storage.from(BUCKET).upload(path, bytes, {
+    upsert: true,
+    contentType: PDF_CONTENT_TYPE,
+  });
+  if (error) throw new Error(`uploadPlanPdf: ${error.message}`);
+}
+
+export async function removePlanPdf(db: SupabaseClient, path: string): Promise<void> {
+  const { error } = await db.storage.from(BUCKET).remove([path]);
+  if (error) throw new Error(`removePlanPdf: ${error.message}`);
+}

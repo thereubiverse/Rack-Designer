@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   forwardRef,
@@ -13,7 +14,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@iconify/react";
 import { IconButton } from "./IconButton";
-import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import { PlanVectorLayer } from "./PlanVectorLayer";
+import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import { resolveTypeIcon, resolveTypeColor } from "@/features/device-library/deviceTypeIcons";
 import type { SiteRackRow } from "./repository";
@@ -39,10 +41,17 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { RoomProposal, DeviceProposal } from "./planDetect";
-import { planDeviceCommit, planRoomCommit } from "./planProposals";
+import {
+  numberDeviceProposals,
+  orderDeviceProposals,
+  planDeviceCommit,
+  planRoomCommit,
+} from "./planProposals";
 import { normaliseCode } from "./validation";
 import { ProposalPanel } from "./ProposalPanel";
+import { deriveWallCorners } from "./planGeometry";
 
 // A press that travels less than this counts as a tap (select), not a pan. Enough to absorb the
 // pointer drift every physical click carries, small enough that a deliberate pan never selects.
@@ -56,6 +65,11 @@ const FALLBACK_PANE_HEIGHT = 560;
 
 const ZOOM_MAX = 8;
 const ZOOM_MIN_FACTOR = 0.5; // the floor is fit * this factor, not an absolute number
+
+/** Zoom used when a proposal row asks "show me where this is". Absolute, not a multiple of fit:
+ *  the symbols this reveals are ~14px on the 2600px-wide render, so they need roughly 1:1 pixels
+ *  plus a bit to be legible, whatever the pane happens to be sized to. */
+const FOCUS_ZOOM = 2.5;
 
 // Fit-to-area easing — the SAME transition the rack designer's Fit toggle uses
 // (transform 340ms cubic-bezier(0.2, 0, 0, 1)), so the plan glides to the fitted view instead of
@@ -111,6 +125,14 @@ const POLYGON_DEDUPE_EPSILON = 1e-3;
 // vertex jumps to it exactly, so rooms that share a wall meet on the same corners at any zoom.
 const SNAP_PX = 12;
 
+// The default for "this plan has no extracted geometry", shared rather than written inline so a
+// caller that omits the prop doesn't allocate a throwaway array on every render. (Nothing here
+// depends on its IDENTITY — the component isn't memoised, and SiteDetail passes its own literal.)
+const NO_WALL_RUNS: WallRun[] = [];
+// The wall overlay's ink: sky-500, half-opaque. Deliberately NOT the rooms' blue — an extracted
+// wall is context the user traces ONTO, never a committed shape on the floor.
+const WALL_STROKE = "#0ea5e9";
+
 const ROOM_FILL = "rgb(59 130 246 / 0.10)";
 const ROOM_STROKE = "#2563eb";
 
@@ -132,6 +154,26 @@ interface LiveView {
   panX: number;
   panY: number;
   zoom: number;
+}
+
+/** The slice of the plan currently on screen, in PLAN (image-pixel) coordinates.
+ *
+ *  Inverts the one live transform: a screen point s maps back to (s - pan) / zoom, so the pane's
+ *  top-left corner is at (-panX / zoom, -panY / zoom) and the pane spans paneW/zoom by paneH/zoom
+ *  plan pixels. May extend outside 0..imgW / 0..imgH when the plan doesn't fill the pane; the
+ *  consumer clips.
+ *
+ *  Fed to PlanVectorLayer, which rasterises only this region from the source PDF so sharpness stops
+ *  being bounded by the size of the SHEET. This component is the only thing that knows both the
+ *  live pan/zoom and the measured pane, so it is the only place this may be computed — the layer
+ *  deliberately does not re-derive it. */
+function visiblePlanRect(view: LiveView, paneW: number, paneH: number) {
+  return {
+    visX: -view.panX / view.zoom,
+    visY: -view.panY / view.zoom,
+    visW: paneW / view.zoom,
+    visH: paneH / view.zoom,
+  };
 }
 
 /** A vertex being dragged, or a vertex just committed via insert-on-edge, superimposed over the
@@ -481,6 +523,12 @@ export interface FloorPlanCanvasHandle {
 interface FloorPlanCanvasProps {
   plan: FloorPlanRow;
   planUrl: string;
+  /** Signed URL of the RETAINED SOURCE PDF, when there is one. Present → the plan is drawn as live
+   *  vector at the current zoom (`PlanVectorLayer`) instead of stretching the fixed-size PNG.
+   *  Absent (image uploads, PDFs whose retention failed) → exactly the `<image>` path as before. */
+  pdfUrl?: string | null;
+  /** 0-based page the plan came from. Ignored without `pdfUrl`; defaults to the first page. */
+  pdfPage?: number | null;
   rooms: RoomRow[];
   devices: FloorDeviceRow[];
   racks: SiteRackRow[];
@@ -489,6 +537,10 @@ interface FloorPlanCanvasProps {
    *  code)`, so this is the space a generated code has to avoid; `devices` above stays floor-scoped
    *  because it is what the plan draws and matches against. */
   allSiteDeviceCodes: string[];
+  /** Wall geometry extracted from the plan's source PDF, normalized 0..1 like every other point
+   *  here. Empty for image-sourced plans and for PDFs whose extraction hasn't run — in which case
+   *  this component behaves exactly as it did before walls existed. */
+  wallRuns?: WallRun[];
   editable: boolean;
   /** Plan-level controls (Replace / Delete plan) rendered into the pane's top-left toolbar,
    *  beneath the Edit-layout toggle. Supplied by SiteDetail because it owns the upload pipeline and
@@ -508,11 +560,14 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     {
       plan,
       planUrl,
+      pdfUrl,
+      pdfPage,
       rooms,
       devices,
       racks,
       deviceTypes,
       allSiteDeviceCodes,
+      wallRuns = NO_WALL_RUNS,
       editable,
       planTools,
       onRoomTraced,
@@ -522,6 +577,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   ) {
   const imgW = plan.width_px;
   const imgH = plan.height_px;
+
+  // A PDF that failed to load or render (dead signed URL, corrupt file) drops back to the PNG for
+  // the rest of this URL's life — a slightly soft plan is recoverable, a blank one is not. Keyed by
+  // URL rather than a boolean so a refreshed signed URL gets a clean try.
+  const [failedPdfUrl, setFailedPdfUrl] = useState<string | null>(null);
+  const useVectorPlan = !!pdfUrl && failedPdfUrl !== pdfUrl;
 
   const paneRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -657,6 +718,30 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setReturnView(moved ? before : null);
   }, [returnView, paneW, paneH, imgW, imgH, animateViewTo]);
 
+  /**
+   * Centre the plan on one normalized point and zoom in far enough to see what is drawn there —
+   * the answer to "which of these nineteen is this row?".
+   *
+   * Never zooms OUT: a search can return a symbol the user is already inspecting closely, and
+   * yanking the view back to a fixed zoom to "focus" it would lose the detail they were reading.
+   * Reuses the fit tween so this travels with the same easing as the Fit button rather than
+   * teleporting.
+   */
+  const focusOnPoint = useCallback(
+    ([nx, ny]: NormPoint) => {
+      const zoom = clampZoom(Math.max(viewRef.current.zoom, FOCUS_ZOOM));
+      animateViewTo({
+        zoom,
+        panX: paneW / 2 - nx * imgW * zoom,
+        panY: paneH / 2 - ny * imgH * zoom,
+      });
+      // The fit toggle's remembered view belongs to a fit, not to this — leaving it armed would
+      // make the next Fit click restore a view the user never asked to come back to.
+      setReturnView(null);
+    },
+    [animateViewTo, clampZoom, paneW, paneH, imgW, imgH]
+  );
+
   // Native (non-passive) wheel listener: React's onWheel is attached passively, which silently
   // ignores preventDefault(), so a plain React handler here could not stop the page from
   // scrolling underneath the plan while the user zooms it.
@@ -680,6 +765,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   const [error, setError] = useState<string | null>(null);
   // When on, pin/rack code labels are hidden until that marker is hovered (declutters a busy plan).
   const [labelsOnHover, setLabelsOnHover] = useState(false);
+  // When on, the walls extracted from the source PDF are drawn under the floor's own shapes — so
+  // the snap targets are visible rather than guessed at, and a glance confirms extraction worked.
+  const [showWalls, setShowWalls] = useState(false);
 
   // ---- Tray selection / active gesture mode (mutually exclusive) ----
   const [placingDeviceId, setPlacingDeviceId] = useState<string | null>(null);
@@ -719,7 +807,22 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     devices: [],
   });
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [discovering, setDiscovering] = useState<null | "rooms" | "devices">(null);
+  // True once "Discover devices" has been chosen: the wizard menu swaps its two-item list for the
+  // device-type submenu the symbol flow starts from. Always reset with the menu itself, so the
+  // next open starts at the top level rather than mid-drill.
+  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
+  // The device-type CODE pick mode is armed for, or null. Non-null is a live gesture mode in
+  // exactly the sense creatingRoom/creatingDevice are, and gates the same things they do.
+  const [symbolType, setSymbolType] = useState<string | null>(null);
+  // The symbol the last click resolved to: its NORMALIZED bounds (straight from the server's
+  // vector hit-test) and the type the search will run for. Non-null means the highlight and its
+  // Search/Cancel affordance are showing — nothing has been searched yet.
+  const [symbolPick, setSymbolPick] = useState<
+    { box: { x: number; y: number; w: number; h: number }; typeCode: string } | null
+  >(null);
+  // True while the hit-test is in flight, so a second click can't queue a second one.
+  const [picking, setPicking] = useState(false);
+  const [discovering, setDiscovering] = useState<null | "rooms" | "devices" | "symbols">(null);
   // Either a pass-outcome sentinel the notice renders specially ("no-key" from the action, or the
   // local "none-found"), or an error string to show verbatim.
   const [wizardNotice, setWizardNotice] = useState<string | null>(null);
@@ -807,6 +910,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setProposalRoomEditId(null);
     setSelectedProposalVertex(null);
     setWizardNotice(null);
+    // A pick armed against the previous floor would search THIS floor's plan for a symbol the user
+    // clicked on another one.
+    setSymbolPick(null);
+    setSymbolType(null);
     // The pending rows go too: they are pruned by CONTENT against this floor's props, so one left
     // over from the previous floor could never be pruned again — and could match a proposal here
     // into a PLACE against another floor's device.
@@ -820,11 +927,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   // outside both.
   useEffect(() => {
     if (!wizardOpen) return;
+    // Closing always drops the device-type drill-down too, so the next open starts at the top.
+    const close = () => {
+      setWizardOpen(false);
+      setSymbolMenuOpen(false);
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setWizardOpen(false);
+      if (e.key === "Escape") close();
     };
     const onDown = (e: PointerEvent) => {
-      if (!wizardRef.current?.contains(e.target as Node)) setWizardOpen(false);
+      if (!wizardRef.current?.contains(e.target as Node)) close();
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
@@ -841,6 +953,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     // could hand a freshly staged proposal the id the accept is about to drop.
     if (accepting) return;
     setWizardOpen(false);
+    setSymbolMenuOpen(false);
     setWizardNotice(null);
     // Proposal ids are per-pass and index-based ("room-0"), so a re-run can hand the SAME id to a
     // different shape. Drop the geometry selections rather than let them re-point silently.
@@ -862,9 +975,126 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           setWizardNotice(res.error);
           return;
         }
+        // NOT renumbered, unlike the symbol search below. This pass reads the sheet's own equipment
+        // tags, and those labels are the point of it — they are how an `AC-C-1` proposal finds the
+        // existing `AC-C-1` in the inventory and places it instead of creating a second one.
         setProposals((p) => ({ ...p, devices: res.proposals }));
         if (res.proposals.length === 0) setWizardNotice("none-found");
       }
+    } finally {
+      setDiscovering(null);
+    }
+  }
+
+  /** Close the wizard and enter pick mode for one device type. Clears the geometry selections the
+   *  same way runDiscovery does — proposal ids are per-pass, so a stale selection would silently
+   *  re-point at a different shape — and drops the committed selections too, because the pins and
+   *  vertices they belong to stand down for the duration of the gesture. */
+  function armSymbolSelect(typeCode: string) {
+    if (accepting || discovering != null) return;
+    setWizardOpen(false);
+    setSymbolMenuOpen(false);
+    setWizardNotice(null);
+    setProposalRoomEditId(null);
+    setSelectedProposalVertex(null);
+    setSelectedPinId(null);
+    setSelectedRackId(null);
+    setSelectedRoomId(null);
+    setEditingRoomId(null);
+    setSelectedVertex(null);
+    // The gesture modes are mutually exclusive — arming this one ends any place/trace in progress
+    // rather than leaving two handlers competing for the same press.
+    setPlacingDeviceId(null);
+    setPlacingRackId(null);
+    setDrawingRoomId(null);
+    setCreatingRoom(false);
+    setCreatingDevice(false);
+    setDrawPoints([]);
+    setHoverPoint(null);
+    setSnapTarget(null);
+    setSymbolPick(null);
+    setSymbolType(typeCode);
+  }
+
+  /** Leave the symbol flow entirely (Esc, or a floor change): the mode AND any highlighted pick,
+   *  so nothing is left on screen offering to search for a symbol the user has walked away from. */
+  function cancelSymbolSelect() {
+    setSymbolPick(null);
+    setSymbolType(null);
+  }
+
+  /** Resolve one click to the symbol's own vector paths. On success the bounds are HELD, not
+   *  searched: the user confirms first, so a bad pick costs a click rather than a full-sheet
+   *  correlation. On failure the message shows and pick mode stays armed, so the next click simply
+   *  tries again. Never throws — the action returns `{ ok: false, error }` for every failure. */
+  async function runSymbolPick(typeCode: string, point: NormPoint) {
+    // Never while an accept is in flight, and never twice at once — same reasoning as runDiscovery.
+    if (accepting || picking) return;
+    setPicking(true);
+    setWizardNotice(null);
+    // A previous highlight goes the moment a new click is being resolved, so the box on screen
+    // always belongs to the click the user just made.
+    setSymbolPick(null);
+    try {
+      const res = await pickSymbolAction({
+        floorId: plan.floor_id,
+        point: { x: point[0], y: point[1] },
+      });
+      if (!res.ok) {
+        setWizardNotice(res.error);
+        return;
+      }
+      setSymbolPick({ box: res.box, typeCode });
+    } finally {
+      setPicking(false);
+    }
+  }
+
+  /** Confirm the highlighted pick: this is the ONLY thing that starts a search. The gesture ends
+   *  here — the review panel takes over from the proposals. */
+  function confirmSymbolPick() {
+    const pick = symbolPick;
+    if (!pick || discovering != null || accepting) return;
+    setSymbolPick(null);
+    setSymbolType(null);
+    void runSymbolSearch(pick.typeCode, pick.box);
+  }
+
+  /** Reject the highlighted pick and go back to pick mode — the user aims at a different symbol.
+   *  Deliberately NOT a full cancel: the chosen device type survives. */
+  function cancelSymbolPick() {
+    setSymbolPick(null);
+    setWizardNotice(null);
+  }
+
+  /** Run one symbol search and park its hits in `proposals.devices` — the SAME slot the AI pass
+   *  fills, so the review panel, ghost pins and accept path all work unchanged. Never throws: the
+   *  action returns `{ ok: false, error }` for every failure. */
+  async function runSymbolSearch(typeCode: string, box: { x: number; y: number; w: number; h: number }) {
+    // Never while an accept is in flight — same reason runDiscovery refuses: proposal ids are
+    // index-based, so a pass landing mid-accept could hand a fresh proposal the id the accept is
+    // about to drop.
+    if (accepting) return;
+    setDiscovering("symbols");
+    setWizardNotice(null);
+    try {
+      const res = await discoverSymbolsAction({ floorId: plan.floor_id, box, typeCode });
+      if (!res.ok) {
+        setWizardNotice(res.error);
+        return;
+      }
+      // Ordered BEFORE numbering, so the numbers themselves run room by room and along each wall —
+      // on site the number is what identifies the port you are standing at, and match order is
+      // arbitrary. Numbered here, not in the action: the code space is site-wide and only the
+      // client holds it.
+      const numbered = numberDeviceProposals(
+        // imgW/imgH so "nearest room" is measured on the sheet, not in normalized units where
+        // one unit of X and one of Y are different distances.
+        orderDeviceProposals(res.proposals, rooms, imgW / imgH),
+        siteCodesRef.current
+      );
+      setProposals((p) => ({ ...p, devices: numbered }));
+      if (numbered.length === 0) setWizardNotice("none-found");
     } finally {
       setDiscovering(null);
     }
@@ -1198,6 +1428,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     [view, imgW, imgH]
   );
 
+  // Real room corners, derived from the wall runs ONCE and memoised. `deriveWallCorners` is O(n²)
+  // over every pair of runs — 704 runs is ~247k pairs, fine as a one-off but never something to run
+  // per pointermove, which is why this lives in a `useMemo` keyed on `wallRuns` rather than inside
+  // `snapToWallIntersection` below. `wallRuns` is normalized 0..1; `deriveWallCorners` works in PAGE
+  // PIXELS (its overshoot/dedupe tolerances are pixel quantities), so runs are scaled up to imgW ×
+  // imgH going in, and the normalized 0..1 result comes back out unchanged.
+  const wallCorners = useMemo<NormPoint[]>(() => {
+    if (wallRuns.length === 0) return [];
+    const pixelRuns = wallRuns.map((w) => ({
+      x1: w.x1 * imgW, y1: w.y1 * imgH,
+      x2: w.x2 * imgW, y2: w.y2 * imgH,
+    }));
+    return deriveWallCorners(pixelRuns, imgW, imgH);
+  }, [wallRuns, imgW, imgH]);
+
   // Candidate snap points: every vertex of every OTHER outlined room on this floor. The room being
   // re-outlined (drawingRoomId) is excluded so a trace never snaps to its own corners; a brand-new
   // room (creatingRoom) has no id, so nothing is excluded.
@@ -1263,9 +1508,99 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     return best;
   }
 
-  /** Snap a traced point: prefer an exact existing corner, else a point on an existing wall. */
+  /** Nearest ENDPOINT of any extracted wall run within SNAP_PX, or null. Wall runs meet at their
+   *  endpoints, so an endpoint is where a real corner of a real room is — a far more valuable
+   *  target than an arbitrary point mid-run, which is why this outranks both line snaps below. */
+  function snapToWallCorner(n: NormPoint): NormPoint | null {
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const w of wallRuns) {
+      const d1 = Math.hypot(toScreenX(w.x1 - n[0]), toScreenY(w.y1 - n[1]));
+      if (d1 < bestDist) {
+        bestDist = d1;
+        best = [w.x1, w.y1];
+      }
+      const d2 = Math.hypot(toScreenX(w.x2 - n[0]), toScreenY(w.y2 - n[1]));
+      if (d2 < bestDist) {
+        bestDist = d2;
+        best = [w.x2, w.y2];
+      }
+    }
+    return best;
+  }
+
+  /** Nearest true WALL INTERSECTION (two wall runs actually crossing) within SNAP_PX, or null —
+   *  ranked above `snapToWallCorner` below. A run's raw endpoint is wherever extraction happened to
+   *  stop, often mid-wall; an intersection is where two walls actually meet, which is what a real
+   *  room corner is. Picks the NEAREST corner in `wallCorners`, not the first one within range, the
+   *  same "nearest wins" contract every other snap function here follows. */
+  function snapToWallIntersection(n: NormPoint): NormPoint | null {
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const c of wallCorners) {
+      const dist = Math.hypot(toScreenX(c[0] - n[0]), toScreenY(c[1] - n[1]));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /** Nearest point ON an extracted wall run within SNAP_PX, or null — the same point-to-segment
+   *  projection snapToEdge uses (clamped to t ∈ [0,1]), against the PDF's wall geometry instead of
+   *  an already-outlined room. Last in the chain: a wall's line is the weakest of the four targets.
+   *
+   *  ~1k runs are scanned per pointermove. Measured: both wall scans together cost 0.05 ms over
+   *  1,014 runs — 0.3% of a 16.7 ms frame — so this stays a plain linear scan. A spatial index
+   *  would be one more structure to keep in sync with the plan for no measurable gain. */
+  function snapToWallLine(n: NormPoint): NormPoint | null {
+    const px = toScreenX(n[0]);
+    const py = toScreenY(n[1]);
+    let best: NormPoint | null = null;
+    let bestDist = SNAP_PX;
+    for (const w of wallRuns) {
+      const ax = toScreenX(w.x1);
+      const ay = toScreenY(w.y1);
+      const bx = toScreenX(w.x2);
+      const by = toScreenY(w.y2);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+      const cx = ax + t * dx;
+      const cy = ay + t * dy;
+      const dist = Math.hypot(px - cx, py - cy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = [cx / (imgW * view.zoom), cy / (imgH * view.zoom)];
+      }
+    }
+    return best;
+  }
+
+  /** Snap a traced point, strongest target first: an existing room's corner, then a true wall
+   *  intersection, then a wall run's raw endpoint, then a point on an existing room's wall, then a
+   *  point on a wall run.
+   *
+   *  Existing ROOM geometry deliberately outranks the PDF's walls even when a wall is nearer:
+   *  rooms that share a wall must land on exactly the same vertices (the Slice B contract), and an
+   *  extracted run can sit half a wall thickness away from the corner a neighbouring room was
+   *  already outlined on. Corners beat lines within each source for the same reason a corner is
+   *  worth more than a line: it's a point two walls agree on.
+   *
+   *  `snapToWallIntersection` outranks `snapToWallCorner`: a run's endpoint is wherever extraction
+   *  happened to stop, often mid-wall, while an intersection is where two walls actually cross —
+   *  the real room corner. `snapToWallCorner` stays in the chain as a weaker fallback for the runs
+   *  a corner-pair analysis doesn't cover (e.g. a run with no matching partner in range). */
   function snapPoint(n: NormPoint): NormPoint | null {
-    return snapToVertex(n) ?? snapToEdge(n);
+    return (
+      snapToVertex(n) ??
+      snapToWallIntersection(n) ??
+      snapToWallCorner(n) ??
+      snapToEdge(n) ??
+      snapToWallLine(n)
+    );
   }
 
   // ---- Action commits — each is called exactly once per completed gesture ----
@@ -1573,7 +1908,19 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
    *  (which is what keeps the committed pins from eating them — DevicePin only attaches its
    *  handlers when editMode is on). Ghosts have no such gate of their own, so this is it. */
   const ghostInteractive =
-    !creatingDevice && !creatingRoom && !drawingRoomId && !placingDeviceId && !placingRackId;
+    !creatingDevice &&
+    !creatingRoom &&
+    !drawingRoomId &&
+    !placingDeviceId &&
+    !placingRackId &&
+    symbolType == null;
+
+  /** Pick mode is armed. Every shape on the plan — committed and proposed — stands its pointer
+   *  handlers down while it is: the click is aimed at the PLAN underneath, and a pin or vertex
+   *  that stopPropagation'd the press would swallow the gesture before the root ever saw it. The
+   *  committed shapes have no gate of their own beyond `editMode`, so this rides on that. */
+  const symbolSelecting = symbolType != null;
+  const shapesInteractive = editMode && !symbolSelecting;
 
   /** True once the press has travelled past the tap threshold — below it the gesture is a plain
    *  select-click and must not nudge the geometry by the drift every physical click carries. */
@@ -1601,6 +1948,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     if (e.button !== 0) return;
     cancelFitAnim();
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    // Pick mode owns the press outright: `dragRef` is deliberately left null so the plan cannot pan
+    // out from under the symbol being aimed at. The pick itself happens on the CLICK (below), the
+    // same route every other tap gesture on this canvas takes.
+    if (symbolType != null) return;
     // Remember whether this press landed on a room polygon, read straight off the DOM so it can't
     // desync from event ordering. Pins/vertices stopPropagation and never reach here.
     const roomEl = (e.target as Element).closest?.("[data-room-id]");
@@ -1613,7 +1964,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     };
   };
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Ghost drags first: they write straight to proposal state (no preview layer, no commit).
+    // Pick mode first, and it returns unconditionally — no snap hover, no pan, no preview. There is
+    // no drag to track: the gesture is a single click.
+    if (symbolType != null) return;
+    // Ghost drags next: they write straight to proposal state (no preview layer, no commit).
     if (proposalPinDragRef.current) {
       const drag = proposalPinDragRef.current;
       if (!ghostDragEngaged(drag, e.clientX, e.clientY)) return;
@@ -1667,6 +2021,15 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     setView((v) => ({ ...v, panX: d.panX + (e.clientX - d.x), panY: d.panY + (e.clientY - d.y) }));
   };
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    // Pick mode: nothing to commit or select here — the click handler does the work. Only the
+    // pointer capture taken on press has to be given back, or the NEXT press lands on this element
+    // no matter where it happens.
+    if (symbolType != null) {
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      return;
+    }
     // A finished ghost drag has nothing to commit — the proposal already holds its new geometry.
     // The pan bookkeeping is still torn down first: the ghost's own stopPropagation should have
     // kept the root's pointer-down from ever arming one, but returning early with a live dragRef
@@ -1739,8 +2102,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     }
   };
 
-  // Simple taps (not drags) — device placement and room-outline vertex clicks.
+  // Simple taps (not drags) — symbol picking, device placement and room-outline vertex clicks.
   function handleCanvasClick(e: React.MouseEvent<SVGSVGElement>) {
+    // Pick mode wins outright, and a click while a pick is already showing simply re-picks — the
+    // user aiming again is the same gesture as aiming the first time.
+    if (symbolType != null) {
+      const n = toNorm(e.clientX, e.clientY);
+      if (!n) return;
+      void runSymbolPick(symbolType, n);
+      return;
+    }
     // Create-by-geometry modes run without edit mode (started from the toolbar).
     if (creatingDevice) {
       const n = toNorm(e.clientX, e.clientY);
@@ -1799,7 +2170,10 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
   useEffect(() => {
     // Active in edit mode AND during a toolbar-started create gesture (which runs outside it) AND
     // while a proposal vertex is selected (proposal review also runs outside edit mode).
-    if (!editMode && !creatingRoom && !creatingDevice && !selectedProposalVertex) return;
+    // Box-select runs outside edit mode too, so it earns its own place in this gate.
+    if (!editMode && !creatingRoom && !creatingDevice && !selectedProposalVertex && symbolType == null) {
+      return;
+    }
     function onKeyDown(e: KeyboardEvent) {
       // Never steal a keystroke aimed at a text field. The proposal panel put the first inputs on
       // this screen, and they coexist with a selected ghost vertex — so without this, Backspace to
@@ -1845,6 +2219,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
         proposalPinDragRef.current = null;
         proposalVertexDragRef.current = null;
         setSelectedProposalVertex(null);
+        // The symbol flow leaves ENTIRELY: the mode and any highlighted pick. Leaving the pick up
+        // would keep a Search button on screen for a gesture the user just abandoned.
+        cancelSymbolSelect();
         return;
       }
       if (e.key === "Enter") {
@@ -1888,12 +2265,16 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     selectedPinId,
     selectedVertex,
     selectedProposalVertex,
+    symbolType,
     rooms,
   ]);
 
   const { placed, unplaced } = partitionPlacement(devices);
   const { placed: placedRacks, unplaced: unplacedRacks } = partitionPlacement(racks);
   const roomsWithoutPolygon = rooms.filter((r) => r.plan_polygon == null);
+  // The armed symbol type's human NAME for the prompt ("Camera", not "CAM"), falling back to the
+  // code so the message is never blank if a type is renamed out from under an armed selection.
+  const symbolTypeName = deviceTypes.find((t) => t.code === symbolType)?.name ?? symbolType ?? "";
   const typeName = (id: string) => deviceTypes.find((t) => t.id === id)?.name ?? "—";
   const typeIcon = (id: string) => resolveTypeIcon(deviceTypes.find((t) => t.id === id));
   const typeColor = (id: string) => resolveTypeColor(deviceTypes.find((t) => t.id === id));
@@ -2037,7 +2418,12 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             display: "block",
             touchAction: "none",
             cursor:
-              placingDeviceId || placingRackId || drawingRoomId || creatingRoom || creatingDevice
+              placingDeviceId ||
+              placingRackId ||
+              drawingRoomId ||
+              creatingRoom ||
+              creatingDevice ||
+              symbolSelecting
                 ? "crosshair"
                 : undefined,
           }}
@@ -2059,7 +2445,59 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           }}
         >
           <g transform={`translate(${view.panX} ${view.panY}) scale(${view.zoom})`}>
+            {/* The plan itself, in two layers occupying the SAME (0,0,imgW,imgH) box in image-pixel
+                space — so nothing below them moves whichever is on top.
+
+                The flattened PNG is ALWAYS the base. It is already decoded and paints instantly,
+                which matters because the vector layer cannot: it has to download, parse and
+                rasterise an 84k-path sheet first, and it clears its own canvas on every
+                re-rasterisation. Without the PNG underneath, the plan area would be empty on every
+                page load and floor switch (rooms and pins floating over nothing) and would flash
+                empty again at each zoom bucket. A soft plan beats a blank one — the same argument
+                that governs the hard-failure fallback, applied to the waiting states too.
+
+                The vector canvas is opaque once drawn (pdf.js paints a white page background), so
+                it simply covers the PNG the moment it has something better to show. */}
             <image href={planUrl} x={0} y={0} width={imgW} height={imgH} preserveAspectRatio="xMidYMid meet" />
+            {useVectorPlan && pdfUrl && (
+              <PlanVectorLayer
+                pdfUrl={pdfUrl}
+                pageIndex={pdfPage ?? 0}
+                imgW={imgW}
+                imgH={imgH}
+                zoom={view.zoom}
+                {...visiblePlanRect(view, paneW, paneH)}
+                onError={() => setFailedPdfUrl(pdfUrl)}
+              />
+            )}
+            {/* Extracted walls — drawn straight after the image and BEFORE every room, pin and
+                rack, because they are context the floor sits on, not content on the floor. Same
+                IMAGE-PIXEL space as everything else (identityView), stroke divided by the live zoom
+                so it stays hairline-thin at any magnification. Never a pointer target.
+
+                Ink lives on the GROUP and is inherited, not repeated per line: a zoom frame then
+                rewrites ONE stroke-width instead of 1,014, and a single composited opacity keeps
+                overlapping runs from darkening at every wall junction. */}
+            {showWalls && wallRuns.length > 0 && (
+              <g
+                data-testid="wall-overlay"
+                stroke={WALL_STROKE}
+                strokeWidth={1 / view.zoom}
+                opacity={0.5}
+                style={{ pointerEvents: "none" }}
+              >
+                {(() => {
+                  // Hoisted: one identity view for the whole layer, not two per run — at 1,014 runs
+                  // that was ~2k throwaway objects per frame while panning with the overlay on.
+                  const view0 = identityView(imgW, imgH);
+                  return wallRuns.map((w, i) => {
+                    const a = normToScreen([w.x1, w.y1], view0);
+                    const b = normToScreen([w.x2, w.y2], view0);
+                    return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+                  });
+                })()}
+              </g>
+            )}
             {rooms.map((room) => (
               <RoomPolygon
                 key={room.id}
@@ -2067,9 +2505,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 imgW={imgW}
                 imgH={imgH}
                 zoom={view.zoom}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedRoomId === room.id || editingRoomId === room.id}
-                editing={editingRoomId === room.id}
+                editing={editingRoomId === room.id && shapesInteractive}
                 vertexPreview={vertexPreviewForRoom(room.id)}
                 onVertexPointerDown={onVertexPointerDown}
                 onInsertVertex={onInsertVertexClick}
@@ -2085,7 +2523,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 typeName={typeName(device.device_type_id)}
                 icon={typeIcon(device.device_type_id)}
                 color={typeColor(device.device_type_id)}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedPinId === device.id}
                 dragPoint={pinPreview && pinPreview.deviceId === device.id ? pinPreview.point : null}
                 onPointerDownPin={onPinPointerDown}
@@ -2100,7 +2538,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 glyphScale={pinScale}
                 color={rackColor}
                 icon={rackIcon}
-                editMode={editMode}
+                editMode={shapesInteractive}
                 selected={selectedRackId === rack.id}
                 dragPoint={rackPreview && rackPreview.rackId === rack.id ? rackPreview.point : null}
                 onPointerDownRack={onRackPointerDown}
@@ -2309,6 +2747,31 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                   })()}
               </g>
             )}
+            {/* The picked symbol's bounds, as the server's vector hit-test reported them. Drawn
+                LAST so it sits over everything, in the same IMAGE-PIXEL space as the rest of this
+                group, with the stroke divided by the live zoom so it stays hairline at any
+                magnification. Deliberately UNROUNDED: a picked symbol is ~15-60px on the sheet, and
+                rounding to whole pixels would misreport what is about to be searched for. */}
+            {symbolPick && (() => {
+              const a = normToScreen([symbolPick.box.x, symbolPick.box.y], identityView(imgW, imgH));
+              const b = normToScreen(
+                [symbolPick.box.x + symbolPick.box.w, symbolPick.box.y + symbolPick.box.h],
+                identityView(imgW, imgH)
+              );
+              return (
+                <rect
+                  data-testid="symbol-pick-box"
+                  x={a.x}
+                  y={a.y}
+                  width={b.x - a.x}
+                  height={b.y - a.y}
+                  fill={PROPOSAL_FILL}
+                  stroke={PROPOSAL_STROKE}
+                  strokeWidth={1 / view.zoom}
+                  style={{ pointerEvents: "none" }}
+                />
+              );
+            })()}
           </g>
         </svg>
 
@@ -2340,6 +2803,23 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 onClick={fitToArea}
               />
             </span>
+            {/* Wall overlay toggle: shows what a trace will snap to. Gated on there being walls at
+                all, so an image-sourced plan — or a PDF whose extraction hasn't run — is exactly
+                the toolbar it was before walls existed, rather than gaining a control with nothing
+                behind it. */}
+            {wallRuns.length > 0 && (
+              <span className="pointer-events-auto">
+                <IconButton
+                  data-testid="toggle-walls"
+                  icon="tabler:vector-triangle"
+                  tip="Show walls"
+                  tipSide="right"
+                  variant={showWalls ? "floatingActive" : "floating"}
+                  aria-pressed={showWalls}
+                  onClick={() => setShowWalls((s) => !s)}
+                />
+              </span>
+            )}
             {/* AI discovery: one button, a two-item menu (rooms / devices). The menu is anchored to
                 this span (relative) so it opens beside the stack rather than pushing it around. */}
             <span ref={wizardRef} className="pointer-events-auto relative">
@@ -2358,26 +2838,74 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               {wizardOpen && (
                 <div
                   data-testid="plan-wizard-menu"
-                  className="absolute left-11 top-0 z-40 w-44 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg"
+                  className="absolute left-11 top-0 z-40 w-52 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg"
                 >
-                  <button
-                    type="button"
-                    data-testid="discover-rooms"
-                    disabled={discovering != null || accepting}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
-                    onClick={() => void runDiscovery("rooms")}
-                  >
-                    <Icon icon="tabler:vector" width={16} height={16} /> Discover rooms
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="discover-devices"
-                    disabled={discovering != null || accepting}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
-                    onClick={() => void runDiscovery("devices")}
-                  >
-                    <Icon icon="tabler:circle-plus" width={16} height={16} /> Discover devices
-                  </button>
+                  {!symbolMenuOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        data-testid="discover-rooms"
+                        disabled={discovering != null || accepting}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => void runDiscovery("rooms")}
+                      >
+                        <Icon icon="tabler:vector" width={16} height={16} /> Discover rooms
+                      </button>
+                      {/* Devices DRILL DOWN rather than running: the user picks what kind of thing
+                          they are about to point at, then points at one on the plan. */}
+                      <button
+                        type="button"
+                        data-testid="discover-devices"
+                        disabled={discovering != null || accepting}
+                        aria-expanded={false}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => setSymbolMenuOpen(true)}
+                      >
+                        <Icon icon="tabler:circle-plus" width={16} height={16} /> Discover devices
+                        <Icon icon="tabler:chevron-right" width={15} height={15} className="ml-auto" />
+                      </button>
+                    </>
+                  ) : (
+                    <div data-testid="symbol-type-menu">
+                      <button
+                        type="button"
+                        data-testid="symbol-type-back"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-neutral-500 hover:bg-neutral-100"
+                        onClick={() => setSymbolMenuOpen(false)}
+                      >
+                        <Icon icon="tabler:chevron-left" width={15} height={15} /> Devices
+                      </button>
+                      {/* The AI sweep, kept as the head of this list: it reads the WHOLE sheet and
+                          needs no example, so it is the right first offer — the type entries below
+                          are the exact-match path, one symbol at a time. */}
+                      <button
+                        type="button"
+                        data-testid="discover-devices-ai"
+                        disabled={discovering != null || accepting}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                        onClick={() => void runDiscovery("devices")}
+                      >
+                        <Icon icon="tabler:sparkles" width={16} height={16} /> Detect with AI
+                      </button>
+                      <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                        Find a symbol
+                      </p>
+                      <div className="max-h-60 overflow-y-auto">
+                        {floorDeviceTypes.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            data-testid={`symbol-type-${t.code}`}
+                            disabled={discovering != null || accepting}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
+                            onClick={() => armSymbolSelect(t.code)}
+                          >
+                            <Icon icon={resolveTypeIcon(t)} width={16} height={16} /> {t.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </span>
@@ -2395,6 +2923,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
           drawingRoomId ||
           creatingRoom ||
           creatingDevice ||
+          symbolSelecting ||
           discovering != null ||
           wizardNotice) && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-30 flex -translate-x-1/2 flex-col items-center gap-1.5">
@@ -2417,6 +2946,21 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                     }. Esc to cancel.`}
                 </p>
               )}
+            {/* Pick mode's own line, on the same footing as the placement instructions above but
+                separate from them: the two gesture families are mutually exclusive, and this one
+                names the TYPE so a mis-pick from the submenu is obvious before the click. */}
+            {!error && symbolSelecting && (
+              <p
+                data-testid="symbol-prompt"
+                className="rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
+              >
+                {picking
+                  ? "Reading the plan's shapes…"
+                  : symbolPick
+                    ? `Search the plan for this ${symbolTypeName} symbol?`
+                    : `Click an example of: ${symbolTypeName}. Esc to cancel.`}
+              </p>
+            )}
             {/* Discovery's own line, so a pass can report while a placement gesture is still live.
                 `no-key` and `none-found` are SENTINELS, not prose — each gets its own copy; anything
                 else is already a caller-facing message from the action, shown verbatim. */}
@@ -2425,7 +2969,9 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
                 data-testid="wizard-notice"
                 className="pointer-events-auto rounded-lg bg-neutral-900/85 px-3 py-1 text-xs font-medium text-white shadow-sm"
               >
-                {discovering != null ? (
+                {discovering === "symbols" ? (
+                  "Searching the plan for that symbol…"
+                ) : discovering != null ? (
                   "Reading the plan…"
                 ) : wizardNotice === "no-key" ? (
                   <>
@@ -2444,6 +2990,42 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
             )}
           </div>
         )}
+        {/* Search/Cancel for the picked symbol, anchored just under its highlight so the user is
+            confirming the thing they are looking at rather than a box somewhere off-screen. Plain
+            buttons, like the room popover: a click here can't be lost to a canvas gesture. */}
+        {symbolPick && (() => {
+          const c = normToScreen(
+            [symbolPick.box.x + symbolPick.box.w / 2, symbolPick.box.y + symbolPick.box.h],
+            identityView(imgW, imgH)
+          );
+          const left = view.panX + c.x * view.zoom;
+          const top = view.panY + c.y * view.zoom;
+          return (
+            <div
+              data-testid="symbol-pick-actions"
+              className="pointer-events-auto absolute z-30 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-neutral-200 bg-white p-1 shadow-md"
+              style={{ left, top: top + 10 }}
+            >
+              <button
+                type="button"
+                data-testid="symbol-pick-confirm"
+                disabled={discovering != null || accepting}
+                onClick={confirmSymbolPick}
+                className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Icon icon="tabler:search" width={14} height={14} /> Search
+              </button>
+              <button
+                type="button"
+                data-testid="symbol-pick-cancel"
+                onClick={cancelSymbolPick}
+                className="rounded-md px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+              >
+                Cancel
+              </button>
+            </div>
+          );
+        })()}
         {/* Edit/Delete popover, anchored over the selected room's centroid. Edit promotes the room
             to vertex editing (handles); Delete clears the OUTLINE only (the room survives). Both
             are plain buttons — a click here can't be lost to the pan gesture the way a canvas tap
@@ -2537,6 +3119,7 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
               setSelectedProposalVertex(null);
             }}
             onAcceptDevice={(dp) => void acceptOne(() => acceptDevice(dp))}
+            onFocusDevice={(dp) => focusOnPoint(dp.point)}
             onAcceptRoom={(rp) => void acceptOne(() => acceptRoom(rp))}
             onDismissDevice={dropDevice}
             onDismissRoom={dropRoom}

@@ -33,11 +33,25 @@ export default async function SitePage({ params }: { params: Promise<{ clientCod
   // Signed URLs are generated here, not passed through as bare storage paths — the floor tab
   // never sees anything but a short-lived, ready-to-render URL. Keyed by floor_id (not plan id)
   // since that's how SiteDetail looks a plan up for the active floor.
+  // The retained SOURCE PDF gets a signed URL of its own, alongside the flattened PNG's — the
+  // canvas draws the vector at the live zoom when it has one and falls back to the PNG when it
+  // doesn't, so a plan uploaded as an image (or one whose PDF retention failed) simply has no
+  // entry here. Same floor_id keying, same short-lived-URL rule.
   const planUrls: Record<string, string> = {};
+  const planPdfUrls: Record<string, string> = {};
   await Promise.all(
     plans.map(async (plan) => {
-      const url = await createPlanSignedUrl(db, plan.storage_path);
+      const [url, pdfUrl] = await Promise.all([
+        createPlanSignedUrl(db, plan.storage_path),
+        // Swallowed, unlike the PNG's: a plan row whose retained PDF was deleted from storage
+        // would otherwise reject this Promise.all and 500 the whole site page. The vector layer
+        // exists to degrade to the PNG, so a missing PDF must degrade, not fail.
+        plan.pdf_storage_path
+          ? createPlanSignedUrl(db, plan.pdf_storage_path).catch(() => null)
+          : null,
+      ]);
       if (url) planUrls[plan.floor_id] = url;
+      if (pdfUrl) planPdfUrls[plan.floor_id] = pdfUrl;
     })
   );
 
@@ -52,6 +66,7 @@ export default async function SitePage({ params }: { params: Promise<{ clientCod
       deviceTypes={deviceTypes.filter((t) => t.category === "floor")}
       plans={plans}
       planUrls={planUrls}
+      planPdfUrls={planPdfUrls}
     />
   );
 }

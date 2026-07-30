@@ -54,6 +54,22 @@ export interface FloorDeviceRow {
   y: number | null;
 }
 
+/** A straight wall segment, normalized 0..1 over the rendered plan page. Endpoints, not (θ,ρ),
+ *  because the canvas consumes them directly for drawing and snapping. */
+export interface WallRun {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** A room label lifted from the PDF text layer — exact string, exact position. */
+export interface PlanLabel {
+  text: string;
+  x: number;
+  y: number;
+}
+
 export interface FloorPlanRow {
   id: string;
   floor_id: string;
@@ -64,6 +80,11 @@ export interface FloorPlanRow {
   source: "image" | "pdf";
   created_at: string;
   updated_at: string;
+  pdf_storage_path: string | null;
+  pdf_page: number | null;
+  wall_runs: WallRun[] | null;
+  plan_labels: PlanLabel[] | null;
+  geometry_extracted_at: string | null;
 }
 
 export interface RackRow {

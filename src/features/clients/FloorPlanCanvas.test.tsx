@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createRef } from "react";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { getDocument as pdfjsGetDocument } from "pdfjs-dist";
 import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
-import type { FloorPlanRow, RoomRow, FloorDeviceRow } from "@/lib/supabase/types";
+import type { FloorPlanRow, RoomRow, FloorDeviceRow, WallRun } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
 import { isValidPolygon } from "./floorPlanOps";
@@ -17,6 +18,7 @@ import {
   createRoomAction,
 } from "./actions";
 import { discoverRoomsAction, discoverDevicesAction } from "./discoverActions";
+import { discoverSymbolsAction, pickSymbolAction } from "./symbolActions";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
 
 const refreshMock = vi.fn();
@@ -62,6 +64,41 @@ vi.mock("./discoverActions", () => ({
     ],
   })),
 }));
+// Symbol discovery is a server action too (Supabase + pdf.js + the raster matcher). Same contract:
+// the canvas only awaits its result shape.
+vi.mock("./symbolActions", () => ({
+  discoverSymbolsAction: vi.fn(async () => ({ ok: true, proposals: [] })),
+  pickSymbolAction: vi.fn(async () => ({
+    ok: true,
+    box: { x: 0.1, y: 0.2, w: 0.05, h: 0.06 },
+    pathCount: 12,
+  })),
+}));
+
+/** Open the wizard and run the AI device pass. It now lives one level down, under "Discover
+ *  devices" — clicking that item opens the device-type submenu the symbol flow starts from, and
+ *  the AI entry sits at its head. The drill-down click stays OUTSIDE act so the submenu has
+ *  actually rendered before the AI entry is looked up. */
+async function runDeviceAiPass() {
+  fireEvent.click(screen.getByTestId("plan-wizard"));
+  fireEvent.click(screen.getByTestId("discover-devices"));
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("discover-devices-ai"));
+  });
+}
+
+// PlanVectorLayer lazily imports pdf.js, which evaluates `new DOMMatrix()` at module scope and
+// cannot rasterise in jsdom anyway. These tests only care WHICH layer the canvas chooses, so the
+// library is faked; the layer's own debounce/cancel behaviour is covered in PlanVectorLayer.test.tsx.
+vi.mock("pdfjs-dist", () => ({
+  GlobalWorkerOptions: { workerSrc: "" },
+  // The document never resolves: these tests assert the DOM shape the canvas mounts, and a load
+  // that completes would only settle state after the assertions (outside act) for no added cover.
+  getDocument: vi.fn(() => ({
+    promise: new Promise<never>(() => {}),
+    destroy: async () => {},
+  })),
+}));
 
 // jsdom has no ResizeObserver, so FloorPlanCanvas falls back to a fixed 870px pane width for its
 // initial fit — deterministic, but NOT exercised by these tests: every assertion below checks
@@ -78,6 +115,11 @@ const PLAN: FloorPlanRow = {
   source: "image",
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
+  pdf_storage_path: null,
+  pdf_page: null,
+  wall_runs: null,
+  plan_labels: null,
+  geometry_extracted_at: null,
 };
 
 const PLAN_URL = "https://example.test/plan.png";
@@ -936,6 +978,10 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
 describe("FloorPlanCanvas (AI discovery wizard)", () => {
   /** Open the wizard menu and run one discovery pass, flushing the action's promise. */
   async function runDiscovery(which: "discover-rooms" | "discover-devices") {
+    if (which === "discover-devices") {
+      await runDeviceAiPass();
+      return;
+    }
     fireEvent.click(screen.getByTestId("plan-wizard"));
     await act(async () => {
       fireEvent.click(screen.getByTestId(which));
@@ -1055,10 +1101,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
   async function stageDevices(proposals: DeviceProposal[], siteCodes: string[] = SITE_CODES) {
     vi.mocked(discoverDevicesAction).mockResolvedValueOnce({ ok: true, proposals });
     renderCanvas(true, siteCodes);
-    fireEvent.click(screen.getByTestId("plan-wizard"));
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("discover-devices"));
-    });
+    await runDeviceAiPass();
   }
   async function stageRooms(proposals: RoomProposal[]) {
     vi.mocked(discoverRoomsAction).mockResolvedValueOnce({ ok: true, proposals });
@@ -1636,10 +1679,7 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
         deviceProposal({ id: `dev-${i}`, label: "", typeCode: "CAM", point: [0.1 * (i + 1), 0.5] })
       ),
     });
-    fireEvent.click(screen.getByTestId("plan-wizard"));
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("discover-devices"));
-    });
+    await runDeviceAiPass();
     const createBefore = vi.mocked(createFloorDeviceAction).mock.calls.length;
     const releases = deferredOk(vi.mocked(placeFloorDeviceAction), 3);
 
@@ -1857,5 +1897,730 @@ describe("FloorPlanCanvas (proposal editing, accept / dismiss)", () => {
 
     fireEvent.pointerDown(screen.getByTestId("floor-plan-canvas"), { clientX: 400, clientY: 300, button: 0, pointerId: 1 });
     expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+  });
+});
+
+describe("FloorPlanCanvas (wall snapping)", () => {
+  // The jsdom fallback fit is fully determined: pane 870x560 over a 1200x800 plan gives
+  // zoom = min(870/1200, 560/800) = 0.7, panX = (870 - 840)/2 = 15, panY = (560 - 560)/2 = 0.
+  // So a normalized point lands at screen (15 + nx*840, ny*560) — every coordinate below is
+  // hand-computed from that, the same way the existing room-snap tests are.
+  const sx = (nx: number) => 15 + nx * 840;
+  const sy = (ny: number) => ny * 560;
+
+  const WALL_RUNS: WallRun[] = [
+    // A long horizontal run, well clear of both fixture rooms. Its left end and the run below
+    // share the corner (0.2, 0.8) — screen (183, 448).
+    { x1: 0.2, y1: 0.8, x2: 0.6, y2: 0.8 },
+    { x1: 0.2, y1: 0.8, x2: 0.2, y2: 0.95 },
+    // A stub whose endpoint sits 0.0025 (≈2.1 screen px) to the RIGHT of room MDF's corner
+    // [0.3, 0.1] — deliberately the NEARER target for the priority test below.
+    { x1: 0.3025, y1: 0.1, x2: 0.3025, y2: 0.05 },
+    // A stub whose TOP endpoint (204, 178.08) sits just below room MDF's bottom edge (y = 168),
+    // for the "wall corner beats room edge" ordering test.
+    { x1: 0.225, y1: 0.318, x2: 0.225, y2: 0.45 },
+    // A run parallel to, and 5.6 screen px below, that same bottom edge — so a click between the
+    // two is NEARER this line than the room's, for the "room edge beats wall line" ordering test.
+    // x2 stops at 0.20, not 0.25: at 0.25 this run's line, extended by the wall-INTERSECTION
+    // deriver's default 12px overshoot, would cross the wall stub above (x=0.225) at (0.225, 0.31)
+    // — 6.4px short of that stub's own top endpoint, well inside the 12px allowance — and that
+    // accidental crossing would outrank the stub's endpoint in the "wall corner beats room edge"
+    // test below. 0.20 keeps this run's line (still covering every click used against it here) out
+    // of range of x=0.225 by a wide margin.
+    { x1: 0.05, y1: 0.31, x2: 0.20, y2: 0.31 },
+    // Two runs whose endpoints both fall inside the 12px radius of one click, the FARTHER one
+    // listed FIRST — so "nearest wins" and "first hit wins" give different answers. Endpoint
+    // (653.4, 364) is 8.4px from the click; (642.9, 364) is 2.1px.
+    { x1: 0.76, y1: 0.65, x2: 0.76, y2: 0.72 },
+    { x1: 0.7475, y1: 0.65, x2: 0.68, y2: 0.65 },
+    // The same trap for LINE snapping: two parallel runs straddling one click, no endpoint of
+    // either in range, the FARTHER line (8.96px) listed before the nearer one (2.8px).
+    { x1: 0.8, y1: 0.516, x2: 0.95, y2: 0.516 },
+    { x1: 0.8, y1: 0.505, x2: 0.95, y2: 0.505 },
+  ];
+
+  function renderWithWalls(props: {
+    ref: React.Ref<FloorPlanCanvasHandle>;
+    onRoomTraced?: (polygon: [number, number][]) => void;
+    wallRuns?: WallRun[];
+  }) {
+    return render(
+      <FloorPlanCanvas
+        ref={props.ref}
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
+        wallRuns={props.wallRuns ?? WALL_RUNS}
+        editable
+        onRoomTraced={props.onRoomTraced}
+      />
+    );
+  }
+
+  /** Trace a triangle whose FIRST click is `first` (the point under test) and whose other two are
+   *  far from it, then close it. Returns the committed polygon. */
+  async function traceFrom(first: { x: number; y: number }, wallRuns?: WallRun[]) {
+    const onRoomTraced = vi.fn();
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref, onRoomTraced, wallRuns });
+
+    act(() => ref.current!.startTraceRoom());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    await act(async () => {
+      fireEvent.click(svg, { clientX: first.x, clientY: first.y });
+      fireEvent.click(svg, { clientX: 500, clientY: 300 });
+      fireEvent.click(svg, { clientX: 300, clientY: 400 });
+    });
+    await act(async () => {
+      fireEvent.doubleClick(svg, { clientX: 300, clientY: 400 });
+    });
+
+    expect(onRoomTraced).toHaveBeenCalledTimes(1);
+    return onRoomTraced.mock.calls[0][0] as [number, number][];
+  }
+
+  it("snaps a traced point EXACTLY onto a wall run's endpoint", async () => {
+    // The shared corner (0.2, 0.8) renders at (183, 448); click ~4px off it, diagonally.
+    const polygon = await traceFrom({ x: sx(0.2) + 3, y: sy(0.8) + 3 });
+    expect(polygon[0][0]).toBeCloseTo(0.2, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.8, 10);
+  });
+
+  it("snaps a traced point ONTO a wall run's line, not to either endpoint", async () => {
+    // The midpoint of the horizontal run is (0.4, 0.8) -> (351, 448); its nearest endpoint is
+    // 168 screen px away, so only a line snap can catch this click.
+    const polygon = await traceFrom({ x: sx(0.4), y: sy(0.8) + 3 });
+    expect(polygon[0][1]).toBeCloseTo(0.8, 10); // perpendicular distance to the run is 0
+    expect(polygon[0][0]).toBeCloseTo(0.4, 10); // projected, not pulled to 0.2 or 0.6
+  });
+
+  it("picks the NEAREST wall corner when several are in range, not the first one found", async () => {
+    // Both corners are inside the radius of (645, 364) and the FARTHER one comes first in
+    // wallRuns — so a scan that returned its first hit would answer 0.76.
+    const polygon = await traceFrom({ x: 645, y: 364 });
+    expect(polygon[0][0]).toBeCloseTo(0.7475, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.65, 10);
+  });
+
+  it("picks the NEAREST wall line when several are in range, not the first one found", async () => {
+    // (729, 280) sits between two parallel runs, 2.8px from the second and 8.96px from the first,
+    // with no endpoint of either in range. First-hit would answer y = 0.516.
+    const polygon = await traceFrom({ x: 729, y: 280 });
+    expect(polygon[0][1]).toBeCloseTo(0.505, 10);
+    expect(polygon[0][0]).toBeCloseTo(0.85, 10); // (729 - 15) / 840, projected along the run
+  });
+
+  it("keeps an existing ROOM vertex ahead of a NEARER wall corner", async () => {
+    // Room MDF's corner [0.3, 0.1] is at (267, 56); the wall stub's endpoint [0.3025, 0.1] is at
+    // (269.1, 56). Clicking (270, 56) is 0.9px from the wall corner and 3px from the room corner —
+    // the room must still win, or two rooms sharing this wall would stop meeting exactly.
+    const polygon = await traceFrom({ x: 270, y: sy(0.1) });
+    expect(polygon[0][0]).toBeCloseTo(0.3, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.1, 10);
+  });
+
+  it("prefers a wall CORNER over a nearer point on an existing room's edge", async () => {
+    // Room MDF's bottom edge is the line y = 168 across x 99..267; the wall stub's top endpoint is
+    // (204, 178.08). A click at (200, 172) is 4px from the edge and 7.3px from the corner — the
+    // corner is FARTHER, and must still win: a corner is a point two walls agree on.
+    const polygon = await traceFrom({ x: 200, y: 172 });
+    expect(polygon[0][0]).toBeCloseTo(0.225, 10);
+    expect(polygon[0][1]).toBeCloseTo(0.318, 10);
+  });
+
+  it("prefers an existing room's edge over a nearer wall LINE", async () => {
+    // A click at (150, 172) is 1.6px from the wall run at y = 173.6 and 4px from room MDF's bottom
+    // edge at y = 168, with no corner of either kind in range. The room still wins — a shared wall
+    // has to stay shared even when the PDF's run sits half a wall-thickness off it.
+    const polygon = await traceFrom({ x: 150, y: 172 });
+    expect(polygon[0][1]).toBeCloseTo(0.3, 10);
+    expect(polygon[0][0]).toBeCloseTo((150 - 15) / 840, 10);
+  });
+
+  it("does not snap past the END of a wall run — the projection is clamped to the segment", async () => {
+    // The horizontal run ends at (519, 448). A click at (560, 450) is 2px from that run's INFINITE
+    // line but 41px past its end, so an unclamped projection would wrongly pin it to y = 0.8.
+    const polygon = await traceFrom({ x: 560, y: 450 });
+    expect(polygon[0][0]).toBeCloseTo((560 - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(450 / 560, 10);
+  });
+
+  it("leaves a click far from every wall and room untouched", async () => {
+    // (700, 200) is >100 screen px from any wall run and any room edge.
+    const polygon = await traceFrom({ x: 700, y: 200 });
+    expect(polygon[0][0]).toBeCloseTo((700 - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(200 / 560, 10);
+  });
+
+  // These three exercise `snapToWallIntersection` — the actual crossing of two wall runs, which
+  // ranks ABOVE a raw run endpoint (`snapToWallCorner`) because a run's endpoint is wherever
+  // extraction happened to stop, often mid-wall, while an intersection is where two walls actually
+  // meet: the real room corner. A dedicated small `wallRuns` array is used for each so the derived
+  // corner set stays small and easy to reason about (deriveWallCorners runs over every pair).
+  describe("wall INTERSECTION snapping", () => {
+    // A clean perpendicular crossing, isolated from every fixture room and from WALL_RUNS above:
+    // horizontal run y=0.42 (pixel 336) crosses vertical run x=0.42 (pixel 504) at exactly
+    // (504, 336) -> norm (0.42, 0.42) -> screen (367.8, 235.2).
+    const CROSS_A: WallRun = { x1: 0.35, y1: 0.42, x2: 0.49, y2: 0.42 };
+    const CROSS_B: WallRun = { x1: 0.42, y1: 0.35, x2: 0.42, y2: 0.49 };
+
+    it("snaps a trace click near a wall INTERSECTION exactly onto it", async () => {
+      // (370, 236) is ~2.3 screen px from the crossing, well inside SNAP_PX, and far from every
+      // room vertex/edge and from either run's own endpoints.
+      const polygon = await traceFrom({ x: 370, y: 236 }, [CROSS_A, CROSS_B]);
+      expect(polygon[0][0]).toBeCloseTo(0.42, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.42, 6);
+    });
+
+    it("prefers the wall INTERSECTION over a STRICTLY CLOSER wall-run endpoint", async () => {
+      // A third run, C, shares the crossing's y (0.42) — parallel to CROSS_A, so it can never form
+      // its own spurious intersection with it — and its near endpoint sits EXACTLY at the click
+      // point: pixel (518, 336) -> norm (518/1200, 0.42). That endpoint is 0 screen px from the
+      // click; the true crossing (367.8, 235.2 screen) is ~9.8 screen px away — the endpoint is
+      // unambiguously the nearer target. (C does cross CROSS_B, but at the same pixel (504, 336)
+      // as CROSS_A x CROSS_B, so it only reinforces the one true corner, not a second one.)
+      const cThroughClick: WallRun = { x1: 518 / 1200, y1: 0.42, x2: 488 / 1200, y2: 0.42 };
+      const click = { x: 15 + (518 / 1200) * 840, y: 235.2 }; // = the endpoint's own screen position
+      const polygon = await traceFrom(click, [CROSS_A, CROSS_B, cThroughClick]);
+      // Must land on the CROSSING (0.42, 0.42), not the nearer endpoint (518/1200, 0.42).
+      expect(polygon[0][0]).toBeCloseTo(0.42, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.42, 6);
+    });
+
+    it("still lets an existing ROOM vertex beat a NEARER wall intersection", async () => {
+      // Two runs crossing exactly at (100, 58) in screen space -- 0 screen px from the click -- while
+      // room MDF's vertex [0.1, 0.1] sits at screen (99, 56), ~2.24 screen px from the same click.
+      // The intersection is nearer, but the room vertex must still win (Slice B contract: rooms
+      // sharing a wall must keep landing on exactly the same vertex).
+      const clickNorm: [number, number] = [(100 - 15) / 840, 58 / 560];
+      const runA: WallRun = { x1: 0.08, y1: clickNorm[1], x2: 0.12, y2: clickNorm[1] };
+      const runB: WallRun = { x1: clickNorm[0], y1: 0.09, x2: clickNorm[0], y2: 0.12 };
+      const polygon = await traceFrom({ x: 100, y: 58 }, [runA, runB]);
+      expect(polygon[0][0]).toBeCloseTo(0.1, 6);
+      expect(polygon[0][1]).toBeCloseTo(0.1, 6);
+    });
+  });
+
+  it("with wallRuns=[] behaves exactly as before — the wall-corner click does not snap", async () => {
+    const click = { x: sx(0.2) + 3, y: sy(0.8) + 3 };
+    const polygon = await traceFrom(click, []);
+    expect(polygon[0][0]).toBeCloseTo((click.x - 15) / 840, 10);
+    expect(polygon[0][1]).toBeCloseTo(click.y / 560, 10);
+  });
+
+  it("renders the wall overlay only once toggled, before the rooms, in image-pixel space", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref });
+    expect(screen.queryByTestId("wall-overlay")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+    const overlay = screen.getByTestId("wall-overlay");
+    const lines = overlay.querySelectorAll("line");
+    expect(lines).toHaveLength(WALL_RUNS.length);
+    // identity-view image pixels: 0.2*1200 = 240, 0.8*800 = 640, 0.6*1200 = 720.
+    expect(lines[0].getAttribute("x1")).toBe("240");
+    expect(lines[0].getAttribute("y1")).toBe("640");
+    expect(lines[0].getAttribute("x2")).toBe("720");
+    expect(lines[0].getAttribute("y2")).toBe("640");
+    // Walls are CONTEXT: they must paint under the rooms, never over them.
+    const room = screen.getByTestId("plan-room-MDF");
+    expect(overlay.compareDocumentPosition(room) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+    expect(screen.queryByTestId("wall-overlay")).toBeNull();
+  });
+
+  it("draws the walls in sky-500 at half opacity, with a stroke that counter-scales the live zoom", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref });
+    fireEvent.click(screen.getByTestId("toggle-walls"));
+
+    // Ink lives on the overlay GROUP and is inherited by every line — see the render comment for
+    // why (one attribute write per zoom frame, and one composited opacity).
+    const overlay = screen.getByTestId("wall-overlay");
+    expect(overlay.getAttribute("stroke")).toBe("#0ea5e9");
+    expect(overlay.getAttribute("opacity")).toBe("0.5");
+    // The jsdom fit zoom is 0.7, so a 1px-on-screen hairline is 1/0.7 image px inside the live <g>.
+    // A fixed strokeWidth={1} — the classic bug in a scaled group — would read "1" here.
+    expect(overlay.getAttribute("stroke-width")).toBe(String(1 / 0.7));
+
+    // And it tracks the zoom, while the line's own coordinates do NOT move: they are image-pixel
+    // space, and only the one live <g> transform ever carries the zoom.
+    fireEvent.click(screen.getByTestId("plan-zoom-in"));
+    const zoomed = screen.getByTestId("wall-overlay");
+    expect(zoomed.getAttribute("stroke-width")).toBe(String(1 / (0.7 * 1.25)));
+    expect(zoomed.querySelector("line")!.getAttribute("x1")).toBe("240");
+  });
+
+  it("offers no wall toggle at all when the plan has no extracted walls", () => {
+    const ref = createRef<FloorPlanCanvasHandle>();
+    renderWithWalls({ ref, wallRuns: [] });
+    // An image-sourced plan (or a PDF whose extraction hasn't run) gets exactly the toolbar it had
+    // before walls existed — the fit button is still there, a dead wall control is not.
+    expect(screen.getByTestId("fit-to-area")).toBeInTheDocument();
+    expect(screen.queryByTestId("toggle-walls")).toBeNull();
+  });
+});
+
+// The user's requirement: "no loss of quality or compression". A retained source PDF is rasterised
+// live at the current zoom instead of stretching the fixed 2600px PNG. These tests are the WIRING
+// contract only — which layer the canvas picks, and that picking the vector one moves nothing.
+describe("FloorPlanCanvas (vector plan rendering)", () => {
+  const PDF_PLAN: FloorPlanRow = {
+    ...PLAN,
+    source: "pdf",
+    pdf_storage_path: "floor-1/source.pdf",
+    pdf_page: 2,
+  };
+  const PDF_URL = "https://example.test/plan.pdf";
+
+  function renderWithPdf(over: { pdfUrl?: string | null; pdfPage?: number | null } = {}) {
+    return render(
+      <FloorPlanCanvas
+        plan={PDF_PLAN}
+        planUrl={PLAN_URL}
+        pdfUrl={"pdfUrl" in over ? over.pdfUrl : PDF_URL}
+        pdfPage={"pdfPage" in over ? over.pdfPage : PDF_PLAN.pdf_page}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={DEVICE_TYPES}
+        allSiteDeviceCodes={SITE_CODES}
+        editable={false}
+      />
+    );
+  }
+
+  beforeEach(() => {
+    // The layer debounces before it touches pdf.js; frozen timers mean these DOM-shape assertions
+    // never race an async rasterisation.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("composites the vector layer OVER the raster <image>, which stays as the instant base", () => {
+    renderWithPdf();
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const image = svg.querySelector("image")!;
+    const layer = screen.getByTestId("plan-vector-layer");
+
+    // The PNG is still there and still points at the same URL. It is what the user sees while the
+    // PDF downloads, parses and rasterises, and during each re-rasterisation (which clears the
+    // canvas) — without it the plan area is blank on every page load and floor switch.
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("href")).toBe(PLAN_URL);
+    // ...and the vector layer paints ON TOP of it: SVG has no z-index, only document order.
+    expect(image.compareDocumentPosition(layer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("sizes the vector layer to exactly the imgW x imgH box the <image> occupied", () => {
+    renderWithPdf();
+    const fo = screen.getByTestId("plan-vector-layer");
+    expect(fo.tagName.toLowerCase()).toBe("foreignobject");
+    expect(fo.getAttribute("x")).toBe("0");
+    expect(fo.getAttribute("y")).toBe("0");
+    expect(fo.getAttribute("width")).toBe("1200");
+    expect(fo.getAttribute("height")).toBe("800");
+  });
+
+  it("leaves every plan coordinate exactly where the raster path put it", () => {
+    renderWithPdf();
+    // Identical to the raster-path expectation above: normToScreen([0.8,0.65]) in image-pixel space.
+    expect(screen.getByTestId("plan-pin-CAM02").getAttribute("transform")).toBe("translate(960 520)");
+    expect(screen.getByTestId("plan-room-MDF").getAttribute("points")!.trim().split(/\s+/)).toHaveLength(4);
+    // The single live transform is untouched: jsdom fit zoom 0.7, panX 15, panY 0.
+    const live = screen.getByTestId("floor-plan-canvas").querySelector("g")!;
+    expect(live.getAttribute("transform")).toBe("translate(15 0) scale(0.7)");
+  });
+
+  it("hands the vector layer the visible slice of the plan, derived from the live view and the pane", () => {
+    // The layer rasterises only what's on screen, and it does NOT re-derive "on screen" itself —
+    // this component is the only thing that knows both the live pan/zoom and the measured pane, so
+    // the derivation lives here and is wired through. If it were wrong, the plan would rasterise
+    // the wrong slice of the sheet, which looks like a correctly-drawn plan in the wrong place.
+    renderWithPdf();
+
+    // Two zoom-in clicks about the pane centre: 0.7 -> 1.09375, pan (15, 0) -> (-221.25, -157.5),
+    // on jsdom's fallback 870 x 560 pane. The pane then sees plan x 202.29..997.71, y 144..656,
+    // which overscanned by 15% a side and clipped to the page is (82.97, 67.2) 1034.06 x 665.6.
+    act(() => {
+      fireEvent.click(screen.getByTestId("plan-zoom-in"));
+      fireEvent.click(screen.getByTestId("plan-zoom-in"));
+    });
+
+    const live = screen.getByTestId("floor-plan-canvas").querySelector("g")!;
+    expect(live.getAttribute("transform")).toBe("translate(-221.25 -157.5) scale(1.09375)");
+
+    const fo = screen.getByTestId("plan-vector-layer");
+    expect(Number(fo.getAttribute("x"))).toBeCloseTo(82.97, 2);
+    expect(Number(fo.getAttribute("y"))).toBeCloseTo(67.2, 2);
+    expect(Number(fo.getAttribute("width"))).toBeCloseTo(1034.06, 2);
+    expect(Number(fo.getAttribute("height"))).toBeCloseTo(665.6, 2);
+
+    // ...and the PNG underneath still spans the WHOLE page. It is now what fills the plan outside
+    // the rasterised region, so it matters more than it did, not less.
+    const image = screen.getByTestId("floor-plan-canvas").querySelector("image")!;
+    expect(image.getAttribute("width")).toBe("1200");
+    expect(image.getAttribute("height")).toBe("800");
+  });
+
+  it("keeps the raster <image> when no source PDF was retained (image uploads, failed retention)", () => {
+    renderWithPdf({ pdfUrl: null, pdfPage: null });
+    const svg = screen.getByTestId("floor-plan-canvas");
+    const image = svg.querySelector("image");
+    expect(image).not.toBeNull();
+    expect(image?.getAttribute("href")).toBe(PLAN_URL);
+    expect(image?.getAttribute("width")).toBe("1200");
+    expect(image?.getAttribute("height")).toBe("800");
+    expect(image?.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
+    expect(screen.queryByTestId("plan-vector-layer")).toBeNull();
+  });
+
+  it("tears the vector layer back down if the PDF cannot be rendered, leaving the PNG alone", async () => {
+    // A dead signed URL / corrupt PDF must stop trying, rather than sit as an empty canvas over
+    // the perfectly good PNG underneath.
+    vi.useRealTimers();
+    vi.mocked(pdfjsGetDocument).mockImplementationOnce(() => {
+      throw new Error("signed URL expired");
+    });
+    renderWithPdf();
+    await waitFor(() => expect(screen.queryByTestId("plan-vector-layer")).toBeNull());
+    const svg = screen.getByTestId("floor-plan-canvas");
+    expect(svg.querySelector("image")?.getAttribute("href")).toBe(PLAN_URL);
+  });
+});
+
+describe("FloorPlanCanvas (symbol discovery)", () => {
+  // The jsdom fallback view (no ResizeObserver): fit zoom 0.7, panX 15, panY 0 on this 1200x800
+  // plan — the same derivation the placement tests spell out. A pointer at (cx, cy) is therefore
+  // this normalized point, and a drag between two pointers is the box below.
+  // (normX(cx) = (cx - 15) / 840, normY(cy) = cy / 560 — spelled out inline where used.)
+
+  // This file has no global mock reset, so call COUNTS would otherwise accumulate across the
+  // block and "called once" would pass for a handler that fired on every previous test too.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // A rack-category type, so "floor types only" is a real assertion rather than a tautology
+  // against the all-floor default fixture.
+  const TYPES_WITH_RACK: DeviceTypeRow[] = [
+    ...DEVICE_TYPES,
+    { id: "type-sw", name: "Switch", created_at: "2026-01-01T00:00:00Z", category: "rack", code: "SW", is_standard: true, color: null, icon: null },
+  ];
+
+  function renderWithTypes(deviceTypes: DeviceTypeRow[] = TYPES_WITH_RACK) {
+    return render(
+      <FloorPlanCanvas
+        plan={PLAN}
+        planUrl={PLAN_URL}
+        rooms={ROOMS}
+        devices={DEVICES}
+        racks={RACKS}
+        deviceTypes={deviceTypes}
+        allSiteDeviceCodes={SITE_CODES}
+        editable
+      />
+    );
+  }
+
+  /** Open the wizard, open the device-type submenu, and enter pick mode for one type. */
+  function armSymbolSelect(code = "CAM") {
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    fireEvent.click(screen.getByTestId("discover-devices"));
+    fireEvent.click(screen.getByTestId(`symbol-type-${code}`));
+  }
+
+  /** Click a point on the plan — press, release, click, exactly as a real tap arrives. */
+  async function clickPlan(x: number, y: number) {
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: x, clientY: y, button: 0, pointerId: 11 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: x, clientY: y, pointerId: 11 });
+    });
+    await act(async () => {
+      fireEvent.click(svg, { clientX: x, clientY: y });
+    });
+  }
+
+  /** Click the symbol, then confirm the highlighted pick — the whole two-step gesture. */
+  async function pickAndConfirm(x = 200, y = 100) {
+    await clickPlan(x, y);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("symbol-pick-confirm"));
+    });
+  }
+
+  it("'Discover devices' opens a submenu of the FLOOR device types only", () => {
+    // Would catch: forgetting the category filter, so a rack-only type (a switch) could be
+    // proposed as a thing that lives on a floor plan.
+    renderWithTypes();
+    fireEvent.click(screen.getByTestId("plan-wizard"));
+    expect(screen.queryByTestId("symbol-type-menu")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("discover-devices"));
+    expect(screen.getByTestId("symbol-type-menu")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-CAM")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-SEN")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-type-TO")).toBeInTheDocument();
+    expect(screen.queryByTestId("symbol-type-SW")).toBeNull();
+  });
+
+  it("choosing a type closes the menu, enters pick mode and prompts with the type NAME", () => {
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    expect(screen.queryByTestId("plan-wizard-menu")).toBeNull();
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Camera");
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Esc to cancel");
+    // Nothing has been picked or searched yet — entering pick mode is not a pass.
+    expect(pickSymbolAction).not.toHaveBeenCalled();
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("a click sends the hand-computed NORMALIZED point, and searches nothing yet", async () => {
+    // Would catch: sending screen pixels, or firing the multi-second full-sheet search off the
+    // click instead of off the confirmation.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await clickPlan(200, 100);
+
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
+    const [arg] = vi.mocked(pickSymbolAction).mock.calls[0];
+    expect(arg.floorId).toBe("floor-1");
+    // normX(200) = (200 - 15) / 840, normY(100) = 100 / 560 — the jsdom fallback view.
+    expect(arg.point.x).toBeCloseTo(185 / 840, 10);
+    expect(arg.point.y).toBeCloseTo(100 / 560, 10);
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("draws the picked box as a highlight in image-pixel space, zoom-compensated", async () => {
+    // Would catch: rounding the rect (a picked symbol is ~15px on the sheet), or drawing it in
+    // screen space inside a group that is already pan/zoom transformed.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    await clickPlan(200, 100);
+
+    const box = screen.getByTestId("symbol-pick-box");
+    // The mocked pick is {x:0.1, y:0.2, w:0.05, h:0.06} on this 1200 x 800 plan:
+    expect(Number(box.getAttribute("x"))).toBeCloseTo(120, 6);
+    expect(Number(box.getAttribute("y"))).toBeCloseTo(160, 6);
+    expect(Number(box.getAttribute("width"))).toBeCloseTo(60, 6);
+    expect(Number(box.getAttribute("height"))).toBeCloseTo(48, 6);
+    // Hairline at any magnification: 1 / the fallback fit zoom of 0.7.
+    expect(Number(box.getAttribute("stroke-width"))).toBeCloseTo(1 / 0.7, 6);
+    // ...and both confirm affordances are offered.
+    expect(screen.getByTestId("symbol-pick-confirm")).toBeInTheDocument();
+    expect(screen.getByTestId("symbol-pick-cancel")).toBeInTheDocument();
+  });
+
+  it("confirming searches with the EXACT picked box and the chosen type", async () => {
+    // Would catch: re-deriving the box from the click point, rounding it, or sending the type NAME
+    // instead of its code.
+    renderWithTypes();
+    armSymbolSelect("TO");
+    await pickAndConfirm(200, 100);
+
+    expect(discoverSymbolsAction).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(discoverSymbolsAction).mock.calls[0][0]).toEqual({
+      floorId: "floor-1",
+      box: { x: 0.1, y: 0.2, w: 0.05, h: 0.06 },
+      typeCode: "TO",
+    });
+    // The highlight and the whole gesture are done once the search is running.
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.queryByTestId("symbol-prompt")).toBeNull();
+  });
+
+  it("cancelling drops the highlight and returns to pick mode WITHOUT searching", async () => {
+    // A bad pick must cost a click, not a search.
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await clickPlan(200, 100);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("symbol-pick-cancel"));
+    });
+
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    // Still in pick mode, so the next click picks again.
+    expect(screen.getByTestId("symbol-prompt").textContent).toContain("Camera");
+    await clickPlan(300, 200);
+    expect(pickSymbolAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("says so when the click hit no symbol, and stays in pick mode", async () => {
+    vi.mocked(pickSymbolAction).mockResolvedValueOnce({
+      ok: false,
+      error: "No symbol there — click directly on a device symbol.",
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await clickPlan(200, 100);
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("No symbol there");
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.getByTestId("symbol-prompt")).toBeInTheDocument();
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+  });
+
+  it("pick mode does NOT pan the plan", async () => {
+    // Would catch: leaving the root's pan bookkeeping armed during pick mode, which would drag the
+    // whole sheet out from under the symbol the user is trying to click.
+    renderWithTypes();
+    const before = screen
+      .getByTestId("floor-plan-canvas")
+      .querySelector("g")!
+      .getAttribute("transform");
+    armSymbolSelect("CAM");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(svg, { clientX: 200, clientY: 100, button: 0, pointerId: 21 });
+    fireEvent.pointerMove(svg, { clientX: 400, clientY: 300, pointerId: 21 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 400, clientY: 300, pointerId: 21 });
+    });
+    expect(
+      screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform")
+    ).toBe(before);
+  });
+
+  it("stages the returned proposals as ghost pins AND panel rows", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "CP12", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "", typeCode: "CAM", point: [0.25, 0.75], confidence: "low" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    // Same IMAGE-PIXEL placement every committed and proposed pin uses: [0.5,0.5] on 1200x800.
+    expect(screen.getByTestId("proposal-pin-sym-0").getAttribute("transform")).toBe("translate(600 400)");
+    expect(screen.getByTestId("proposal-pin-sym-1").getAttribute("transform")).toBe("translate(300 600)");
+    // The EXISTING review panel picks them up with no changes of its own.
+    expect(screen.getByTestId("proposal-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-sym-0")).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-item-sym-1")).toBeInTheDocument();
+  });
+
+  it("NUMBERS the results after the type prefix, ignoring the plan's own text", async () => {
+    // The sheet's text sits where it fits, not where its device is, so a telecom outlet was
+    // regularly named after the GFI tag nearest it. Labels are generated now.
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "GFI", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "41,43", typeCode: "CAM", point: [0.25, 0.75], confidence: "high" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    // CAM03/CAM04, not CAM01/CAM02: the fixture site already owns those two, and a generated code
+    // has to step over what exists or the create would collide on `unique (site_id, code)`.
+    expect(screen.getByTestId<HTMLInputElement>("proposal-label-sym-0").value).toBe("CAM03");
+    expect(screen.getByTestId<HTMLInputElement>("proposal-label-sym-1").value).toBe("CAM04");
+  });
+
+  it("centres and zooms the plan on a proposal when its dot is clicked", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: true,
+      proposals: [
+        { id: "sym-0", label: "", typeCode: "CAM", point: [0.5, 0.5], confidence: "high" },
+        { id: "sym-1", label: "", typeCode: "CAM", point: [0.25, 0.75], confidence: "high" },
+      ],
+    });
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    const g = () => screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform");
+    const before = g();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("proposal-confidence-sym-1"));
+    });
+    // It TWEENS (the shared fit easing), so the view arrives over several frames rather than
+    // jumping — waitFor lets it land instead of asserting a mid-flight value.
+    await waitFor(() => {
+      const m = /translate\(([-\d.]+) ([-\d.]+)\) scale\(([\d.]+)\)/.exec(g()!)!;
+      const [panX, panY, zoom] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      // The proposal's own point ends up in the middle of the pane (870x560 in jsdom — see the
+      // fit-on-mount note above), at the focus zoom.
+      expect(zoom).toBeCloseTo(2.5, 3);
+      expect(panX + 0.25 * 1200 * zoom).toBeCloseTo(870 / 2, 1);
+      expect(panY + 0.75 * 800 * zoom).toBeCloseTo(560 / 2, 1);
+    });
+    expect(g()).not.toBe(before);
+  });
+
+  it("says so when nothing matched, rather than falling silent", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({ ok: true, proposals: [] });
+    const { container } = renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("Nothing found");
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("surfaces the action's error verbatim and stages nothing", async () => {
+    vi.mocked(discoverSymbolsAction).mockResolvedValueOnce({
+      ok: false,
+      error: "This plan has no source PDF.",
+    });
+    const { container } = renderWithTypes();
+    armSymbolSelect("CAM");
+    await pickAndConfirm();
+
+    expect(screen.getByTestId("wizard-notice").textContent).toContain("no source PDF");
+    expect(container.querySelectorAll('[data-testid^="proposal-pin-"]')).toHaveLength(0);
+  });
+
+  it("Esc exits the whole flow cleanly — no prompt, no highlight, neither action", async () => {
+    renderWithTypes();
+    armSymbolSelect("CAM");
+    await clickPlan(200, 100);
+    expect(screen.getByTestId("symbol-pick-box")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "Escape" });
+    });
+
+    expect(screen.queryByTestId("symbol-prompt")).toBeNull();
+    expect(screen.queryByTestId("symbol-pick-box")).toBeNull();
+    expect(screen.queryByTestId("symbol-pick-confirm")).toBeNull();
+    expect(discoverSymbolsAction).not.toHaveBeenCalled();
+    // ...and a click after Esc is an ordinary canvas click again, not another pick.
+    await clickPlan(260, 160);
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("pick mode stands the committed pins down, so a click on one still picks", async () => {
+    // Would catch: leaving the edit-mode pin handlers live, which stopPropagation and would eat
+    // the press before the root ever saw it.
+    renderWithTypes();
+    fireEvent.click(screen.getByTestId("edit-layout-toggle"));
+    armSymbolSelect("CAM");
+    const pin = screen.getByTestId("plan-pin-CAM01");
+    const svg = screen.getByTestId("floor-plan-canvas");
+    fireEvent.pointerDown(pin, { clientX: 200, clientY: 100, button: 0, pointerId: 15 });
+    await act(async () => {
+      fireEvent.pointerUp(svg, { clientX: 200, clientY: 100, pointerId: 15 });
+    });
+    await act(async () => {
+      fireEvent.click(svg, { clientX: 200, clientY: 100 });
+    });
+    expect(pickSymbolAction).toHaveBeenCalledTimes(1);
+    // The pin itself must not have been moved by the gesture.
+    expect(placeFloorDeviceAction).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { ClientSummary } from "./repository";
 import { createClientAction, renameClientAction, deleteClientAction } from "./actions";
 import { DeleteDialog } from "./DeleteDialog";
+import { IconButton } from "./IconButton";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -96,23 +97,21 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
               <td className="px-5 py-3 text-neutral-600">{c.siteCount}</td>
               <td className="px-5 py-3 text-neutral-600">{c.rackCount}</td>
               <td className="px-5 py-3 text-right">
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
+                {/* Matches the sites / rooms / devices tables — see ClientDetail. */}
+                <div className="flex items-center justify-end gap-1">
+                  <IconButton
                     data-testid={`edit-client-${c.code}`}
+                    icon="tabler:pencil"
+                    tip="Rename client"
                     onClick={() => setRenameTarget(c)}
-                    className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
+                  />
+                  <IconButton
                     data-testid={`delete-client-${c.code}`}
+                    icon="tabler:trash"
+                    tip="Delete client"
+                    variant="danger"
                     onClick={() => { setDeleteError(null); setDeleteTarget(c); }}
-                    className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                  >
-                    Delete
-                  </button>
+                  />
                 </div>
               </td>
             </tr>

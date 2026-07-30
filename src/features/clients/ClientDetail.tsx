@@ -8,6 +8,7 @@ import type { ClientRow } from "@/lib/supabase/types";
 import type { SiteSummary } from "./repository";
 import { createSiteAction, renameSiteAction, deleteSiteAction } from "./actions";
 import { DeleteDialog } from "./DeleteDialog";
+import { IconButton } from "./IconButton";
 import { UnlocatedSites } from "./UnlocatedSites";
 import { toBlips } from "./sitesMapOps";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
@@ -121,23 +122,23 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
                 <td className="px-5 py-3 text-neutral-600">{s.address ?? "—"}</td>
                 <td className="px-5 py-3 text-neutral-600">{s.rackCount}</td>
                 <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
+                  {/* Same pencil/trash pair the rooms and devices tables use, so a row action means
+                      the same thing everywhere in the app. The tooltip carries the accessible name
+                      now that the label is no longer visible. */}
+                  <div className="flex items-center justify-end gap-1">
+                    <IconButton
                       data-testid={`edit-site-${s.code}`}
+                      icon="tabler:pencil"
+                      tip="Rename site"
                       onClick={() => setRenameTarget(s)}
-                      className="text-sm font-semibold text-neutral-500 hover:text-neutral-800"
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <IconButton
                       data-testid={`delete-site-${s.code}`}
+                      icon="tabler:trash"
+                      tip="Delete site"
+                      variant="danger"
                       onClick={() => { setDeleteError(null); setDeleteTarget(s); }}
-                      className="text-sm font-semibold text-neutral-400 hover:text-red-600"
-                    >
-                      Delete
-                    </button>
+                    />
                   </div>
                 </td>
               </tr>

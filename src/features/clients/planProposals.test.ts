@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow, RoomRow } from "@/lib/supabase/types";
-import { planDeviceCommit, planRoomCommit, filterAlreadyTraced } from "./planProposals";
+import {
+  numberDeviceProposals,
+  orderDeviceProposals,
+  planDeviceCommit,
+  planRoomCommit,
+  filterAlreadyTraced,
+} from "./planProposals";
 import type { DeviceProposal, RoomProposal } from "./planDetect";
+import type { NormPoint } from "./floorPlanOps";
 
 function dev(over: Partial<FloorDeviceRow>): FloorDeviceRow {
   return {
@@ -155,5 +162,198 @@ describe("filterAlreadyTraced", () => {
   it("returns everything when there are no traced rooms at all", () => {
     const p = prop("room-0", [[0.12, 0.12], [0.38, 0.12], [0.38, 0.38], [0.12, 0.38]]);
     expect(filterAlreadyTraced([p], []).map((r) => r.id)).toEqual(["room-0"]);
+  });
+});
+
+describe("numberDeviceProposals", () => {
+  const dp = (id: string, typeCode: string, label = "GFI"): DeviceProposal => ({
+    id,
+    label,
+    typeCode,
+    point: [0.5, 0.5],
+    confidence: "high",
+  });
+
+  it("replaces the plan's text with PREFIX + number", () => {
+    // The whole point: a telecom outlet must not be named after the `GFI` tag that happened to be
+    // nearest it on the sheet.
+    const out = numberDeviceProposals([dp("a", "TO"), dp("b", "TO")], []);
+    expect(out.map((p) => p.label)).toEqual(["TO01", "TO02"]);
+  });
+
+  it("gives a batch DISTINCT codes, not N copies of the first free one", () => {
+    const out = numberDeviceProposals(Array.from({ length: 19 }, (_, i) => dp(`d${i}`, "TO")), []);
+    expect(new Set(out.map((p) => p.label)).size).toBe(19);
+    expect(out[18].label).toBe("TO19");
+  });
+
+  it("steps over codes the site already uses", () => {
+    const out = numberDeviceProposals([dp("a", "TO")], ["TO01", "TO02"]);
+    expect(out[0].label).toBe("TO03");
+  });
+
+  it("numbers each type independently", () => {
+    const out = numberDeviceProposals([dp("a", "TO"), dp("b", "CAM"), dp("c", "TO")], []);
+    expect(out.map((p) => p.label)).toEqual(["TO01", "CAM01", "TO02"]);
+  });
+
+  it("leaves everything except the label alone", () => {
+    const [out] = numberDeviceProposals([dp("a", "TO")], []);
+    expect(out).toMatchObject({ id: "a", typeCode: "TO", point: [0.5, 0.5], confidence: "high" });
+  });
+
+  it("produces codes that commit as CREATE — never silently binding to an existing device", () => {
+    // A generated code is free by construction, so planDeviceCommit can't read it as "place that
+    // one". Numbering must not quietly attach nineteen proposals to whatever is in the inventory.
+    const [out] = numberDeviceProposals([dp("a", "TO")], ["TO01"]);
+    expect(planDeviceCommit(out, [], ["TO01"])).toEqual({ kind: "create", code: "TO02" });
+  });
+});
+
+describe("orderDeviceProposals", () => {
+  const at = (id: string, x: number, y: number): DeviceProposal => ({
+    id,
+    label: "",
+    typeCode: "TO",
+    point: [x, y],
+    confidence: "high",
+  });
+  const ids = (ps: DeviceProposal[]) => ps.map((p) => p.id);
+  const room = (code: string, x0: number, y0: number, x1: number, y1: number) => ({
+    code,
+    plan_polygon: [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ] as NormPoint[],
+  });
+
+  it("runs a wall of outlets left-to-right even when their Y jitters", () => {
+    // The complaint this exists for: four ports along one wall must not come out 3, 17, 5, 11.
+    const jittered = [at("d", 0.8, 0.5005), at("b", 0.4, 0.4995), at("a", 0.2, 0.5), at("c", 0.6, 0.501)];
+    expect(ids(orderDeviceProposals(jittered))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("reads row by row down the sheet", () => {
+    const grid = [at("br", 0.8, 0.8), at("tr", 0.8, 0.2), at("bl", 0.2, 0.8), at("tl", 0.2, 0.2)];
+    expect(ids(orderDeviceProposals(grid))).toEqual(["tl", "tr", "bl", "br"]);
+  });
+
+  it("keeps genuinely separate rows apart rather than merging them into one", () => {
+    const rows = [at("low", 0.2, 0.6), at("high", 0.8, 0.2)];
+    expect(ids(orderDeviceProposals(rows))).toEqual(["high", "low"]);
+  });
+
+  it("GROUPS BY ROOM when the floor has traced rooms, so a room's ports are consecutive", () => {
+    // Interleaved on the sheet: without room grouping these alternate between the two rooms.
+    const ps = [
+      at("r2-a", 0.6, 0.2),
+      at("r1-a", 0.1, 0.2),
+      at("r2-b", 0.7, 0.5),
+      at("r1-b", 0.2, 0.5),
+    ];
+    const rooms = [room("102", 0.5, 0.0, 0.9, 0.9), room("101", 0.0, 0.0, 0.4, 0.9)];
+    // 101 is to the LEFT of 102 and both span the same rows, so it is walked first.
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["r1-a", "r1-b", "r2-a", "r2-b"]);
+  });
+
+  it("puts devices in no traced room LAST, still in reading order", () => {
+    const ps = [at("outside", 0.95, 0.1), at("inside", 0.1, 0.5)];
+    expect(ids(orderDeviceProposals(ps, [room("101", 0.0, 0.0, 0.4, 0.9)]))).toEqual([
+      "inside",
+      "outside",
+    ]);
+  });
+
+  it("ignores rooms that have never been traced", () => {
+    const ps = [at("b", 0.8, 0.2), at("a", 0.2, 0.2)];
+    const untraced = [{ code: "101", plan_polygon: null }];
+    expect(ids(orderDeviceProposals(ps, untraced))).toEqual(["a", "b"]);
+  });
+
+  it("never drops or duplicates a proposal", () => {
+    const ps = Array.from({ length: 12 }, (_, i) => at(`d${i}`, (i * 7) % 10 / 10, (i * 3) % 10 / 10));
+    const rooms = [room("101", 0.0, 0.0, 0.5, 0.5), room("102", 0.5, 0.5, 1.0, 1.0)];
+    const out = orderDeviceProposals(ps, rooms);
+    expect(out).toHaveLength(ps.length);
+    expect(new Set(ids(out))).toEqual(new Set(ids(ps)));
+  });
+
+  it("numbers in walk order once composed with numbering", () => {
+    const ps = [at("right", 0.8, 0.5), at("left", 0.2, 0.5)];
+    const out = numberDeviceProposals(orderDeviceProposals(ps), []);
+    expect(out.map((p) => [p.id, p.label])).toEqual([
+      ["left", "TO01"],
+      ["right", "TO02"],
+    ]);
+  });
+});
+
+describe("orderDeviceProposals — walking rooms nearest-first", () => {
+  const at = (id: string, x: number, y: number): DeviceProposal => ({
+    id,
+    label: "",
+    typeCode: "TO",
+    point: [x, y],
+    confidence: "high",
+  });
+  const ids = (ps: DeviceProposal[]) => ps.map((p) => p.id);
+  /** A small room centred on cx,cy. */
+  const roomAt = (code: string, cx: number, cy: number) => ({
+    code,
+    plan_polygon: [
+      [cx - 0.05, cy - 0.05],
+      [cx + 0.05, cy - 0.05],
+      [cx + 0.05, cy + 0.05],
+      [cx - 0.05, cy + 0.05],
+    ] as NormPoint[],
+  });
+
+  it("CONTINUES TO THE NEAREST ROOM instead of back across the plan", () => {
+    // Reading order would go A (top-left) -> B (top-RIGHT, same band) -> C, sending the crew across
+    // the building and back. C is much nearer to A, so the walk should take it second.
+    const rooms = [roomAt("A", 0.1, 0.1), roomAt("B", 0.9, 0.12), roomAt("C", 0.15, 0.5)];
+    const ps = [at("a", 0.1, 0.1), at("b", 0.9, 0.12), at("c", 0.15, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "c", "b"]);
+  });
+
+  it("measures nearest ON THE SHEET, not in normalized units", () => {
+    // B is 0.4 away in X, C is 0.4 away in Y. On a 3:2 sheet that X gap is half again as long, so
+    // C is genuinely the nearer room even though the normalized numbers tie.
+    const rooms = [roomAt("A", 0.1, 0.1), roomAt("B", 0.5, 0.1), roomAt("C", 0.1, 0.5)];
+    const ps = [at("a", 0.1, 0.1), at("b", 0.5, 0.1), at("c", 0.1, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms, 1))).toEqual(["a", "b", "c"]);
+    expect(ids(orderDeviceProposals(ps, rooms, 2600 / 1733))).toEqual(["a", "c", "b"]);
+  });
+
+  it("always starts at the top-left room, whatever order the rooms arrive in", () => {
+    const rooms = [roomAt("C", 0.15, 0.5), roomAt("B", 0.9, 0.12), roomAt("A", 0.1, 0.1)];
+    const ps = [at("c", 0.15, 0.5), at("b", 0.9, 0.12), at("a", 0.1, 0.1)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "c", "b"]);
+  });
+
+  it("chains on from the room just finished, not from the first one", () => {
+    // A -> B -> C -> D marches steadily right; a "nearest to the START" rule would give A, B, C, D
+    // only by luck, so D is placed to be nearest C and far from A.
+    const rooms = [roomAt("A", 0.1, 0.5), roomAt("B", 0.3, 0.5), roomAt("C", 0.5, 0.5), roomAt("D", 0.7, 0.5)];
+    const ps = [at("d", 0.7, 0.5), at("b", 0.3, 0.5), at("a", 0.1, 0.5), at("c", 0.5, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("still keeps a room's own ports in wall order", () => {
+    const rooms = [roomAt("A", 0.5, 0.5)];
+    const ps = [at("right", 0.54, 0.5), at("left", 0.46, 0.5)];
+    expect(ids(orderDeviceProposals(ps, rooms))).toEqual(["left", "right"]);
+  });
+
+  it("never drops or duplicates a proposal when walking rooms", () => {
+    const rooms = [roomAt("A", 0.2, 0.2), roomAt("B", 0.8, 0.2), roomAt("C", 0.5, 0.8)];
+    const ps = [at("a", 0.2, 0.2), at("b", 0.8, 0.2), at("c", 0.5, 0.8), at("loose", 0.95, 0.95)];
+    const out = orderDeviceProposals(ps, rooms);
+    expect(out).toHaveLength(4);
+    expect(new Set(ids(out))).toEqual(new Set(ids(ps)));
+    // The unroomed one still trails the walk.
+    expect(ids(out)[3]).toBe("loose");
   });
 });

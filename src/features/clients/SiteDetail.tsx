@@ -38,6 +38,10 @@ const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : use
 // to the very bottom of the window.
 const CONTENT_BOTTOM_PADDING = "3rem";
 
+/** Shared empty default for `planPdfUrls`, so callers that predate PDF retention don't hand the
+ *  canvas a brand-new object identity on every render. */
+const NO_PLAN_PDF_URLS: Record<string, string> = {};
+
 interface RackGroup {
   floorCode: string;
   roomCode: string;
@@ -78,6 +82,7 @@ export function SiteDetail({
   deviceTypes,
   plans,
   planUrls,
+  planPdfUrls = NO_PLAN_PDF_URLS,
 }: {
   client: ClientRow;
   site: SiteRow;
@@ -88,6 +93,9 @@ export function SiteDetail({
   deviceTypes: DeviceTypeRow[];
   plans: FloorPlanRow[];
   planUrls: Record<string, string>;
+  /** Signed URLs for the RETAINED SOURCE PDFs, keyed by floor_id exactly like `planUrls`. Only
+   *  floors whose plan kept its PDF appear; the canvas falls back to the PNG for the rest. */
+  planPdfUrls?: Record<string, string>;
 }) {
   useHeaderTitle(site.name);
   const router = useRouter();
@@ -151,6 +159,7 @@ export function SiteDetail({
   // planUrls is keyed by floor_id (not plan id) — see the page loader's comment.
   const activeFloorPlan = activeFloor ? plans.find((p) => p.floor_id === activeFloor.id) : undefined;
   const activePlanUrl = activeFloorPlan ? planUrls[activeFloorPlan.floor_id] : undefined;
+  const activePlanPdfUrl = activeFloorPlan ? planPdfUrls[activeFloorPlan.floor_id] : undefined;
 
   // Nothing is actually destroyed by deleting a plan (devices/rooms survive, only their
   // placement clears) — these counts feed the dialog's NOTE, never its typed-confirm gate.
@@ -462,11 +471,18 @@ export function SiteDetail({
                     ref={canvasRef}
                     plan={activeFloorPlan}
                     planUrl={activePlanUrl}
+                    // Present only when the source PDF was retained — the canvas then draws live
+                    // vector at the current zoom instead of stretching the flattened PNG.
+                    pdfUrl={activePlanPdfUrl}
+                    pdfPage={activeFloorPlan.pdf_page}
                     rooms={activeFloorRooms}
                     devices={activeFloorDevices}
                     racks={activeFloorRacks}
                     deviceTypes={deviceTypes}
                     allSiteDeviceCodes={allSiteDeviceCodes}
+                    // Extracted from the source PDF at upload; null for image plans and for PDFs
+                    // whose extraction hasn't run, both of which the canvas treats as "no walls".
+                    wallRuns={activeFloorPlan.wall_runs ?? []}
                     editable
                     planTools={planTools}
                     onRoomTraced={(polygon) => panelRef.current?.openAddRoomWithPolygon(polygon)}
