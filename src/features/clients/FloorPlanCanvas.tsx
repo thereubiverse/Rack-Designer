@@ -1593,13 +1593,23 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
    *  happened to stop, often mid-wall, while an intersection is where two walls actually cross —
    *  the real room corner. `snapToWallCorner` stays in the chain as a weaker fallback for the runs
    *  a corner-pair analysis doesn't cover (e.g. a run with no matching partner in range). */
+  /*  WALL snapping follows the "Show walls" toggle. Snapping a click to geometry the user cannot
+   *  see reads as the cursor being yanked somewhere for no reason — the toggle is what makes the
+   *  walls visible, so it is also what arms snapping to them. Turning it off gives back a plain
+   *  freehand trace.
+   *
+   *  Snapping to existing ROOM geometry (vertices and edges) is NOT gated: it predates the wall
+   *  work, its targets are always drawn on the plan, and the shared-wall contract in Slice B
+   *  depends on it — two rooms sharing a wall must land on exactly the same vertices whether or not
+   *  the wall overlay happens to be on. */
   function snapPoint(n: NormPoint): NormPoint | null {
+    const wall = <T,>(f: (p: NormPoint) => T | null) => (showWalls ? f(n) : null);
     return (
       snapToVertex(n) ??
-      snapToWallIntersection(n) ??
-      snapToWallCorner(n) ??
+      wall(snapToWallIntersection) ??
+      wall(snapToWallCorner) ??
       snapToEdge(n) ??
-      snapToWallLine(n)
+      wall(snapToWallLine)
     );
   }
 

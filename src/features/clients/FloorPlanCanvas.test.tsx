@@ -1962,12 +1962,24 @@ describe("FloorPlanCanvas (wall snapping)", () => {
   }
 
   /** Trace a triangle whose FIRST click is `first` (the point under test) and whose other two are
-   *  far from it, then close it. Returns the committed polygon. */
-  async function traceFrom(first: { x: number; y: number }, wallRuns?: WallRun[]) {
+   *  far from it, then close it. Returns the committed polygon.
+   *
+   *  WALLS ARE TURNED ON FIRST, because wall snapping is armed by the "Show walls" toggle — snapping
+   *  a click to geometry the user cannot see reads as the cursor being yanked for no reason. Pass
+   *  `showWalls: false` to exercise the ungated behaviour. */
+  async function traceFrom(
+    first: { x: number; y: number },
+    wallRuns?: WallRun[],
+    showWalls = true
+  ) {
     const onRoomTraced = vi.fn();
     const ref = createRef<FloorPlanCanvasHandle>();
     renderWithWalls({ ref, onRoomTraced, wallRuns });
 
+    // queryBy, not getBy: with `wallRuns=[]` the toggle isn't rendered at all, and that case has
+    // nothing to snap to anyway.
+    const wallsToggle = screen.queryByTestId("toggle-walls");
+    if (showWalls && wallsToggle) fireEvent.click(wallsToggle);
     act(() => ref.current!.startTraceRoom());
     const svg = screen.getByTestId("floor-plan-canvas");
     await act(async () => {
@@ -2102,6 +2114,37 @@ describe("FloorPlanCanvas (wall snapping)", () => {
       const polygon = await traceFrom({ x: 100, y: 58 }, [runA, runB]);
       expect(polygon[0][0]).toBeCloseTo(0.1, 6);
       expect(polygon[0][1]).toBeCloseTo(0.1, 6);
+    });
+  });
+
+  describe("gated on the Show walls toggle", () => {
+    // Snapping to geometry the user cannot see reads as the cursor being yanked somewhere for no
+    // reason. The toggle is what draws the walls, so it is also what arms snapping to them.
+
+    it("does NOT snap to a wall endpoint while walls are hidden", async () => {
+      // The exact click that snaps exactly onto (0.2, 0.8) with walls shown.
+      const polygon = await traceFrom({ x: sx(0.2) + 3, y: sy(0.8) + 3 }, undefined, false);
+      expect(polygon[0][0]).toBeCloseTo((sx(0.2) + 3 - 15) / 840, 10);
+      expect(polygon[0][1]).toBeCloseTo((sy(0.8) + 3) / 560, 10);
+    });
+
+    it("does NOT snap onto a wall line while walls are hidden", async () => {
+      const polygon = await traceFrom({ x: sx(0.4), y: sy(0.8) + 3 }, undefined, false);
+      expect(polygon[0][1]).toBeCloseTo((sy(0.8) + 3) / 560, 10);
+    });
+
+    it("STILL snaps to an existing room's vertex while walls are hidden", async () => {
+      // Room geometry is deliberately not gated: its targets are always drawn, and two rooms
+      // sharing a wall must land on the same vertices whether or not the overlay is on.
+      const polygon = await traceFrom({ x: sx(0.3) + 3, y: sy(0.1) + 3 }, undefined, false);
+      expect(polygon[0][0]).toBeCloseTo(0.3, 10);
+      expect(polygon[0][1]).toBeCloseTo(0.1, 10);
+    });
+
+    it("snaps again once the toggle is switched back on", async () => {
+      const polygon = await traceFrom({ x: sx(0.2) + 3, y: sy(0.8) + 3 }, undefined, true);
+      expect(polygon[0][0]).toBeCloseTo(0.2, 10);
+      expect(polygon[0][1]).toBeCloseTo(0.8, 10);
     });
   });
 
