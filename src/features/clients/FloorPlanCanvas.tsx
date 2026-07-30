@@ -28,6 +28,7 @@ import {
   removeVertex,
   moveEdge,
   edgeResizeCursor,
+  edgePanVelocity,
   dedupePolygon,
   type NormPoint,
   type PlanView,
@@ -1525,6 +1526,74 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
     [view, imgW, imgH]
   );
 
+  /** Where the pointer was last seen during a trace, in client coords. Null when not tracing. */
+  const tracePointerRef = useRef<{ x: number; y: number } | null>(null);
+  const autoPanRef = useRef<number | null>(null);
+
+  /** Recompute the rubber-band end and its snap target for a client position. Split out because the
+   *  auto-scroll loop needs it too, not just pointermove. */
+  const updateTraceHover = useCallback(
+    (clientX: number, clientY: number) => {
+      const raw = toNorm(clientX, clientY);
+      const snapped = raw ? snapPoint(raw) : null;
+      setSnapTarget(snapped);
+      setHoverPoint(snapped ?? raw);
+    },
+    // snapPoint reads live state each call and is intentionally not a dependency: including it
+    // would rebuild this — and restart the loop below — on every hover.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toNorm]
+  );
+
+  /** The updater, held by REF. `updateTraceHover` closes over `view`, so it gets a new identity on
+   *  every pan — and an effect that depended on it would tear the loop down and cancel its own next
+   *  frame each time it scrolled. Observed doing exactly that: four loop starts, two frames, and
+   *  the scroll stalling after a few pixels. */
+  const traceHoverRef = useRef(updateTraceHover);
+  traceHoverRef.current = updateTraceHover;
+
+  /**
+   * Scroll the plan while the cursor sits near the edge of the pane during a trace.
+   *
+   * A room bigger than the viewport cannot be traced otherwise: the first point is set, the next
+   * one is off-screen, and panning by hand means letting go of the gesture. Driven by rAF rather
+   * than pointermove because the cursor STOPS at the edge — there are no further move events to
+   * hang the scrolling off.
+   */
+  useEffect(() => {
+    const tracing = drawingRoomId != null || creatingRoom;
+    if (!tracing) {
+      tracePointerRef.current = null;
+      return;
+    }
+    if (typeof requestAnimationFrame === "undefined") return;
+    let last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000); // clamped: a backgrounded tab must not lurch
+      last = now;
+      const pt = tracePointerRef.current;
+      const svg = svgRef.current;
+      if (pt && svg) {
+        const rect = svg.getBoundingClientRect();
+        const [vx, vy] = edgePanVelocity(pt.x - rect.left, pt.y - rect.top, rect.width, rect.height);
+        if (vx !== 0 || vy !== 0) {
+          setReturnView(null);
+          setView((v) => ({ ...v, panX: v.panX + vx * dt, panY: v.panY + vy * dt }));
+          // The plan moved under a still cursor, so the point it is over changed with it.
+          traceHoverRef.current(pt.x, pt.y);
+        }
+      }
+      autoPanRef.current = requestAnimationFrame(step);
+    };
+    autoPanRef.current = requestAnimationFrame(step);
+    return () => {
+      if (autoPanRef.current != null) cancelAnimationFrame(autoPanRef.current);
+      autoPanRef.current = null;
+      tracePointerRef.current = null;
+    };
+  }, [drawingRoomId, creatingRoom]);
+
+
   // Real room corners, derived from the wall runs ONCE and memoised. `deriveWallCorners` is O(n²)
   // over every pair of runs — 704 runs is ~247k pairs, fine as a one-off but never something to run
   // per pointermove, which is why this lives in a `useMemo` keyed on `wallRuns` rather than inside
@@ -2161,10 +2230,11 @@ export const FloorPlanCanvas = forwardRef<FloorPlanCanvasHandle, FloorPlanCanvas
       return;
     }
     if (drawingRoomId || creatingRoom) {
-      const raw = toNorm(e.clientX, e.clientY);
-      const snapped = raw ? snapPoint(raw) : null;
-      setSnapTarget(snapped);
-      setHoverPoint(snapped ?? raw);
+      // Remembered so the auto-scroll loop can keep the rubber band under a STATIONARY cursor: once
+      // the plan starts moving beneath it, the point it is over changes every frame with no further
+      // pointermove to tell us.
+      tracePointerRef.current = { x: e.clientX, y: e.clientY };
+      updateTraceHover(e.clientX, e.clientY);
     }
     const d = dragRef.current;
     if (!d) return;

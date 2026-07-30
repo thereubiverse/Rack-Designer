@@ -70,6 +70,41 @@ export function polygonCentroid(polygon: NormPoint[]): NormPoint {
   ];
 }
 
+/** How deep into the pane the auto-scroll band reaches, and how fast it pans at full depth. */
+export const EDGE_PAN_BAND_PX = 48;
+export const EDGE_PAN_MAX_PX_PER_S = 900;
+
+/**
+ * How fast the plan should scroll while the cursor sits near the edge of the pane.
+ *
+ * Returns the velocity of the CONTENT, in screen px per second: near the LEFT edge the plan moves
+ * right (positive x) so that more of its left-hand side comes into view.
+ *
+ * Speed ramps with depth into the band rather than switching on, so a cursor that merely strays
+ * near the edge creeps instead of bolting. Past the edge entirely the ratio saturates at 1 — a
+ * pointer dragged outside the pane keeps scrolling at full speed rather than stopping dead.
+ */
+export function edgePanVelocity(
+  x: number,
+  y: number,
+  paneW: number,
+  paneH: number,
+  band = EDGE_PAN_BAND_PX,
+  maxSpeed = EDGE_PAN_MAX_PX_PER_S
+): [number, number] {
+  if (band <= 0 || paneW <= 0 || paneH <= 0) return [0, 0];
+  const axis = (v: number, size: number) => {
+    // Only one side can be active unless the pane is narrower than two bands, where the nearer
+    // edge should win rather than the two cancelling to zero.
+    const fromStart = band - v;
+    const fromEnd = v - (size - band);
+    if (fromStart <= 0 && fromEnd <= 0) return 0;
+    if (fromStart > fromEnd) return Math.min(1, fromStart / band) * maxSpeed;
+    return -Math.min(1, fromEnd / band) * maxSpeed;
+  };
+  return [axis(x, paneW), axis(y, paneH)];
+}
+
 /**
  * Slide one WALL of a room in or out, keeping it parallel to itself.
  *

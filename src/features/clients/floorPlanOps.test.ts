@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { FloorDeviceRow } from "@/lib/supabase/types";
 import {
   dedupePolygon,
+  EDGE_PAN_BAND_PX,
+  EDGE_PAN_MAX_PX_PER_S,
+  edgePanVelocity,
   edgeResizeCursor,
   insertVertexOnEdge,
   isNorm,
@@ -208,5 +211,59 @@ describe("edgeResizeCursor", () => {
 
   it("falls back to grab on a degenerate edge rather than picking a meaningless arrow", () => {
     expect(edgeResizeCursor([0.3, 0.3], [0.3, 0.3])).toBe("grab");
+  });
+});
+
+describe("edgePanVelocity", () => {
+  const W = 800;
+  const H = 600;
+
+  it("is still in the middle of the pane", () => {
+    expect(edgePanVelocity(400, 300, W, H)).toEqual([0, 0]);
+  });
+
+  it("scrolls the plan RIGHT near the left edge, so its left side comes into view", () => {
+    const [vx, vy] = edgePanVelocity(0, 300, W, H);
+    expect(vx).toBe(EDGE_PAN_MAX_PX_PER_S);
+    expect(vy).toBe(0);
+  });
+
+  it("scrolls the other way near each of the other three edges", () => {
+    expect(edgePanVelocity(W, 300, W, H)[0]).toBe(-EDGE_PAN_MAX_PX_PER_S);
+    expect(edgePanVelocity(400, 0, W, H)[1]).toBe(EDGE_PAN_MAX_PX_PER_S);
+    expect(edgePanVelocity(400, H, W, H)[1]).toBe(-EDGE_PAN_MAX_PX_PER_S);
+  });
+
+  it("RAMPS with depth rather than switching on, so a near miss creeps", () => {
+    const shallow = edgePanVelocity(EDGE_PAN_BAND_PX - 4, 300, W, H)[0];
+    const deep = edgePanVelocity(4, 300, W, H)[0];
+    expect(shallow).toBeGreaterThan(0);
+    expect(shallow).toBeLessThan(deep);
+    // Exactly at the band boundary there is no scroll at all.
+    expect(edgePanVelocity(EDGE_PAN_BAND_PX, 300, W, H)[0]).toBe(0);
+  });
+
+  it("SATURATES outside the pane instead of stopping dead", () => {
+    // Dragging the pointer well past the edge must keep scrolling, not fall off a cliff.
+    expect(edgePanVelocity(-500, 300, W, H)[0]).toBe(EDGE_PAN_MAX_PX_PER_S);
+    expect(edgePanVelocity(W + 500, 300, W, H)[0]).toBe(-EDGE_PAN_MAX_PX_PER_S);
+  });
+
+  it("scrolls diagonally in a corner", () => {
+    const [vx, vy] = edgePanVelocity(0, 0, W, H);
+    expect(vx).toBeGreaterThan(0);
+    expect(vy).toBeGreaterThan(0);
+  });
+
+  it("lets the NEARER edge win when the pane is narrower than two bands", () => {
+    // Both sides are 'active' on a 40px pane; without a winner they would cancel to a dead zone.
+    const narrow = 40;
+    expect(edgePanVelocity(5, 300, narrow, H)[0]).toBeGreaterThan(0);
+    expect(edgePanVelocity(35, 300, narrow, H)[0]).toBeLessThan(0);
+  });
+
+  it("returns no velocity for a degenerate pane or band", () => {
+    expect(edgePanVelocity(10, 10, 0, 0)).toEqual([0, 0]);
+    expect(edgePanVelocity(10, 10, W, H, 0)).toEqual([0, 0]);
   });
 });

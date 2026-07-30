@@ -989,6 +989,113 @@ describe("FloorPlanCanvas (create-by-geometry handle)", () => {
     expect(placeFloorDeviceAction).toHaveBeenCalledTimes(before);
   });
 
+  // ---- Auto-scroll at the pane edge while tracing --------------------------------------------
+  // A room bigger than the viewport cannot be traced otherwise: the first point is set, the next is
+  // off-screen, and panning by hand means abandoning the gesture.
+
+  describe("edge auto-scroll while tracing", () => {
+    /** jsdom's getBoundingClientRect is all zeros, and a zero-size pane has no edge band at all —
+     *  so the pane has to be given real dimensions before any of this can happen. */
+    function withPaneRect(svg: Element, w = 870, h = 560) {
+      return vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+        left: 0, top: 0, right: w, bottom: h, width: w, height: h, x: 0, y: 0, toJSON: () => ({}),
+      } as DOMRect);
+    }
+    /** rAF is captured rather than run, so frames can be stepped deterministically with a chosen dt
+     *  instead of racing a real clock. */
+    function captureFrames() {
+      const frames: FrameRequestCallback[] = [];
+      const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        frames.push(cb);
+        return frames.length;
+      });
+      const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+      return { frames, restore: () => { raf.mockRestore(); caf.mockRestore(); } };
+    }
+    const panOf = () => {
+      const t = screen.getByTestId("floor-plan-canvas").querySelector("g")!.getAttribute("transform")!;
+      const m = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(t)!;
+      return { x: Number(m[1]), y: Number(m[2]) };
+    };
+
+    it("scrolls the plan toward the edge the cursor is held against", async () => {
+      const ref = createRef<FloorPlanCanvasHandle>();
+      renderWithHandle({ ref });
+      const svg = screen.getByTestId("floor-plan-canvas");
+      const rect = withPaneRect(svg);
+      const { frames, restore } = captureFrames();
+
+      act(() => ref.current!.startTraceRoom());
+      const before = panOf();
+      // Cursor parked hard against the LEFT edge — no further pointermove will arrive.
+      act(() => { fireEvent.pointerMove(svg, { clientX: 2, clientY: 280 }); });
+
+      const t0 = performance.now();
+      await act(async () => { frames[frames.length - 1](t0 + 100); });
+
+      // Plan moved RIGHT, revealing what was off the left edge. Y is untouched: the cursor is
+      // vertically centred.
+      expect(panOf().x).toBeGreaterThan(before.x);
+      expect(panOf().y).toBeCloseTo(before.y, 6);
+      restore();
+      rect.mockRestore();
+    });
+
+    it("stays put while the cursor is away from the edges", async () => {
+      const ref = createRef<FloorPlanCanvasHandle>();
+      renderWithHandle({ ref });
+      const svg = screen.getByTestId("floor-plan-canvas");
+      const rect = withPaneRect(svg);
+      const { frames, restore } = captureFrames();
+
+      act(() => ref.current!.startTraceRoom());
+      const before = panOf();
+      act(() => { fireEvent.pointerMove(svg, { clientX: 435, clientY: 280 }); });
+      const t0 = performance.now();
+      await act(async () => { frames[frames.length - 1](t0 + 100); });
+
+      expect(panOf()).toEqual(before);
+      restore();
+      rect.mockRestore();
+    });
+
+    it("does NOT scroll when no trace is in progress", async () => {
+      renderCanvas(true);
+      const svg = screen.getByTestId("floor-plan-canvas");
+      const rect = withPaneRect(svg);
+      const { frames, restore } = captureFrames();
+
+      const before = panOf();
+      act(() => { fireEvent.pointerMove(svg, { clientX: 2, clientY: 280 }); });
+      // Any frames pending here belong to something else; running them must not pan the plan.
+      const t0 = performance.now();
+      await act(async () => { frames.forEach((f) => f(t0 + 100)); });
+
+      expect(panOf()).toEqual(before);
+      restore();
+      rect.mockRestore();
+    });
+
+    it("scrolls diagonally from a corner", async () => {
+      const ref = createRef<FloorPlanCanvasHandle>();
+      renderWithHandle({ ref });
+      const svg = screen.getByTestId("floor-plan-canvas");
+      const rect = withPaneRect(svg);
+      const { frames, restore } = captureFrames();
+
+      act(() => ref.current!.startTraceRoom());
+      const before = panOf();
+      act(() => { fireEvent.pointerMove(svg, { clientX: 3, clientY: 3 }); });
+      const t0 = performance.now();
+      await act(async () => { frames[frames.length - 1](t0 + 100); });
+
+      expect(panOf().x).toBeGreaterThan(before.x);
+      expect(panOf().y).toBeGreaterThan(before.y);
+      restore();
+      rect.mockRestore();
+    });
+  });
+
   it("startTraceRoom + three clicks + double-click reports the traced outline", async () => {
     const onRoomTraced = vi.fn();
     const ref = createRef<FloorPlanCanvasHandle>();
