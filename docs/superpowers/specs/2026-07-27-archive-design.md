@@ -1,4 +1,4 @@
-# Archive (Slice G) — Design
+# Archive & Restore (Slice G1) — Design
 
 ## 1. Why
 
@@ -14,8 +14,23 @@ app. Archive serves both, which a time-boxed undo would not.
 
 ## 2. Scope
 
-**This spec is the archive only.** Clients, sites and floors become soft-deletable, restorable, and
-permanently deletable from one page under Settings.
+**This spec is archive and restore only.** Clients, sites and floors become soft-deletable and
+restorable from one page under Settings. **Permanent deletion is NOT in this slice** — it is
+[Slice G2](./2026-07-27-archive-purge-design.md).
+
+The split is deliberate and is the whole point of the ordering: every step below leaves the system
+safer than it found it, and the only genuinely destructive code in the feature arrives afterwards,
+once the recovery path already exists and has been exercised. Shipping G1 alone is a strict
+improvement — deletes stop destroying — and "we cannot purge yet" is a far better problem to have
+than "purge had a bug".
+
+**Build order within this slice**, for the same reason:
+
+1. Migration — additive, touches no existing row.
+2. Repository filtering and the archive/restore actions, with the delete buttons LEFT ALONE. Nothing
+   user-visible changes; nothing can go missing.
+3. The archive page with Restore. Recovery exists and is proven before anything can use it.
+4. Only then, repoint the delete controls to archive.
 
 A general "log every change" feed is **not** built. It was the original framing, but the emergency
 is destruction and an archive addresses that directly. A change feed remains a separate slice; the
@@ -85,15 +100,14 @@ Two categories are deliberately **not** filtered:
 An archived client's sites need no flags of their own: their only route in is the client page, which
 404s.
 
-### Permanent delete
+### Permanent delete — NOT in this slice
 
-Lives only on the archive page. Keeps the type-the-code gate, and its warning uses the cascade
-counters — which now include floor devices, so it states what will actually be destroyed. It runs
-today's cascade delete **and removes the floor-plan storage objects** for every floor beneath it.
+Nothing in G1 destroys anything. Until [G2](./2026-07-27-archive-purge-design.md) lands, purging an
+archived record is a database operation, not a product feature.
 
-Storage cleanup is new work, not a regression: today only explicit plan deletion clears storage, so
-deleting a client already orphans its PDFs and PNGs in the bucket forever. Shipping permanent delete
-without this would knowingly widen an existing leak.
+**The cost of that, stated plainly:** an archived code stays reserved with no way to release it. If
+`URI` is archived, creating a new client called `URI` fails until it is restored. That is the right
+trade for this slice — a blocked create is recoverable in seconds, a bad purge is not.
 
 ## 5. The archive page
 
@@ -106,7 +120,9 @@ Three levels, nested by ownership:
 - **Archived sites** — nested under their client's name.
 - **Archived floors** — nested under client → site.
 
-Each row offers **Restore** and **Delete permanently**.
+Each row offers **Restore**. "Delete permanently" arrives with G2 and is deliberately absent here —
+a destructive control on a page whose restore path has not yet been exercised in anger is exactly
+the thing this ordering avoids.
 
 **A row appears only if its ancestors are live.** An archived site whose client is also archived is
 not listed separately, and neither is a floor under an archived site — restoring one alone would put
@@ -120,7 +136,6 @@ it back somewhere still invisible, which reads as a broken restore. They return 
 | Restore a site whose client is archived | Cannot arise — not listed separately (§5) |
 | Archive a client, restore it later | Sites/floors archived *individually beforehand* stay archived. Independent flags, no memory of ordering |
 | Create a client reusing an archived code | Fails with a message naming the archive, not a raw constraint error |
-| Permanently delete a client | Cascade removes rows; storage objects for its plans are removed too |
 | Archived client's counts | Excluded from the dashboard, its cards and its totals — `listClients` filters |
 
 ## 7. Testing
@@ -128,20 +143,22 @@ it back somewhere still invisible, which reads as a broken restore. They return 
 - **Pure** (`archiveOps.ts`): the nesting rule — given archived clients, sites and floors plus their
   ancestry, produce the page's tree, omitting rows whose ancestor is archived. This is the only real
   logic in the slice, and it is worth isolating from both React and the database.
-- **Actions**, DB-free with recorded arguments: archive sets `archived_at` and does **not** delete;
-  restore clears it; permanent delete cascades *and* calls storage removal for each plan.
+- **Actions**, DB-free with recorded arguments: archive sets `archived_at` and — the assertion that
+  matters — never calls a delete; restore clears it.
 - **Repository**, in the existing integration suite: list queries exclude archived rows; by-code
   lookups return null for them; cascade counters still count archived children.
-- **Live, the acceptance bar**: archive `URI`, confirm it leaves the dashboard, the clients directory
-  and the sites map; restore it and confirm all 31 sites, 19 floor devices, 9 traced rooms and both
-  floor plans are intact and unchanged.
+- **Live, the acceptance bar**: exercised on a THROWAWAY client created for the purpose, never on
+  real data. Archive it, confirm it leaves the dashboard, the clients directory and the sites map,
+  restore it, and confirm its sites, floors, plans and devices are intact and unchanged.
+- A `pg_dump` of the database and a copy of the storage bucket are taken before any of this runs.
+  Both live outside the repository: `~/backups/network-doc-platform/`.
 - Tests run by EXPLICIT FILENAME or `--exclude '**/*.integration.test.ts'` — the integration files
   wipe the local database.
 
 ## 8. Out of scope
 
-A change feed of every edit (the original "activity log" framing). Archiving rooms, racks or
-individual devices. Bulk restore. Retention policies or auto-purge. Attribution of who archived
-what — there is no auth yet (`createServiceClient`: "Phase 1 uses the service role because there is
+Permanent deletion and storage cleanup — [Slice G2](./2026-07-27-archive-purge-design.md). A change
+feed of every edit (the original "activity log" framing). Archiving rooms, racks or individual
+devices. Bulk restore. Retention policies or auto-purge. Attribution of who archived what — there is no auth yet (`createServiceClient`: "Phase 1 uses the service role because there is
 no auth yet"), so the archive records *when*, not *who*, and gains the actor for free when auth
 lands.
