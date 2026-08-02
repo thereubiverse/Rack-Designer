@@ -14,6 +14,10 @@ import {
   deleteSite,
   getSiteById,
   setSiteGeocode,
+  archiveClient,
+  restoreClient,
+  archiveSite,
+  restoreSite,
 } from "./repository";
 import {
   createFloor,
@@ -35,6 +39,8 @@ import {
   clearRackPlacement,
   setRoomPolygon,
   clearRoomPolygon,
+  archiveFloor,
+  restoreFloor,
 } from "@/features/locations/repository";
 import type { NormPoint } from "./floorPlanOps";
 import { readPngDimensions } from "./pngHeader";
@@ -314,6 +320,52 @@ export async function deleteFloorAction(formData: FormData): Promise<{ ok: boole
   }
   revalidatePath("/clients");
   return { ok: true };
+}
+
+// ---- Archive & restore -----------------------------------------------------------------------
+//
+// Archiving is the new meaning of the delete controls on clients, sites and floors: the row is
+// flagged, not destroyed, and every child is left alone. Both paths revalidate the directory AND
+// the archive page, because one operation changes what each of them shows.
+
+async function archiveOrRestore(
+  id: string,
+  run: (db: ReturnType<typeof createServiceClient>, id: string) => Promise<void>,
+  kind: "client" | "site" | "floor"
+): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await run(db, id);
+  } catch (e) {
+    return { ok: false, error: friendly(e, kind) };
+  }
+  revalidatePath("/clients");
+  revalidatePath("/settings/archive");
+  return { ok: true };
+}
+
+export async function archiveClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveClient, "client");
+}
+
+export async function restoreClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreClient, "client");
+}
+
+export async function archiveSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveSite, "site");
+}
+
+export async function restoreSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreSite, "site");
+}
+
+export async function archiveFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveFloor, "floor");
+}
+
+export async function restoreFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreFloor, "floor");
 }
 
 export async function createRoomAction(
