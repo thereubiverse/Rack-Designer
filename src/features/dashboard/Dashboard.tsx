@@ -9,16 +9,11 @@ import type { ClientSummary } from "@/features/clients/repository";
  *  A SERVER component. It renders counts `listClients` already computes, so there is no state, no
  *  effect and no client bundle for what is essentially a list of links. */
 
-/** "Devices" means every device documented for the client — the ones mounted in racks AND the ones
- *  placed on floor plans. They live in different tables and are counted separately upstream; showing
- *  only the rack ones under a plain "Devices" heading would badly understate a client whose work so
- *  far has been floor plans. */
-const deviceTotal = (c: ClientSummary) => c.deviceCount + c.floorDeviceCount;
-
 const STATS: { label: string; icon: string; of: (c: ClientSummary) => number }[] = [
   { label: "Sites", icon: "tabler:building-community", of: (c) => c.siteCount },
   { label: "Racks", icon: "tabler:server-2", of: (c) => c.rackCount },
-  { label: "Devices", icon: "tabler:device-desktop", of: deviceTotal },
+  // `deviceCount` covers rack AND floor-plan devices — see ClientSummary.
+  { label: "Devices", icon: "tabler:device-desktop", of: (c) => c.deviceCount },
 ];
 
 /** "1 site", "2 sites" — a dashboard that says "1 racks" looks unfinished. */
@@ -42,7 +37,7 @@ export function Dashboard({ clients }: { clients: ClientSummary[] }) {
     (t, c) => ({
       sites: t.sites + c.siteCount,
       racks: t.racks + c.rackCount,
-      devices: t.devices + deviceTotal(c),
+      devices: t.devices + c.deviceCount,
     }),
     { sites: 0, racks: 0, devices: 0 }
   );

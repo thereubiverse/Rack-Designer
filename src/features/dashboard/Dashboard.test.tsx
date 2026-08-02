@@ -10,7 +10,6 @@ const client = (over: Partial<ClientSummary> = {}): ClientSummary => ({
   siteCount: 31,
   rackCount: 4,
   deviceCount: 128,
-  floorDeviceCount: 0,
   ...over,
 });
 
@@ -55,6 +54,8 @@ describe("Dashboard", () => {
     expect(within(card).getAllByText("0")).toHaveLength(3);
   });
 
+  // `deviceCount` already covers rack AND floor-plan devices — the repository sums them, so there
+  // is nothing for this component to add up. countSiteCascade/countClientCascade own that.
   it("totals every client across the top", () => {
     render(
       <Dashboard
@@ -74,30 +75,6 @@ describe("Dashboard", () => {
   it("says 1 client, not 1 clients", () => {
     render(<Dashboard clients={[client()]} />);
     expect(screen.getByTestId("dashboard-totals").textContent).toContain("1 client ");
-  });
-
-  it("counts RACK and FLOOR devices together under Devices", () => {
-    // Floor devices are the outlets and cameras placed on plans. A client whose work so far is all
-    // floor plans would otherwise show 0 devices while having hundreds.
-    // rackCount deliberately distinct from deviceCount, so "the rack figure" and "the raw rack-
-    // device figure" cannot be confused for one another in the assertions below.
-    render(<Dashboard clients={[client({ rackCount: 7, deviceCount: 4, floorDeviceCount: 19 })]} />);
-    const card = screen.getByTestId("dashboard-client-URI");
-    expect(within(card).getByText("23")).toBeInTheDocument();
-    // The rack-only figure must not be what's shown under "Devices".
-    expect(within(card).queryByText("4")).toBeNull();
-  });
-
-  it("totals devices across both tables too", () => {
-    render(
-      <Dashboard
-        clients={[
-          client({ deviceCount: 4, floorDeviceCount: 19 }),
-          client({ id: "c2", code: "UP", deviceCount: 1, floorDeviceCount: 2 }),
-        ]}
-      />
-    );
-    expect(screen.getByTestId("dashboard-totals").textContent).toContain("26 devices");
   });
 
   it("offers a way forward when there are no clients at all", () => {

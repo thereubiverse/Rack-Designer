@@ -230,6 +230,50 @@ describe("clients repository (integration)", () => {
     expect(clientCounts.sites).toBe(1);
     expect(clientCounts.racks).toBe(1);
     expect(clientCounts.devices).toBe(1);
+
+    // FLOOR-plan devices count as devices too. They hang off the site, not off a rack, so a delete
+    // warning built only from the rack chain under-states what it is about to destroy.
+    const { data: deviceType } = await db.from("device_types").select("id").limit(1).single();
+    await db.from("floor_devices").insert({
+      site_id: site.id,
+      floor_id: floor!.id,
+      room_id: room!.id,
+      device_type_id: deviceType!.id,
+      code: "TO01",
+      status: "planned",
+    });
+
+    expect((await countSiteCascade(db, site.id)).devices).toBe(2);
+    expect((await countClientCascade(db, client.id)).devices).toBe(2);
+  });
+
+  it("counts floor devices even when the site owns NO racks at all", async () => {
+    // The case every early return in the cascade counters used to miss: plans traced, outlets
+    // placed, not a rack in sight — and the delete dialog claiming zero devices.
+    const client = await createClientRow(db, { code: "T-CLI-H", name: "Client H" });
+    const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
+    const { data: floor } = await db
+      .from("floors")
+      .insert({ site_id: site.id, code: "GF" })
+      .select("*")
+      .single();
+    const { data: deviceType } = await db.from("device_types").select("id").limit(1).single();
+    await db.from("floor_devices").insert({
+      site_id: site.id,
+      floor_id: floor!.id,
+      room_id: null,
+      device_type_id: deviceType!.id,
+      code: "TO01",
+      status: "planned",
+    });
+
+    const siteCounts = await countSiteCascade(db, site.id);
+    expect(siteCounts.racks).toBe(0);
+    expect(siteCounts.devices).toBe(1);
+
+    const clientCounts = await countClientCascade(db, client.id);
+    expect(clientCounts.racks).toBe(0);
+    expect(clientCounts.devices).toBe(1);
   });
 
   it("cascades sites away when a client is deleted", async () => {

@@ -10,12 +10,10 @@ export interface ClientSummary {
   name: string;
   siteCount: number;
   rackCount: number;
-  /** Devices mounted in RACKS. Kept separate from `floorDeviceCount` because this one also feeds
-   *  the delete-confirmation dialog's cascade warning, where the two are counted differently. */
+  /** EVERY device: mounted in racks AND placed on floor plans. The two live in different tables,
+   *  and counting only the rack ones reported 0 for a client whose work so far was floor plans —
+   *  and, worse, under-stated what a delete was about to destroy. */
   deviceCount: number;
-  /** Devices placed on FLOOR PLANS — outlets, cameras, access points. A client's device total is
-   *  this plus `deviceCount`; neither alone is "how many devices does this client have". */
-  floorDeviceCount: number;
 }
 
 export interface SiteSummary {
@@ -60,7 +58,6 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
         siteCount: counts.sites ?? 0,
         rackCount: counts.racks ?? 0,
         deviceCount: counts.devices ?? 0,
-        floorDeviceCount: await countClientFloorDevices(db, client.id),
       };
     })
   );
@@ -269,17 +266,21 @@ export async function setSiteGeocode(db: SupabaseClient, siteId: string, result:
 }
 
 export async function countSiteCascade(db: SupabaseClient, siteId: string): Promise<CascadeCounts> {
+  // Counted FIRST, and added to every return below: floor devices hang off the site directly, so a
+  // site can hold hundreds of outlets without a single rack. Every early return here used to report
+  // "0 devices" in that case — in a dialog asking whether to delete them.
+  const floorDevices = await countFloorDevicesForSites(db, [siteId]);
   const { data: floors } = await db.from("floors").select("id").eq("site_id", siteId);
   const floorIds = (floors ?? []).map((f) => f.id as string);
-  if (floorIds.length === 0) return { racks: 0, devices: 0 };
+  if (floorIds.length === 0) return { racks: 0, devices: floorDevices };
   const { data: rooms } = await db.from("rooms").select("id").in("floor_id", floorIds);
   const roomIds = (rooms ?? []).map((r) => r.id as string);
-  if (roomIds.length === 0) return { racks: 0, devices: 0 };
+  if (roomIds.length === 0) return { racks: 0, devices: floorDevices };
   const { data: racks } = await db.from("racks").select("id").in("room_id", roomIds);
   const rackIds = (racks ?? []).map((r) => r.id as string);
-  if (rackIds.length === 0) return { racks: 0, devices: 0 };
+  if (rackIds.length === 0) return { racks: 0, devices: floorDevices };
   const { count } = await db.from("rack_devices").select("id", { count: "exact", head: true }).in("rack_id", rackIds);
-  return { racks: rackIds.length, devices: count ?? 0 };
+  return { racks: rackIds.length, devices: (count ?? 0) + floorDevices };
 }
 
 export interface RackBreadcrumb {
@@ -331,14 +332,10 @@ export async function getRackBreadcrumb(db: SupabaseClient, rackId: string): Pro
   };
 }
 
-/** Floor-plan devices belonging to a client, counted through `floor_devices.site_id` — the table
- *  carries the site directly, so this does not have to walk floors and rooms the way the rack path
- *  does. Zero sites means zero devices, and `.in()` on an empty list is an error, not an empty
- *  result. */
-export async function countClientFloorDevices(db: SupabaseClient, clientId: string): Promise<number> {
-  const { data: sites, error } = await db.from("sites").select("id").eq("client_id", clientId);
-  if (error) throw new Error(`countClientFloorDevices: ${error.message}`);
-  const siteIds = (sites ?? []).map((s) => s.id as string);
+/** Floor-plan devices for a set of sites, counted through `floor_devices.site_id` — the table
+ *  carries the site directly, so this never has to walk floors and rooms the way the rack path
+ *  does. An empty list short-circuits: `.in()` on one is an error, not an empty result. */
+async function countFloorDevicesForSites(db: SupabaseClient, siteIds: string[]): Promise<number> {
   if (siteIds.length === 0) return 0;
   const { count } = await db
     .from("floor_devices")
@@ -353,18 +350,22 @@ export async function countClientCascade(db: SupabaseClient, clientId: string): 
   const siteIds = (sites ?? []).map((s) => s.id as string);
   if (siteIds.length === 0) return { sites: 0, racks: 0, devices: 0 };
 
+  // See countSiteCascade: floor devices are counted up front and carried through every early
+  // return, because they exist independently of whether the client owns a single rack.
+  const floorDevices = await countFloorDevicesForSites(db, siteIds);
+
   const { data: floors } = await db.from("floors").select("id").in("site_id", siteIds);
   const floorIds = (floors ?? []).map((f) => f.id as string);
-  if (floorIds.length === 0) return { sites: siteIds.length, racks: 0, devices: 0 };
+  if (floorIds.length === 0) return { sites: siteIds.length, racks: 0, devices: floorDevices };
 
   const { data: rooms } = await db.from("rooms").select("id").in("floor_id", floorIds);
   const roomIds = (rooms ?? []).map((r) => r.id as string);
-  if (roomIds.length === 0) return { sites: siteIds.length, racks: 0, devices: 0 };
+  if (roomIds.length === 0) return { sites: siteIds.length, racks: 0, devices: floorDevices };
 
   const { data: racks } = await db.from("racks").select("id").in("room_id", roomIds);
   const rackIds = (racks ?? []).map((r) => r.id as string);
-  if (rackIds.length === 0) return { sites: siteIds.length, racks: 0, devices: 0 };
+  if (rackIds.length === 0) return { sites: siteIds.length, racks: 0, devices: floorDevices };
 
   const { count } = await db.from("rack_devices").select("id", { count: "exact", head: true }).in("rack_id", rackIds);
-  return { sites: siteIds.length, racks: rackIds.length, devices: count ?? 0 };
+  return { sites: siteIds.length, racks: rackIds.length, devices: (count ?? 0) + floorDevices };
 }
