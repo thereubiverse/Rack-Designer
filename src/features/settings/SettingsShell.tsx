@@ -29,6 +29,7 @@ export function SettingsShell({
                 key={item.key}
                 href={item.href}
                 data-testid={`settings-nav-${item.key}`}
+                aria-current={active === item.key ? "page" : undefined}
                 className={`block rounded-lg px-3 py-2 text-sm font-medium ${
                   active === item.key
                     ? "bg-blue-50 text-blue-700"

@@ -60,6 +60,9 @@ function Row({
         data-testid={`restore-${testId.replace("archived-", "")}`}
         disabled={busy}
         onClick={onRestore}
+        // Every row's visible label is "Restore" — the aria-label disambiguates them for
+        // screen-reader users tabbing through multiple rows, while sighted users keep the terse text.
+        aria-label={`Restore ${title}`}
         className="shrink-0 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
       >
         Restore
@@ -81,18 +84,21 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 
 export function ArchivePanel({ tree }: { tree: ArchiveTree }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  // The id currently being restored, not a plain boolean — a boolean would disable every row's
+  // button while any one restore is in flight, which makes the whole list look stuck for a
+  // single row's request. Tracking the id lets only that row's button disable.
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const total = tree.clients.length + tree.sites.length + tree.floors.length;
 
   async function run(action: (fd: FormData) => Promise<{ ok: boolean; error?: string }>, id: string) {
-    setBusy(true);
+    setRestoringId(id);
     setError(null);
     const fd = new FormData();
     fd.set("id", id);
     const res = await action(fd);
-    setBusy(false);
+    setRestoringId(null);
     if (!res.ok) {
       setError(res.error ?? "Restore failed");
       return;
@@ -113,6 +119,7 @@ export function ArchivePanel({ tree }: { tree: ArchiveTree }) {
       {error && (
         <p
           data-testid="archive-error"
+          role="alert"
           className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {error}
@@ -141,7 +148,7 @@ export function ArchivePanel({ tree }: { tree: ArchiveTree }) {
                   title={c.name}
                   subtitle={c.code}
                   archivedAt={c.archivedAt}
-                  busy={busy}
+                  busy={restoringId === c.id}
                   onRestore={() => void run(restoreClientAction, c.id)}
                 />
               ))}
@@ -158,7 +165,7 @@ export function ArchivePanel({ tree }: { tree: ArchiveTree }) {
                   subtitle={s.site.code}
                   parent={s.clientName}
                   archivedAt={s.site.archivedAt}
-                  busy={busy}
+                  busy={restoringId === s.site.id}
                   onRestore={() => void run(restoreSiteAction, s.site.id)}
                 />
               ))}
@@ -175,7 +182,7 @@ export function ArchivePanel({ tree }: { tree: ArchiveTree }) {
                   subtitle={f.floor.code}
                   parent={`${f.siteName} · ${f.clientCode}`}
                   archivedAt={f.floor.archivedAt}
-                  busy={busy}
+                  busy={restoringId === f.floor.id}
                   onRestore={() => void run(restoreFloorAction, f.floor.id)}
                 />
               ))}

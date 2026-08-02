@@ -111,13 +111,22 @@ describe("ArchivePanel", () => {
   });
 
   it("offers NO permanent delete anywhere — that is Slice G2", () => {
-    render(
+    // A narrower check (specific testid, specific wording) would miss a destructive control
+    // that simply used a different name, e.g. data-testid="delete-client-c9" labelled "Delete".
+    // Assert on every button the panel renders instead: each one must be a Restore control, and
+    // no rendered text may read as delete/permanent language.
+    const { container } = render(
       <ArchivePanel
         tree={{ ...empty, clients: [{ id: "c9", code: "OLD", name: "Old Co", archivedAt: AT }] }}
       />
     );
-    expect(screen.queryByTestId("purge-client-c9")).toBeNull();
-    expect(screen.queryByText(/permanently/i)).toBeNull();
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button).toHaveAccessibleName(/^Restore /);
+    }
+    expect(container.textContent).not.toMatch(/delete/i);
+    expect(container.textContent).not.toMatch(/permanently/i);
   });
 
   it("surfaces a failed restore instead of silently doing nothing", async () => {
