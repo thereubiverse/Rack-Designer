@@ -15,6 +15,8 @@ const TITLES: [prefix: string, title: string][] = [
   ["/device-library", "Device Library"],
   ["/settings", "Settings"],
   ["/clients", "Clients"],
+  // Last: every path startsWith "/", so this entry can only ever be the fallback.
+  ["/", "Dashboard"],
 ];
 
 /** Client shell that owns the sidebar collapse state so the hamburger (in the top bar) and the

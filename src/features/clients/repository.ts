@@ -10,7 +10,12 @@ export interface ClientSummary {
   name: string;
   siteCount: number;
   rackCount: number;
+  /** Devices mounted in RACKS. Kept separate from `floorDeviceCount` because this one also feeds
+   *  the delete-confirmation dialog's cascade warning, where the two are counted differently. */
   deviceCount: number;
+  /** Devices placed on FLOOR PLANS — outlets, cameras, access points. A client's device total is
+   *  this plus `deviceCount`; neither alone is "how many devices does this client have". */
+  floorDeviceCount: number;
 }
 
 export interface SiteSummary {
@@ -55,6 +60,7 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
         siteCount: counts.sites ?? 0,
         rackCount: counts.racks ?? 0,
         deviceCount: counts.devices ?? 0,
+        floorDeviceCount: await countClientFloorDevices(db, client.id),
       };
     })
   );
@@ -323,6 +329,22 @@ export async function getRackBreadcrumb(db: SupabaseClient, rackId: string): Pro
     siteName: site.name,
     rackCode: rack.code,
   };
+}
+
+/** Floor-plan devices belonging to a client, counted through `floor_devices.site_id` — the table
+ *  carries the site directly, so this does not have to walk floors and rooms the way the rack path
+ *  does. Zero sites means zero devices, and `.in()` on an empty list is an error, not an empty
+ *  result. */
+export async function countClientFloorDevices(db: SupabaseClient, clientId: string): Promise<number> {
+  const { data: sites, error } = await db.from("sites").select("id").eq("client_id", clientId);
+  if (error) throw new Error(`countClientFloorDevices: ${error.message}`);
+  const siteIds = (sites ?? []).map((s) => s.id as string);
+  if (siteIds.length === 0) return 0;
+  const { count } = await db
+    .from("floor_devices")
+    .select("id", { count: "exact", head: true })
+    .in("site_id", siteIds);
+  return count ?? 0;
 }
 
 export async function countClientCascade(db: SupabaseClient, clientId: string): Promise<CascadeCounts> {

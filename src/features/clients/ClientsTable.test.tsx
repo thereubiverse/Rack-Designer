@@ -11,7 +11,7 @@ vi.mock("./actions", () => ({
 }));
 
 const clients = [
-  { id: "c1", code: "ACME", name: "Acme Corp", siteCount: 3, rackCount: 12, deviceCount: 41 },
+  { id: "c1", code: "ACME", name: "Acme Corp", siteCount: 3, rackCount: 12, deviceCount: 41, floorDeviceCount: 0 },
 ];
 
 describe("ClientsTable", () => {

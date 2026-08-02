@@ -42,6 +42,9 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
 
         {/* Primary nav */}
         <nav className="space-y-0.5">
+          {/* Exact match, not startsWith: "/" prefixes every route, so a prefix test would light
+              this up on every page. */}
+          <NavItem icon="tabler:layout-dashboard" label="Dashboard" href="/" active={pathname === "/"} />
           <NavItem icon="tabler:building-community" label="Clients" href="/clients" active={pathname.startsWith("/clients")} />
           <NavItem icon="tabler:network" label="Networks" />
           <NavItem icon="tabler:folders" label="Resources" />
