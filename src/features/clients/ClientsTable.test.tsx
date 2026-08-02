@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { ClientsTable } from "./ClientsTable";
-import { deleteClientAction } from "./actions";
+import { archiveClientAction } from "./actions";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
   createClientAction: vi.fn(async () => ({ ok: true })),
   renameClientAction: vi.fn(async () => ({ ok: true })),
-  deleteClientAction: vi.fn(async () => ({ ok: true })),
+  archiveClientAction: vi.fn(async () => ({ ok: true })),
 }));
 
 const clients = [
@@ -30,20 +30,19 @@ describe("ClientsTable", () => {
     expect(screen.getByTestId("table-create")).toBeInTheDocument();
   });
 
-  it("keeps the failure visible when a delete fails, instead of silently closing", async () => {
-    // Regression for the IMPORTANT finding: delete paths awaited the action but never checked
-    // res.ok, so a failed delete closed the dialog and refreshed exactly like a success — no
+  it("keeps the failure visible when an archive fails, instead of silently closing", async () => {
+    // Regression for the IMPORTANT finding: archive paths awaited the action but never checked
+    // res.ok, so a failed archive closed the dialog and refreshed exactly like a success — no
     // message told the user anything went wrong.
-    vi.mocked(deleteClientAction).mockResolvedValueOnce({ ok: false, error: "Cannot delete: has dependent racks" });
+    vi.mocked(archiveClientAction).mockResolvedValueOnce({ ok: false, error: "Cannot archive: has dependent racks" });
 
     render(<ClientsTable clients={clients} />);
     fireEvent.click(screen.getByTestId("delete-client-ACME"));
-    // ACME's counts are non-zero, so the typed-confirm gate is active.
-    fireEvent.change(screen.getByTestId("delete-code-input"), { target: { value: "ACME" } });
-    fireEvent.click(screen.getByTestId("delete-confirm"));
+    // Archiving is reversible, so there is no typed-confirm gate to satisfy first.
+    fireEvent.click(screen.getByTestId("archive-confirm"));
 
-    await waitFor(() => expect(screen.getByTestId("delete-error")).toHaveTextContent("Cannot delete: has dependent racks"));
+    await waitFor(() => expect(screen.getByTestId("archive-error-message")).toHaveTextContent("Cannot archive: has dependent racks"));
     // The dialog must still be open — the failure was not treated as a success.
-    expect(screen.getByTestId("delete-confirm")).toBeInTheDocument();
+    expect(screen.getByTestId("archive-confirm")).toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@ import { SiteDetail } from "./SiteDetail";
 import type { ClientRow, SiteRow, FloorRow, RoomRow, FloorDeviceRow, FloorPlanRow } from "@/lib/supabase/types";
 import type { DeviceTypeRow } from "@/features/device-library/repository";
 import type { SiteRackRow } from "./repository";
-import { createFloorAction, deleteFloorAction, renameFloorAction, deleteFloorPlanAction } from "./actions";
+import { createFloorAction, archiveFloorAction, renameFloorAction, deleteFloorPlanAction } from "./actions";
 
 let mockSearch = "";
 const replaceMock = vi.fn();
@@ -24,7 +24,7 @@ vi.mock("./actions", () => ({
   deleteRackAction: vi.fn(async () => ({ ok: true })),
   createFloorAction: vi.fn(async () => ({ ok: true })),
   renameFloorAction: vi.fn(async () => ({ ok: true })),
-  deleteFloorAction: vi.fn(async () => ({ ok: true })),
+  archiveFloorAction: vi.fn(async () => ({ ok: true })),
   createRoomAction: vi.fn(async () => ({ ok: true })),
   renameRoomAction: vi.fn(async () => ({ ok: true })),
   deleteRoomAction: vi.fn(async () => ({ ok: true })),
@@ -282,22 +282,21 @@ describe("SiteDetail", () => {
     expect(screen.queryByRole("dialog", { name: "Add floor" })).toBeNull();
   });
 
-  it("floor delete shows client-computed, hand-computable counts and submits deleteFloorAction for GF", async () => {
-    const callsBefore = vi.mocked(deleteFloorAction).mock.calls.length;
+  it("floor archive names the floor, does not gate on a typed code, and submits archiveFloorAction for GF", async () => {
+    const callsBefore = vi.mocked(archiveFloorAction).mock.calls.length;
     renderSite();
 
     fireEvent.click(screen.getByTestId("delete-floor"));
-    // GF: 1 room (MDF), 3 racks (RK01, RK02, RK04), devices = 2 floor-scoped rows (CAM01, AP01)
-    // + summed rack deviceCounts (3 + 0 + 2 = 5) = 7.
-    expect(screen.getByTestId("delete-cascade")).toHaveTextContent("1 room, 3 racks and 7 devices");
+    // Archiving is reversible: no cascade counts, no typed-confirm gate — just the floor's own code.
+    expect(screen.getByTestId("archive-dialog")).toHaveTextContent("GF");
+    expect(screen.queryByTestId("delete-code-input")).toBeNull();
 
-    fireEvent.change(screen.getByTestId("delete-code-input"), { target: { value: "GF" } });
     await act(async () => {
-      fireEvent.click(screen.getByTestId("delete-confirm"));
+      fireEvent.click(screen.getByTestId("archive-confirm"));
     });
 
-    expect(deleteFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
-    const formData = vi.mocked(deleteFloorAction).mock.calls[callsBefore][0] as FormData;
+    expect(archiveFloorAction).toHaveBeenCalledTimes(callsBefore + 1);
+    const formData = vi.mocked(archiveFloorAction).mock.calls[callsBefore][0] as FormData;
     expect(formData.get("id")).toBe("floor-gf");
   });
 

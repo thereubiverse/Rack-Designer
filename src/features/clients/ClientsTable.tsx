@@ -4,15 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { ClientSummary } from "./repository";
-import { createClientAction, renameClientAction, deleteClientAction } from "./actions";
-import { DeleteDialog } from "./DeleteDialog";
+import { createClientAction, renameClientAction, archiveClientAction } from "./actions";
+import { ArchiveDialog } from "./ArchiveDialog";
 import { IconButton } from "./IconButton";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
 /** The /clients directory: one row per client with its site/rack counts, matching the
  *  RackDeviceTable card layout. "+ Add client" opens a create form; each row can be renamed or
- *  deleted (delete reuses the shared DeleteDialog, gated on the client's own cascade counts). */
+ *  archived (archive is reversible — see ArchiveDialog — and leaves all of the client's data in
+ *  place; it can be restored from Settings → Archive). */
 export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
@@ -21,6 +22,7 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ClientSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   async function handleCreate(formData: FormData) {
     setCreateError(null);
@@ -41,10 +43,12 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleteError(null);
+    setDeleteBusy(true);
     const formData = new FormData();
     formData.set("id", deleteTarget.id);
-    const res = await deleteClientAction(formData);
-    if (!res.ok) { setDeleteError(res.error ?? "Delete failed"); return; }
+    const res = await archiveClientAction(formData);
+    setDeleteBusy(false);
+    if (!res.ok) { setDeleteError(res.error ?? "Archive failed"); return; }
     setDeleteTarget(null);
     router.refresh();
   }
@@ -108,7 +112,7 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
                   <IconButton
                     data-testid={`delete-client-${c.code}`}
                     icon="tabler:trash"
-                    tip="Delete client"
+                    tip="Archive client"
                     variant="danger"
                     onClick={() => { setDeleteError(null); setDeleteTarget(c); }}
                   />
@@ -168,23 +172,14 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
       )}
 
       {deleteTarget && (
-        <>
-          <DeleteDialog
-            open
-            kind="client"
-            code={deleteTarget.code}
-            counts={{ sites: deleteTarget.siteCount, racks: deleteTarget.rackCount, devices: deleteTarget.deviceCount }}
-            onConfirm={handleDelete}
-            onCancel={() => { setDeleteError(null); setDeleteTarget(null); }}
-          />
-          {deleteError && (
-            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
-              <p data-testid="delete-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
-                {deleteError}
-              </p>
-            </div>
-          )}
-        </>
+        <ArchiveDialog
+          kind="client"
+          code={deleteTarget.code}
+          error={deleteError}
+          busy={deleteBusy}
+          onConfirm={handleDelete}
+          onCancel={() => { setDeleteError(null); setDeleteTarget(null); }}
+        />
       )}
       </div>
     </div>

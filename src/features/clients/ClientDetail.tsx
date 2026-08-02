@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { ClientRow } from "@/lib/supabase/types";
 import type { SiteSummary } from "./repository";
-import { createSiteAction, renameSiteAction, deleteSiteAction } from "./actions";
-import { DeleteDialog } from "./DeleteDialog";
+import { createSiteAction, renameSiteAction, archiveSiteAction } from "./actions";
+import { ArchiveDialog } from "./ArchiveDialog";
 import { IconButton } from "./IconButton";
 import { UnlocatedSites } from "./UnlocatedSites";
 import { toBlips } from "./sitesMapOps";
@@ -20,7 +20,7 @@ const SitesMap = dynamic(() => import("./SitesMap").then((m) => m.SitesMap), { s
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
 /** One client's sites: breadcrumb back to /clients, a card table of sites (address + rack
- *  count), "+ Add site" and per-row rename/delete — same shape as ClientsTable one level down. */
+ *  count), "+ Add site" and per-row rename/archive — same shape as ClientsTable one level down. */
 export function ClientDetail({ client, sites }: { client: ClientRow; sites: SiteSummary[] }) {
   useHeaderTitle(client.name);
   const router = useRouter();
@@ -30,6 +30,7 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SiteSummary | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
 
   const blips = toBlips(sites);
@@ -53,10 +54,12 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleteError(null);
+    setDeleteBusy(true);
     const formData = new FormData();
     formData.set("id", deleteTarget.id);
-    const res = await deleteSiteAction(formData);
-    if (!res.ok) { setDeleteError(res.error ?? "Delete failed"); return; }
+    const res = await archiveSiteAction(formData);
+    setDeleteBusy(false);
+    if (!res.ok) { setDeleteError(res.error ?? "Archive failed"); return; }
     setDeleteTarget(null);
     router.refresh();
   }
@@ -135,7 +138,7 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
                     <IconButton
                       data-testid={`delete-site-${s.code}`}
                       icon="tabler:trash"
-                      tip="Delete site"
+                      tip="Archive site"
                       variant="danger"
                       onClick={() => { setDeleteError(null); setDeleteTarget(s); }}
                     />
@@ -205,23 +208,14 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
       )}
 
       {deleteTarget && (
-        <>
-          <DeleteDialog
-            open
-            kind="site"
-            code={deleteTarget.code}
-            counts={{ racks: deleteTarget.rackCount, devices: deleteTarget.deviceCount }}
-            onConfirm={handleDelete}
-            onCancel={() => { setDeleteError(null); setDeleteTarget(null); }}
-          />
-          {deleteError && (
-            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
-              <p data-testid="delete-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
-                {deleteError}
-              </p>
-            </div>
-          )}
-        </>
+        <ArchiveDialog
+          kind="site"
+          code={deleteTarget.code}
+          error={deleteError}
+          busy={deleteBusy}
+          onConfirm={handleDelete}
+          onCancel={() => { setDeleteError(null); setDeleteTarget(null); }}
+        />
       )}
     </div>
   );
