@@ -3,6 +3,7 @@ import type { RoomType } from "@/domain/hierarchy";
 import type { ClientRow, SiteRow } from "@/lib/supabase/types";
 import type { GeocodeResult } from "./geocodeOps";
 import { normaliseCode, type CascadeCounts } from "./validation";
+import type { ArchivedClient, ArchivedFloor, ArchivedSite } from "./archiveOps";
 
 export interface ClientSummary {
   id: string;
@@ -44,6 +45,9 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
   const { data: clients, error } = await db
     .from("clients")
     .select("*")
+    // Archived clients are hidden everywhere they are LISTED. Cascade counters and upward scope
+    // resolvers deliberately still see them — see the archive spec, section 4.
+    .is("archived_at", null)
     .order("code", { ascending: true });
   if (error) throw new Error(`listClients: ${error.message}`);
 
@@ -71,6 +75,7 @@ export async function getClientByCode(db: SupabaseClient, code: string): Promise
     .from("clients")
     .select("*")
     .eq("code", normaliseCode(code))
+    .is("archived_at", null)
     .maybeSingle();
   if (error) throw new Error(`getClientByCode: ${error.message}`);
   return (data as ClientRow | null) ?? null;
@@ -81,6 +86,7 @@ export async function listSitesForClient(db: SupabaseClient, clientId: string): 
     .from("sites")
     .select("*")
     .eq("client_id", clientId)
+    .is("archived_at", null)
     .order("code", { ascending: true });
   if (error) throw new Error(`listSitesForClient: ${error.message}`);
 
@@ -114,6 +120,7 @@ export async function getSiteByCode(
     .select("*")
     .eq("client_id", clientId)
     .eq("code", normaliseCode(code))
+    .is("archived_at", null)
     .maybeSingle();
   if (error) throw new Error(`getSiteByCode: ${error.message}`);
   return (data as SiteRow | null) ?? null;
@@ -204,6 +211,22 @@ export async function deleteClient(db: SupabaseClient, id: string): Promise<void
   if (error) throw new Error(`deleteClient: ${error.message}`);
 }
 
+/** Archive rather than delete. The flag goes on THIS row only — children are untouched, which is
+ *  what lets restoreClient put everything back exactly as it was, ids and all. Nothing in Slice G1
+ *  calls `.delete()` on clients, sites or floors. */
+export async function archiveClient(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db
+    .from("clients")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`archiveClient: ${error.message}`);
+}
+
+export async function restoreClient(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("clients").update({ archived_at: null }).eq("id", id);
+  if (error) throw new Error(`restoreClient: ${error.message}`);
+}
+
 export async function createSiteForClient(
   db: SupabaseClient,
   input: { clientId: string; code: string; name: string; address?: string | null }
@@ -241,6 +264,19 @@ export async function renameSite(
 export async function deleteSite(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("sites").delete().eq("id", id);
   if (error) throw new Error(`deleteSite: ${error.message}`);
+}
+
+export async function archiveSite(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db
+    .from("sites")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`archiveSite: ${error.message}`);
+}
+
+export async function restoreSite(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("sites").update({ archived_at: null }).eq("id", id);
+  if (error) throw new Error(`restoreSite: ${error.message}`);
 }
 
 /** Maps a GeocodeResult onto the four geocode columns and stamps geocoded_at with "now". Callers
@@ -368,4 +404,46 @@ export async function countClientCascade(db: SupabaseClient, clientId: string): 
 
   const { count } = await db.from("rack_devices").select("id", { count: "exact", head: true }).in("rack_id", rackIds);
   return { sites: siteIds.length, racks: rackIds.length, devices: (count ?? 0) + floorDevices };
+}
+
+/** Everything the archive page needs, in five queries: the archived rows at each level, plus the
+ *  LIVE clients and sites used to work out what each archived row nests under. The nesting itself is
+ *  buildArchiveTree's job — this function only fetches. */
+export async function listArchived(db: SupabaseClient): Promise<{
+  archivedClients: ArchivedClient[];
+  archivedSites: ArchivedSite[];
+  archivedFloors: ArchivedFloor[];
+  liveClients: { id: string; code: string; name: string }[];
+  liveSites: { id: string; code: string; name: string; clientId: string }[];
+}> {
+  const [ac, as, af, lc, ls] = await Promise.all([
+    db.from("clients").select("id, code, name, archived_at").not("archived_at", "is", null),
+    db.from("sites").select("id, code, name, archived_at, client_id").not("archived_at", "is", null),
+    db.from("floors").select("id, code, name, archived_at, site_id").not("archived_at", "is", null),
+    db.from("clients").select("id, code, name").is("archived_at", null),
+    db.from("sites").select("id, code, name, client_id").is("archived_at", null),
+  ]);
+  for (const r of [ac, as, af, lc, ls]) {
+    if (r.error) throw new Error(`listArchived: ${r.error.message}`);
+  }
+  type Raw = Record<string, string | null>;
+  return {
+    archivedClients: ((ac.data ?? []) as Raw[]).map((r) => ({
+      id: String(r.id), code: String(r.code), name: String(r.name ?? ""), archivedAt: String(r.archived_at),
+    })),
+    archivedSites: ((as.data ?? []) as Raw[]).map((r) => ({
+      id: String(r.id), code: String(r.code), name: String(r.name ?? ""), archivedAt: String(r.archived_at),
+      clientId: String(r.client_id),
+    })),
+    archivedFloors: ((af.data ?? []) as Raw[]).map((r) => ({
+      id: String(r.id), code: String(r.code), name: r.name === null ? null : String(r.name),
+      archivedAt: String(r.archived_at), siteId: String(r.site_id),
+    })),
+    liveClients: ((lc.data ?? []) as Raw[]).map((r) => ({
+      id: String(r.id), code: String(r.code), name: String(r.name ?? ""),
+    })),
+    liveSites: ((ls.data ?? []) as Raw[]).map((r) => ({
+      id: String(r.id), code: String(r.code), name: String(r.name ?? ""), clientId: String(r.client_id),
+    })),
+  };
 }

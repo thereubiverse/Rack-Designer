@@ -29,7 +29,7 @@ interface TableConfig {
 /** A minimal, TABLE-AWARE fake Supabase query builder covering exactly the shapes
  *  locations/repository.ts and clients/actions.ts use for floors/rooms:
  *    insert(obj).select(cols).single()
- *    select(cols).eq(col, val).order(...).order(...)   (listFloorsForSite)
+ *    select(cols).eq(col, val).is(col, null).order(...).order(...)   (listFloorsForSite)
  *    select(cols).in(col, vals).order(...)             (listRoomsForSite)
  *    update(obj).eq(col, val)                          (awaited directly, no further chaining)
  *    delete().eq(col, val)                              (awaited directly, no further chaining)
@@ -52,6 +52,7 @@ function makeFakeDb(cfg: Record<string, TableConfig> = {}) {
     const node: Record<string, unknown> = {
       eq: () => node,
       in: () => node,
+      is: () => node,
       order: () => node,
       then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => resolveSelect(table).then(res, rej),
     };
