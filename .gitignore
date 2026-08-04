@@ -1,6 +1,8 @@
 .superpowers/
 node_modules/
 .env*
+# Un-ignore the committed example file that .env* above would otherwise block. Do NOT loosen this
+# into a wildcard (e.g. "!.env*") — that would un-ignore real .env files containing the service role key.
 !.env.local.example
 .next/
 next-env.d.ts
