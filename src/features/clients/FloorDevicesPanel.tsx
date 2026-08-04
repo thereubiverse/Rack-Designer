@@ -81,7 +81,13 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   // is created. Null for a plain detail-first add.
   const [pendingRoomPolygon, setPendingRoomPolygon] = useState<NormPoint[] | null>(null);
 
-  async function handleAddRoom(formData: FormData) {
+  // onSubmit + preventDefault, NOT the <form action={fn}> pattern. React 19 schedules a native
+  // form.reset() as part of that pattern's transition, regardless of what the action resolves to —
+  // so on a FAILED save the dialog stays open showing an error while the fields have already
+  // snapped back to defaultValue, discarding what the user typed. Keep this shape.
+  async function handleAddRoom(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setAddRoomError(null);
     formData.set("floorId", floor.id);
     const res = await createRoomAction(formData);
@@ -110,7 +116,9 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   const [renameRoomTarget, setRenameRoomTarget] = useState<RoomRow | null>(null);
   const [renameRoomError, setRenameRoomError] = useState<string | null>(null);
 
-  async function handleRenameRoom(formData: FormData) {
+  async function handleRenameRoom(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     if (!renameRoomTarget) return;
     setRenameRoomError(null);
     formData.set("id", renameRoomTarget.id);
@@ -194,7 +202,9 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
     setAddCodeTouched(true);
   }
 
-  async function handleAddDevice(formData: FormData) {
+  async function handleAddDevice(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setAddDeviceError(null);
     formData.set("floorId", floor.id);
     const res = await createFloorDeviceAction(formData);
@@ -222,7 +232,9 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
   const [editDeviceTarget, setEditDeviceTarget] = useState<FloorDeviceRow | null>(null);
   const [editDeviceError, setEditDeviceError] = useState<string | null>(null);
 
-  async function handleEditDevice(formData: FormData) {
+  async function handleEditDevice(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     if (!editDeviceTarget) return;
     setEditDeviceError(null);
     formData.set("id", editDeviceTarget.id);
@@ -403,7 +415,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
 
       {addRoomOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add room">
-          <form action={handleAddRoom} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleAddRoom} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Add room</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Code *
@@ -438,7 +450,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
 
       {renameRoomTarget && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Rename room">
-          <form action={handleRenameRoom} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleRenameRoom} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Rename room</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Code *
@@ -501,7 +513,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
 
       {addDeviceOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add device">
-          <form action={handleAddDevice} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleAddDevice} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Add device</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Type *
@@ -566,7 +578,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
 
       {editDeviceTarget && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Edit device">
-          <form action={handleEditDevice} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleEditDevice} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Edit device</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Type *

@@ -35,7 +35,13 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
 
   const blips = toBlips(sites);
 
-  async function handleCreate(formData: FormData) {
+  // onSubmit + preventDefault, NOT the <form action={fn}> pattern. React 19 schedules a native
+  // form.reset() as part of that pattern's transition, regardless of what the action resolves to —
+  // so on a FAILED save the dialog stays open showing an error while the fields have already
+  // snapped back to defaultValue, discarding what the user typed. Keep this shape.
+  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setCreateError(null);
     const res = await createSiteAction(formData);
     if (!res.ok) { setCreateError(res.error ?? "Failed"); return; }
@@ -43,7 +49,9 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
     router.refresh();
   }
 
-  async function handleRename(formData: FormData) {
+  async function handleRename(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setRenameError(null);
     const res = await renameSiteAction(formData);
     if (!res.ok) { setRenameError(res.error ?? "Failed"); return; }
@@ -157,7 +165,7 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
 
       {createOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add site">
-          <form action={handleCreate} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleCreate} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <input type="hidden" name="clientId" value={client.id} />
             <h3 className="text-base font-bold">Add site</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
@@ -183,7 +191,7 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
 
       {renameTarget && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Rename site">
-          <form action={handleRename} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleRename} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <input type="hidden" name="id" value={renameTarget.id} />
             <h3 className="text-base font-bold">Rename site</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">

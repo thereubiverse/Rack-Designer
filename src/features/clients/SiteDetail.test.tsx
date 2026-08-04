@@ -439,4 +439,23 @@ describe("SiteDetail", () => {
     expect(transform1F).not.toBe("translate(35 0) scale(0.4)");
     expect(transform1F).toBe("translate(248.33333333333334 0) scale(0.6222222222222222)");
   });
+
+  // React 19 resets a <form action={fn}> to defaultValue when the action settles, whatever it
+  // resolved to. This pins the fix: on a failed save the dialog still holds what the user typed.
+  it("keeps the edited floor code in the dialog when saving fails", async () => {
+    mockSearch = "floor=1F";
+    vi.mocked(renameFloorAction).mockResolvedValueOnce({ ok: false, error: "That code is taken" });
+    renderSite();
+
+    fireEvent.click(screen.getByTestId("rename-floor"));
+    fireEvent.change(screen.getByLabelText(/Code/i), { target: { value: "MEZZ" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    const dialog = within(screen.getByRole("dialog", { name: "Rename floor" }));
+    expect(dialog.getByText("That code is taken")).toBeInTheDocument();
+    expect((screen.getByLabelText(/Code/i) as HTMLInputElement).value).toBe("MEZZ");
+  });
 });

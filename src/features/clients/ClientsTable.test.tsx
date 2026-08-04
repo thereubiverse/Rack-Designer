@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { ClientsTable } from "./ClientsTable";
-import { archiveClientAction } from "./actions";
+import { archiveClientAction, renameClientAction, createClientAction } from "./actions";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
@@ -44,5 +44,39 @@ describe("ClientsTable", () => {
     await waitFor(() => expect(screen.getByTestId("archive-error-message")).toHaveTextContent("Cannot archive: has dependent racks"));
     // The dialog must still be open — the failure was not treated as a success.
     expect(screen.getByTestId("archive-confirm")).toBeInTheDocument();
+  });
+
+  // React 19 resets a <form action={fn}> to defaultValue when the action settles, whatever it
+  // resolved to. These two pin the fix: on a failed save the dialog stays open AND still holds what
+  // the user typed, so the error is about a value they can see.
+  it("keeps the edited code in the rename dialog when saving fails", async () => {
+    vi.mocked(renameClientAction).mockResolvedValueOnce({ ok: false, error: "That code is taken" });
+
+    render(<ClientsTable clients={clients} />);
+    fireEvent.click(screen.getByTestId("edit-client-ACME"));
+
+    const code = screen.getByDisplayValue("ACME") as HTMLInputElement;
+    fireEvent.change(code, { target: { value: "TAKEN" } });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => expect(screen.getByText("That code is taken")).toBeInTheDocument());
+    expect((screen.getByDisplayValue("TAKEN") as HTMLInputElement).value).toBe("TAKEN");
+  });
+
+  it("keeps what was typed in the create dialog when saving fails", async () => {
+    vi.mocked(createClientAction).mockResolvedValueOnce({ ok: false, error: "That code is taken" });
+
+    render(<ClientsTable clients={clients} />);
+    fireEvent.click(screen.getByTestId("table-create"));
+    const dialog = within(screen.getByRole("dialog", { name: "Add client" }));
+
+    // Both fields are `required`, and onSubmit runs native constraint validation — so an empty
+    // name would block submission before the action ever ran.
+    fireEvent.change(dialog.getByLabelText(/code/i), { target: { value: "NEWCO" } });
+    fireEvent.change(dialog.getByLabelText(/name/i), { target: { value: "New Co" } });
+    fireEvent.click(dialog.getByText("Create"));
+
+    await waitFor(() => expect(dialog.getByText("That code is taken")).toBeInTheDocument());
+    expect((dialog.getByLabelText(/code/i) as HTMLInputElement).value).toBe("NEWCO");
   });
 });

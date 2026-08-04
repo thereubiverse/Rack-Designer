@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { ClientDetail } from "./ClientDetail";
 import type { SiteSummary } from "./repository";
+import { renameSiteAction } from "./actions";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
@@ -156,5 +157,20 @@ describe("ClientDetail", () => {
     expect(screen.getByTestId("site-row-DC1").className).not.toContain("bg-blue-50");
     // Archive dialog opened instead of selecting the row.
     expect(screen.getByRole("dialog", { name: "Archive site" })).toBeInTheDocument();
+  });
+  // React 19 resets a <form action={fn}> to defaultValue when the action settles, whatever it
+  // resolved to. This pins the fix: on a failed save the dialog still holds what the user typed.
+  it("keeps the edited code in the rename dialog when saving fails", async () => {
+    vi.mocked(renameSiteAction).mockResolvedValueOnce({ ok: false, error: "That code is taken" });
+
+    render(<ClientDetail client={client} sites={sites} />);
+    fireEvent.click(screen.getByTestId("edit-site-HQ"));
+    const dialog = within(screen.getByRole("dialog", { name: "Rename site" }));
+
+    fireEvent.change(dialog.getByDisplayValue("HQ"), { target: { value: "TAKEN" } });
+    fireEvent.click(dialog.getByText("Save"));
+
+    await waitFor(() => expect(dialog.getByText("That code is taken")).toBeInTheDocument());
+    expect((dialog.getByDisplayValue("TAKEN") as HTMLInputElement).value).toBe("TAKEN");
   });
 });

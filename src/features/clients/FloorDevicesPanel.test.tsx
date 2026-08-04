@@ -385,6 +385,24 @@ describe("FloorDevicesPanel", () => {
       expect(formData.get("name")).toBe("Upper IDF");
       expect(refreshMock).toHaveBeenCalled();
     });
+
+    // React 19 resets a <form action={fn}> to defaultValue when the action settles, whatever it
+    // resolved to. This pins the fix: on a failed save the dialog still holds what the user typed.
+    it("keeps the edited name in the dialog when saving fails", async () => {
+      vi.mocked(renameRoomAction).mockResolvedValueOnce({ ok: false, error: "That code is taken" });
+      renderPanel();
+
+      fireEvent.click(screen.getByTestId("room-rename-2F"));
+      const dialog = within(screen.getByRole("dialog", { name: "Rename room" }));
+      fireEvent.change(dialog.getByLabelText(/Name/i), { target: { value: "Upper IDF" } });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      });
+
+      expect(dialog.getByText("That code is taken")).toBeInTheDocument();
+      expect((dialog.getByLabelText(/Name/i) as HTMLInputElement).value).toBe("Upper IDF");
+    });
   });
 
   describe("create-by-geometry handle", () => {

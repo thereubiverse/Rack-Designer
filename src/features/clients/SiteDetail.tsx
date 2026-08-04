@@ -183,7 +183,13 @@ export function SiteDetail({
     router.replace(`${pathname}?floor=${encodeURIComponent(code)}`, { scroll: false });
   }
 
-  async function handleCreate(formData: FormData) {
+  // onSubmit + preventDefault, NOT the <form action={fn}> pattern. React 19 schedules a native
+  // form.reset() as part of that pattern's transition, regardless of what the action resolves to —
+  // so on a FAILED save the dialog stays open showing an error while the fields have already
+  // snapped back to defaultValue, discarding what the user typed. Keep this shape.
+  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setCreateError(null);
     formData.set("siteId", site.id);
     const res = await createRackInSiteAction(formData);
@@ -203,7 +209,9 @@ export function SiteDetail({
     router.refresh();
   }
 
-  async function handleAddFloor(formData: FormData) {
+  async function handleAddFloor(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     setAddFloorError(null);
     formData.set("siteId", site.id);
     const res = await createFloorAction(formData);
@@ -212,7 +220,9 @@ export function SiteDetail({
     router.refresh();
   }
 
-  async function handleRenameFloor(formData: FormData) {
+  async function handleRenameFloor(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
     if (!activeFloor) return;
     setRenameFloorError(null);
     const oldCode = activeFloor.code;
@@ -540,7 +550,7 @@ export function SiteDetail({
 
       {createOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add rack">
-          <form action={handleCreate} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleCreate} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Add rack</h3>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[11px] font-semibold text-neutral-600">
@@ -603,7 +613,7 @@ export function SiteDetail({
 
       {addFloorOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Add floor">
-          <form action={handleAddFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleAddFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Add floor</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Code *
@@ -624,7 +634,7 @@ export function SiteDetail({
 
       {renameFloorOpen && activeFloor && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Rename floor">
-          <form action={handleRenameFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
+          <form onSubmit={handleRenameFloor} className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold">Rename floor</h3>
             <label className="block text-[11px] font-semibold text-neutral-600">
               Code *
