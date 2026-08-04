@@ -2,15 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { dbSettingsStore } from "./store";
-import { readDeviceWizardSettings, writeDeviceWizardSettings, type DeviceWizardSettings } from "./deviceWizardSettings";
+import { writeDeviceWizardSettings } from "./deviceWizardSettings";
+import { withMember } from "@/features/auth/withMember";
 
-export async function getDeviceWizardSettings(): Promise<DeviceWizardSettings> {
-  return readDeviceWizardSettings(dbSettingsStore);
-}
-
-export async function updateDeviceWizardSettings(
+export const updateDeviceWizardSettings = withMember(async (
+  _member,
   patch: { enabled?: boolean; apiKey?: string },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string }> => {
   try {
     await writeDeviceWizardSettings(dbSettingsStore, patch);
     revalidatePath("/settings");
@@ -20,4 +18,4 @@ export async function updateDeviceWizardSettings(
     // Don't surface raw DB errors to the browser on a write that carries the key.
     return { ok: false, error: "Failed to save settings" };
   }
-}
+});

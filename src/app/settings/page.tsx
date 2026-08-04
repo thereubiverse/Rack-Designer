@@ -1,4 +1,4 @@
-import { getDeviceWizardSettings } from "@/features/settings/actions";
+import { getDeviceWizardSettings } from "@/features/settings/getDeviceWizardSettings";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 
 export const dynamic = "force-dynamic";

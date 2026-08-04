@@ -4,7 +4,7 @@ import { listConnections } from "@/features/racks/connectionsRepository";
 import { listPortEndpoints } from "@/features/racks/endpointsRepository";
 import { listSiteScope } from "@/features/racks/siteScope";
 import { listDeviceTypes, listTemplatesForType, listBrands } from "@/features/device-library/repository";
-import { getDeviceWizardSettings } from "@/features/settings/actions";
+import { getDeviceWizardSettings } from "@/features/settings/getDeviceWizardSettings";
 import { getRackBreadcrumb } from "@/features/clients/repository";
 import { RackBuilder } from "@/features/racks/RackBuilder";
 

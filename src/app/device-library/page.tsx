@@ -1,7 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { listDeviceTemplates, listDeviceTypes, listBrands } from "@/features/device-library/repository";
 import { EditorLauncher } from "@/features/device-library/editor/EditorLauncher";
-import { getDeviceWizardSettings } from "@/features/settings/actions";
+import { getDeviceWizardSettings } from "@/features/settings/getDeviceWizardSettings";
 
 export const dynamic = "force-dynamic";
 
