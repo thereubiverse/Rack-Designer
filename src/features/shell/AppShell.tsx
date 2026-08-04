@@ -27,10 +27,12 @@ export function AppShell({
   children,
   memberName,
   memberEmail,
+  memberAvatarUrl,
 }: {
   children: React.ReactNode;
   memberName: string | null;
   memberEmail: string | null;
+  memberAvatarUrl: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export function AppShell({
   return (
     <HeaderTitleContext.Provider value={setPageTitle}>
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <AppSidebar collapsed={collapsed} memberName={memberName} memberEmail={memberEmail} />
+      <AppSidebar collapsed={collapsed} memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl} />
 
       <div
         className="transition-[padding] duration-300 ease-in-out"

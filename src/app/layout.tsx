@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/features/shell/AppShell";
 import { getCurrentMember } from "@/features/auth/members";
+import { createServiceClient } from "@/lib/supabase/server";
+import { readProfile } from "@/features/profile/repository";
+import { createAvatarSignedUrl } from "@/features/profile/avatarStorage";
 
 export const metadata: Metadata = {
   title: "Network Documentation Platform",
@@ -22,10 +25,19 @@ export default async function RootLayout({
   const memberName = member ? member.name || member.email : null;
   const memberEmail = member ? member.email : null;
 
+  // Only costs a storage round trip for members who have actually uploaded a picture; everyone
+  // else keeps the initial-letter circle and this is skipped entirely.
+  let memberAvatarUrl: string | null = null;
+  if (member) {
+    const db = createServiceClient();
+    const profile = await readProfile(db, member.id);
+    if (profile?.avatarPath) memberAvatarUrl = await createAvatarSignedUrl(db, profile.avatarPath);
+  }
+
   return (
     <html lang="en">
       <body className="bg-neutral-50 text-neutral-900">
-        <AppShell memberName={memberName} memberEmail={memberEmail}>{children}</AppShell>
+        <AppShell memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl}>{children}</AppShell>
       </body>
     </html>
   );

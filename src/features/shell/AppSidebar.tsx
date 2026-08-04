@@ -23,10 +23,12 @@ export function AppSidebar({
   collapsed,
   memberName,
   memberEmail,
+  memberAvatarUrl,
 }: {
   collapsed: boolean;
   memberName: string | null;
   memberEmail: string | null;
+  memberAvatarUrl: string | null;
 }) {
   const pathname = usePathname();
   const displayName = memberName ?? "";
@@ -128,8 +130,21 @@ export function AppSidebar({
                   {memberEmail && <div className="truncate text-xs text-neutral-500">{memberEmail}</div>}
                 </div>
 
-                <MenuItem icon="tabler:user-circle" label="Account" />
-                <MenuItem icon="tabler:id-badge-2" label="Profile" />
+                {/* There is no Account screen: email is administered elsewhere, and password lives
+                    on the profile page with the rest of a member's own settings. */}
+                <Link
+                  href="/profile"
+                  role="menuitem"
+                  title="Profile"
+                  aria-label="Profile"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100"
+                >
+                  <span className="shrink-0 text-neutral-500">
+                    <Icon icon="tabler:user-circle" width={18} height={18} />
+                  </span>
+                  <span className="flex-1 whitespace-nowrap">Profile</span>
+                </Link>
 
                 <div className="my-1 border-t border-neutral-100" />
 
@@ -161,9 +176,13 @@ export function AppSidebar({
                 menuOpen ? "border-neutral-300 bg-neutral-50" : "border-neutral-200 hover:bg-neutral-50"
               }`}
             >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
-                {initial}
-              </span>
+              {memberAvatarUrl ? (
+                <img src={memberAvatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+              ) : (
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
+                  {initial}
+                </span>
+              )}
               <span
                 title={displayName}
                 className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-900 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0"
@@ -182,25 +201,6 @@ export function AppSidebar({
         </div>
       </div>
     </aside>
-  );
-}
-
-/** A row in the account menu. Account and Profile have no destinations yet, so they are inert
- *  buttons — the same placeholder treatment the nav rail gives Networks, Resources and the rest. */
-function MenuItem({ icon, label }: { icon: string; label: string }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      title={label}
-      aria-label={label}
-      className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100"
-    >
-      <span className="shrink-0 text-neutral-500">
-        <Icon icon={icon} width={18} height={18} />
-      </span>
-      <span className="flex-1 whitespace-nowrap">{label}</span>
-    </button>
   );
 }
 
