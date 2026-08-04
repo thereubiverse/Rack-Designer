@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
   createSiteAction: vi.fn(async () => ({ ok: true })),
   renameSiteAction: vi.fn(async () => ({ ok: true })),
-  deleteSiteAction: vi.fn(async () => ({ ok: true })),
+  archiveSiteAction: vi.fn(async () => ({ ok: true })),
   locateSiteAction: vi.fn(async () => ({ ok: true })),
 }));
 
@@ -148,13 +148,13 @@ describe("ClientDetail", () => {
     expect(screen.getByRole("dialog", { name: "Rename site" })).toBeInTheDocument();
   });
 
-  it("does not select the row when clicking Delete", async () => {
+  it("does not select the row when clicking Archive", async () => {
     render(<ClientDetail client={client} sites={mixedSites} />);
     await screen.findByTestId("sites-map");
 
     fireEvent.click(screen.getByTestId("delete-site-DC1"));
     expect(screen.getByTestId("site-row-DC1").className).not.toContain("bg-blue-50");
-    // Delete dialog opened instead of selecting the row.
-    expect(screen.getByRole("dialog", { name: "Delete site" })).toBeInTheDocument();
+    // Archive dialog opened instead of selecting the row.
+    expect(screen.getByRole("dialog", { name: "Archive site" })).toBeInTheDocument();
   });
 });

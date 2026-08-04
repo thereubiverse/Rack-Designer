@@ -14,12 +14,13 @@ import {
   deleteRackAction,
   createFloorAction,
   renameFloorAction,
-  deleteFloorAction,
+  archiveFloorAction,
   deleteFloorPlanAction,
 } from "./actions";
-import { normaliseCode, type CascadeCounts } from "./validation";
+import { normaliseCode } from "./validation";
 import { partitionPlacement } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
+import { ArchiveDialog } from "./ArchiveDialog";
 import { IconButton } from "./IconButton";
 import { FloorTabs } from "./FloorTabs";
 import { FloorDevicesPanel, type FloorDevicesPanelHandle } from "./FloorDevicesPanel";
@@ -70,8 +71,9 @@ function groupRacks(racks: SiteRackRow[]): RackGroup[] {
  *  active floor here before being handed to `FloorDevicesPanel`; `SiteRackRow` carries
  *  `floorCode`/`roomCode` (not ids), so racks are matched to the active floor by code and rooms are
  *  matched to racks by code too. Rack groups (the existing table view) are filtered the same way.
- *  Floor add/rename/delete all live here, right alongside `FloorTabs`; the delete confirmation's
- *  counts are computed from these same sliced props, exactly like the existing rack delete. */
+ *  Floor add/rename/archive all live here, right alongside `FloorTabs`; archiving a floor is
+ *  reversible (see ArchiveDialog) and leaves rooms/racks/devices untouched, unlike the rack and
+ *  plan deletes below, which still go through the destructive `DeleteDialog`. */
 export function SiteDetail({
   client,
   site,
@@ -142,6 +144,7 @@ export function SiteDetail({
   const [renameFloorError, setRenameFloorError] = useState<string | null>(null);
   const [deleteFloorOpen, setDeleteFloorOpen] = useState(false);
   const [deleteFloorError, setDeleteFloorError] = useState<string | null>(null);
+  const [deleteFloorBusy, setDeleteFloorBusy] = useState(false);
 
   const [deletePlanOpen, setDeletePlanOpen] = useState(false);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
@@ -171,12 +174,6 @@ export function SiteDetail({
   for (const room of activeFloorRooms) {
     rackCountByRoomId[room.id] = activeFloorRacks.filter((r) => r.roomCode === room.code).length;
   }
-
-  const floorDeleteCounts: CascadeCounts = {
-    rooms: activeFloorRooms.length,
-    racks: activeFloorRacks.length,
-    devices: activeFloorDevices.length + activeFloorRacks.reduce((sum, r) => sum + r.deviceCount, 0),
-  };
 
   const groups = groupRacks(activeFloorRacks);
   const floorOptions = [...new Set(racks.map((r) => r.floorCode))];
@@ -236,10 +233,12 @@ export function SiteDetail({
   async function handleDeleteFloor() {
     if (!activeFloor) return;
     setDeleteFloorError(null);
+    setDeleteFloorBusy(true);
     const formData = new FormData();
     formData.set("id", activeFloor.id);
-    const res = await deleteFloorAction(formData);
-    if (!res.ok) { setDeleteFloorError(res.error ?? "Delete failed"); return; }
+    const res = await archiveFloorAction(formData);
+    setDeleteFloorBusy(false);
+    if (!res.ok) { setDeleteFloorError(res.error ?? "Archive failed"); return; }
     setDeleteFloorOpen(false);
     router.refresh();
   }
@@ -294,7 +293,7 @@ export function SiteDetail({
             <IconButton
               data-testid="delete-floor"
               icon="tabler:trash"
-              tip="Delete floor"
+              tip="Archive floor"
               variant="danger"
               onClick={() => { setDeleteFloorError(null); setDeleteFloorOpen(true); }}
             />
@@ -645,23 +644,14 @@ export function SiteDetail({
       )}
 
       {deleteFloorOpen && activeFloor && (
-        <>
-          <DeleteDialog
-            open
-            kind="floor"
-            code={activeFloor.code}
-            counts={floorDeleteCounts}
-            onConfirm={handleDeleteFloor}
-            onCancel={() => { setDeleteFloorError(null); setDeleteFloorOpen(false); }}
-          />
-          {deleteFloorError && (
-            <div className="fixed inset-x-0 top-4 z-[80] flex justify-center px-4">
-              <p data-testid="delete-floor-error" className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-2xl">
-                {deleteFloorError}
-              </p>
-            </div>
-          )}
-        </>
+        <ArchiveDialog
+          kind="floor"
+          code={activeFloor.code}
+          error={deleteFloorError}
+          busy={deleteFloorBusy}
+          onConfirm={handleDeleteFloor}
+          onCancel={() => { setDeleteFloorError(null); setDeleteFloorOpen(false); }}
+        />
       )}
 
       {deletePlanOpen && activeFloor && (

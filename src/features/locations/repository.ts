@@ -87,6 +87,7 @@ export async function createRack(
 
 export async function listFloorsForSite(db: SupabaseClient, siteId: string): Promise<FloorRow[]> {
   const { data, error } = await db.from("floors").select("*").eq("site_id", siteId)
+    .is("archived_at", null)
     .order("sort_order", { ascending: true }).order("code", { ascending: true });
   if (error) throw new Error(`listFloorsForSite: ${error.message}`);
   return (data ?? []) as FloorRow[];
@@ -119,6 +120,21 @@ export async function renameFloor(db: SupabaseClient, id: string, input: { code:
 export async function deleteFloor(db: SupabaseClient, id: string): Promise<void> {
   const { error } = await db.from("floors").delete().eq("id", id);
   if (error) throw new Error(`deleteFloor: ${error.message}`);
+}
+
+/** See archiveClient: the flag goes on the floor only, so its rooms, racks, devices, plan and wall
+ *  geometry are untouched and come back exactly as they were. */
+export async function archiveFloor(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db
+    .from("floors")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`archiveFloor: ${error.message}`);
+}
+
+export async function restoreFloor(db: SupabaseClient, id: string): Promise<void> {
+  const { error } = await db.from("floors").update({ archived_at: null }).eq("id", id);
+  if (error) throw new Error(`restoreFloor: ${error.message}`);
 }
 
 export async function renameRoom(db: SupabaseClient, id: string, input: { code: string; name?: string | null; type: RoomType }): Promise<void> {

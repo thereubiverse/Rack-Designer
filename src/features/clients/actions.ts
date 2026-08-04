@@ -14,6 +14,10 @@ import {
   deleteSite,
   getSiteById,
   setSiteGeocode,
+  archiveClient,
+  restoreClient,
+  archiveSite,
+  restoreSite,
 } from "./repository";
 import {
   createFloor,
@@ -35,6 +39,8 @@ import {
   clearRackPlacement,
   setRoomPolygon,
   clearRoomPolygon,
+  archiveFloor,
+  restoreFloor,
 } from "@/features/locations/repository";
 import type { NormPoint } from "./floorPlanOps";
 import { readPngDimensions } from "./pngHeader";
@@ -68,12 +74,19 @@ function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "devi
   const msg = e instanceof Error ? e.message : "Unknown error";
   if (/duplicate key|already exists/i.test(msg)) {
     switch (kind) {
+      // Clients, sites and floors can be archived, which means the row a unique-constraint
+      // collision hits may be one the user cannot see anywhere on the page in front of them —
+      // `friendly` only sees a Postgres error string, so it can't tell whether the collision is
+      // against that hidden archived row or a live one it just failed to find. The wording below is
+      // written to stay true either way ("may be" — never asserts archived), and points at the one
+      // place that can resolve either case without claiming a permanent-delete feature that doesn't
+      // exist yet.
       case "client":
-        return "A client with that code already exists";
+        return "A client with that code already exists. If you don't see it, it may be archived — check Settings → Archive.";
       case "site":
-        return "That site code is already used by this client";
+        return "That site code is already used by this client. If you don't see it, it may be archived — check Settings → Archive.";
       case "floor":
-        return "That floor code is already used at this site";
+        return "That floor code is already used at this site. If you don't see it, it may be archived — check Settings → Archive.";
       case "room":
         return "That room code is already used on this floor";
       case "device":
@@ -314,6 +327,52 @@ export async function deleteFloorAction(formData: FormData): Promise<{ ok: boole
   }
   revalidatePath("/clients");
   return { ok: true };
+}
+
+// ---- Archive & restore -----------------------------------------------------------------------
+//
+// Archiving is the new meaning of the delete controls on clients, sites and floors: the row is
+// flagged, not destroyed, and every child is left alone. Both paths revalidate the directory AND
+// the archive page, because one operation changes what each of them shows.
+
+async function archiveOrRestore(
+  id: string,
+  run: (db: ReturnType<typeof createServiceClient>, id: string) => Promise<void>,
+  kind: "client" | "site" | "floor"
+): Promise<{ ok: boolean; error?: string }> {
+  const db = createServiceClient();
+  try {
+    await run(db, id);
+  } catch (e) {
+    return { ok: false, error: friendly(e, kind) };
+  }
+  revalidatePath("/clients");
+  revalidatePath("/settings/archive");
+  return { ok: true };
+}
+
+export async function archiveClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveClient, "client");
+}
+
+export async function restoreClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreClient, "client");
+}
+
+export async function archiveSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveSite, "site");
+}
+
+export async function restoreSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreSite, "site");
+}
+
+export async function archiveFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), archiveFloor, "floor");
+}
+
+export async function restoreFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  return archiveOrRestore(String(formData.get("id") ?? ""), restoreFloor, "floor");
 }
 
 export async function createRoomAction(

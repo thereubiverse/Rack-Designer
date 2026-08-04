@@ -5,17 +5,23 @@ import {
   getClientByCode,
   listSitesForClient,
   getSiteByCode,
+  getSiteById,
   listRacksForSite,
   createClient as createClientRow,
   renameClient,
   deleteClient,
+  archiveClient,
+  restoreClient,
   createSiteForClient,
   renameSite,
   deleteSite,
+  archiveSite,
+  restoreSite,
   countClientCascade,
   countSiteCascade,
   getRackBreadcrumb,
 } from "./repository";
+import { archiveFloor, restoreFloor, listFloorsForSite } from "@/features/locations/repository";
 
 function testDb(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -365,5 +371,54 @@ describe("clients repository (integration)", () => {
   it("returns null from getRackBreadcrumb for a rack id that doesn't exist", async () => {
     const breadcrumb = await getRackBreadcrumb(db, "00000000-0000-0000-0000-000000000000");
     expect(breadcrumb).toBeNull();
+  });
+
+  it("hides archived rows from the lists but keeps them countable and fetchable by id", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I" });
+    const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
+
+    expect((await listClients(db)).some((c) => c.id === client.id)).toBe(true);
+
+    await archiveClient(db, client.id);
+    expect((await listClients(db)).some((c) => c.id === client.id)).toBe(false);
+    expect(await getClientByCode(db, "T-CLI-I")).toBeNull();
+
+    // Deliberately still visible: the cascade counter answers "what would deleting this destroy",
+    // and getSiteById is an upward resolver, not a listing.
+    expect((await countClientCascade(db, client.id)).sites).toBe(1);
+    expect(await getSiteById(db, site.id)).not.toBeNull();
+
+    await restoreClient(db, client.id);
+    expect((await listClients(db)).some((c) => c.id === client.id)).toBe(true);
+    expect(await getClientByCode(db, "T-CLI-I")).not.toBeNull();
+  });
+
+  it("archives a site and a floor without touching anything beneath them", async () => {
+    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J" });
+    const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
+    const { data: floor } = await db
+      .from("floors")
+      .insert({ site_id: site.id, code: "GF" })
+      .select("*")
+      .single();
+    const { data: room } = await db
+      .from("rooms")
+      .insert({ floor_id: floor!.id, code: "MDF1", type: "MDF" })
+      .select("*")
+      .single();
+
+    await archiveSite(db, site.id);
+    expect((await listSitesForClient(db, client.id)).some((s) => s.id === site.id)).toBe(false);
+    // The room is untouched — that is what makes the restore exact.
+    const { data: stillThere } = await db.from("rooms").select("id").eq("id", room!.id).maybeSingle();
+    expect(stillThere).not.toBeNull();
+
+    await restoreSite(db, site.id);
+    expect((await listSitesForClient(db, client.id)).some((s) => s.id === site.id)).toBe(true);
+
+    await archiveFloor(db, floor!.id);
+    expect((await listFloorsForSite(db, site.id)).some((f) => f.id === floor!.id)).toBe(false);
+    await restoreFloor(db, floor!.id);
+    expect((await listFloorsForSite(db, site.id)).some((f) => f.id === floor!.id)).toBe(true);
   });
 });

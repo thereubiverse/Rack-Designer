@@ -14,7 +14,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import { createServiceClient } from "@/lib/supabase/server";
 import { geocodeAddress } from "./geocode";
 import { setSiteGeocode } from "./repository";
-import { createSiteAction, renameSiteAction } from "./actions";
+import { createClientAction, createSiteAction, renameSiteAction } from "./actions";
 
 interface DbConfig {
   insert?: () => { data: unknown; error: Error | null };
@@ -119,8 +119,53 @@ function renameSiteForm(overrides: Record<string, string> = {}): FormData {
   return fd;
 }
 
+function createClientForm(overrides: Record<string, string> = {}): FormData {
+  const fd = new FormData();
+  fd.set("code", "ACME");
+  fd.set("name", "Acme Corp");
+  for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
+  return fd;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Regression for the IMPORTANT finding: after this branch, a unique-constraint collision on a
+// client/site/floor code can be against a row the user cannot see anywhere (it's archived). The
+// message must point at Settings → Archive without ever asserting the collision IS archived —
+// `friendly` only sees a Postgres error string and genuinely cannot tell a hidden archived row
+// from a live one it simply failed to find.
+describe("friendly duplicate-code messages point at Settings → Archive", () => {
+  it("createClientAction: mentions the code may be archived, not permanent deletion", async () => {
+    const { db } = makeFakeDb({
+      insert: () => ({ data: null, error: new Error("duplicate key value violates unique constraint") }),
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await createClientAction(createClientForm());
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe(
+      "A client with that code already exists. If you don't see it, it may be archived — check Settings → Archive."
+    );
+    expect(res.error).not.toMatch(/permanent/i);
+  });
+
+  it("createSiteAction: mentions the code may be archived, not permanent deletion", async () => {
+    const { db } = makeFakeDb({
+      insert: () => ({ data: null, error: new Error("duplicate key value violates unique constraint") }),
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const res = await createSiteAction(createSiteForm());
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe(
+      "That site code is already used by this client. If you don't see it, it may be archived — check Settings → Archive."
+    );
+    expect(res.error).not.toMatch(/permanent/i);
+  });
 });
 
 describe("createSiteAction — geocoding must never fail a write", () => {
