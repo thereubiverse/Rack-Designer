@@ -187,6 +187,9 @@ export function ProfileForm({
         <div>
           <label htmlFor="profile-phone" className={label}>Phone number</label>
           <input id="profile-phone" name="phone" defaultValue={profile.phone} className={input} />
+          <p className="mt-1 text-xs text-neutral-500">
+            US numbers are assumed; include the country code (like +44) for anywhere else.
+          </p>
         </div>
 
         <div>

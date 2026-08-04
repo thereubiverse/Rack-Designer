@@ -111,17 +111,48 @@ export async function bumpVerificationAttempts(
   if (error) throw new Error(`bumpVerificationAttempts: ${error.message}`);
 }
 
+/** Atomically claims the right to send a code, via the `claim_phone_verification` Postgres
+ *  function (migration 0024). Returns true only if THIS caller won the claim — meaning it is the
+ *  one that should actually send the text. A plain read-then-write here would let two concurrent
+ *  requests both see no pending row (or a stale one) and both send a message; the database
+ *  function serialises on the primary key so only one caller's write applies. */
+export async function claimPhoneVerification(
+  db: SupabaseClient, memberId: string, phone: string, code: string,
+  ttlSeconds: number, cooldownSeconds: number
+): Promise<boolean> {
+  const { data, error } = await db.rpc("claim_phone_verification", {
+    p_member_id: memberId,
+    p_phone: phone,
+    p_code: code,
+    p_ttl_seconds: ttlSeconds,
+    p_cooldown_seconds: cooldownSeconds,
+  });
+  if (error) throw new Error(`claimPhoneVerification: ${error.message}`);
+  return Boolean(data);
+}
+
 export async function clearPendingVerification(db: SupabaseClient, memberId: string): Promise<void> {
   const { error } = await db.from("phone_verifications").delete().eq("member_id", memberId);
   if (error) throw new Error(`clearPendingVerification: ${error.message}`);
 }
 
+/** Marks a phone verified ONLY IF the profile still holds the exact number the code was sent to.
+ *  The read-then-write in confirmPhoneCodeAction checks this too, but that check and this write are
+ *  not atomic: a save landing in between can change the number after the check passes and before
+ *  this runs. Making the WRITE itself conditional (`.eq("phone", expectedPhone)`) closes that gap —
+ *  the update simply touches no row if the number moved, and the caller learns that from the
+ *  return value instead of from a second read that could itself be stale. */
 export async function markPhoneVerified(
-  db: SupabaseClient, memberId: string, atIso: string
-): Promise<void> {
-  const { error } = await db
-    .from("members").update({ phone_verified_at: atIso }).eq("id", memberId);
+  db: SupabaseClient, memberId: string, atIso: string, expectedPhone: string
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("members")
+    .update({ phone_verified_at: atIso })
+    .eq("id", memberId)
+    .eq("phone", expectedPhone)
+    .select("id");
   if (error) throw new Error(`markPhoneVerified: ${error.message}`);
+  return Boolean(data && data.length > 0);
 }
 
 /** A number that changed has not been confirmed. */

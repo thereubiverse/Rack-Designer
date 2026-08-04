@@ -80,11 +80,16 @@ Members type `(718) 555-0142`. Twilio needs `+17185550142`. Both are correct and
 forced on the other, so `phone` keeps whatever the member typed — it is what a person reads and
 dials — and the E.164 form is derived when a code is sent.
 
-`toE164` is pure and separately tested. It strips formatting, assumes **+1** when no country code is
-present (this company works across New York), and returns null when it cannot be confident —
-too few digits, too many, or an explicit `+` followed by something implausible. A null is a
-message asking for the area code, never a silent guess: texting the wrong number because the app
-invented a country code is precisely the error this feature exists to prevent.
+`toE164` is pure and separately tested. It strips formatting and, when no explicit `+` country code
+is present, assumes **+1** — but only for digit strings that actually pass NANP structural
+validation, not for any ten digits. A North American number is `NXX-NXX-XXXX`, where both the area
+code and the exchange code start with 2-9; a bare ten-digit string that fails this (for example a UK
+mobile typed as `7700900123`, whose "exchange" `090` starts with 0) returns null instead of being
+assumed +1. An explicit `+` number is checked only for plausible length (8-15 digits) and is
+otherwise left as the member typed it — the NANP check applies solely to the +1-by-default path,
+since assuming a country code is the only place a wrong guess texts a stranger. A null is a message
+asking for the area code, never a silent guess: texting the wrong number because the app invented a
+country code is precisely the error this feature exists to prevent.
 
 ## 5. Until an SMS provider exists
 

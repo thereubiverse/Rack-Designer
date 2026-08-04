@@ -24,10 +24,21 @@ export function toE164(raw: string): string | null {
     if (digits.length < 8 || digits.length > 15) return null;
     return `+${digits}`;
   }
-  // No country code given: this company works across New York, so a bare number is +1.
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  // No country code given: this company works across New York, so a bare number is assumed +1 —
+  // but only once it actually looks like a North American number. Without the NANP check, a UK
+  // mobile typed as ten digits (no leading +44) would be texted to whatever US number the digits
+  // happen to spell, and a real stranger receives it.
+  if (digits.length === 10 && isValidNanp(digits)) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1") && isValidNanp(digits.slice(1))) return `+${digits}`;
   return null;
+}
+
+/** NANP structure: NXX-NXX-XXXX, where N is 2-9. Both the area code and the exchange code start
+ *  with 2-9 in every real North American number — no area code or exchange starts with 0 or 1.
+ *  This is what tells `7700900123` (a UK mobile typed without its +44, exchange "090") apart from
+ *  an actual US number, instead of assuming +1 for any ten digits. */
+function isValidNanp(tenDigits: string): boolean {
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(tenDigits);
 }
 
 /** Is this the same number, ignoring how it was typed? Used to decide whether editing the field

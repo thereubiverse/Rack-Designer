@@ -30,6 +30,18 @@ describe("toE164", () => {
     expect(toE164("+" + "9".repeat(20))).toBeNull();
     expect(toE164("2 718 555 0142")).toBeNull(); // 11 digits not starting with 1
   });
+
+  it("requires NANP structure (area code and exchange both starting 2-9) before assuming +1", () => {
+    // Still converts: a real NANP number.
+    expect(toE164("(718) 555-0142")).toBe("+17185550142");
+    // A UK mobile typed without its +44 — ten digits, but the exchange code "090" starts with 0,
+    // which no real US number does. Assuming +1 here would text a real stranger in Atlanta.
+    expect(toE164("7700900123")).toBeNull();
+    // Area code starts with 1 — not a valid NANP area code.
+    expect(toE164("1234567890")).toBeNull();
+    // An explicit country code bypasses the NANP check entirely and is left untouched.
+    expect(toE164("+447700900123")).toBe("+447700900123");
+  });
 });
 
 describe("sameNumber", () => {

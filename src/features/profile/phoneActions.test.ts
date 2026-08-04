@@ -10,22 +10,39 @@ vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => serviceClie
 vi.mock("@/lib/supabase/auth", () => ({ createSessionClient: async () => ({ auth: {} }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-vi.mock("./sms", () => ({ smsConfigured: vi.fn(), sendSms: vi.fn() }));
+// vi.mock factories are hoisted above regular top-level code, so the class the factory refers to
+// must be created through vi.hoisted rather than declared as a normal top-level const.
+const { FakeSmsError } = vi.hoisted(() => {
+  class FakeSmsError extends Error {
+    definitelyNotSent: boolean;
+    constructor(message: string, definitelyNotSent: boolean) {
+      super(message);
+      this.name = "SmsError";
+      this.definitelyNotSent = definitelyNotSent;
+    }
+  }
+  return { FakeSmsError };
+});
+vi.mock("./sms", () => ({
+  smsConfigured: vi.fn(),
+  sendSms: vi.fn(),
+  SmsError: FakeSmsError,
+}));
 vi.mock("./repository", () => ({
   readProfile: vi.fn(),
   writeProfile: vi.fn(),
   writeAvatarPath: vi.fn(),
   readPendingVerification: vi.fn(),
-  writePendingVerification: vi.fn(),
+  claimPhoneVerification: vi.fn(),
   bumpVerificationAttempts: vi.fn(),
   clearPendingVerification: vi.fn(),
   markPhoneVerified: vi.fn(),
   clearPhoneVerified: vi.fn(),
 }));
 
-import { smsConfigured, sendSms } from "./sms";
+import { smsConfigured, sendSms, SmsError } from "./sms";
 import {
-  readProfile, readPendingVerification, writePendingVerification,
+  readProfile, readPendingVerification, claimPhoneVerification,
   bumpVerificationAttempts, clearPendingVerification, markPhoneVerified,
 } from "./repository";
 import { sendPhoneCodeAction, confirmPhoneCodeAction } from "./actions";
@@ -47,6 +64,8 @@ beforeEach(() => {
   vi.mocked(smsConfigured).mockReturnValue(true);
   vi.mocked(readProfile).mockResolvedValue(PROFILE);
   vi.mocked(readPendingVerification).mockResolvedValue(null);
+  vi.mocked(claimPhoneVerification).mockResolvedValue(true);
+  vi.mocked(markPhoneVerified).mockResolvedValue(true);
 });
 
 describe("sendPhoneCodeAction", () => {
@@ -55,7 +74,7 @@ describe("sendPhoneCodeAction", () => {
     const res = await sendPhoneCodeAction();
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/isn't set up/i);
-    expect(writePendingVerification).not.toHaveBeenCalled();
+    expect(claimPhoneVerification).not.toHaveBeenCalled();
     expect(sendSms).not.toHaveBeenCalled();
   });
 
@@ -74,16 +93,30 @@ describe("sendPhoneCodeAction", () => {
     expect(sendSms).not.toHaveBeenCalled();
   });
 
+  // FIX 4: an already-verified number has nothing to prove, and every send costs money.
+  it("sends nothing for an already-verified profile", async () => {
+    vi.mocked(readProfile).mockResolvedValue({ ...PROFILE, phoneVerifiedAt: new Date().toISOString() });
+    const res = await sendPhoneCodeAction();
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/already verified/i);
+    expect(claimPhoneVerification).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+
   it("texts the E.164 form of the number on the profile", async () => {
     const res = await sendPhoneCodeAction();
     expect(res.ok).toBe(true);
+    expect(claimPhoneVerification).toHaveBeenCalledTimes(1);
     expect(sendSms).toHaveBeenCalledTimes(1);
     const [to, body] = vi.mocked(sendSms).mock.calls[0];
     expect(to).toBe("+17185550142");
     expect(body).toMatch(/\d{6}/);
   });
 
-  it("SENDS NO SECOND MESSAGE inside the cooldown — this one guards the bill", async () => {
+  // FIX 3: the claim losing IS the cooldown refusal — no read-then-write for concurrent callers
+  // to race through.
+  it("SENDS NO SECOND MESSAGE when the claim is lost — this one guards the bill", async () => {
+    vi.mocked(claimPhoneVerification).mockResolvedValue(false);
     vi.mocked(readPendingVerification).mockResolvedValue({
       memberId: ME.id, phone: "+17185550142", code: "111111", attempts: 0,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -92,14 +125,38 @@ describe("sendPhoneCodeAction", () => {
     const res = await sendPhoneCodeAction();
     expect(res.ok).toBe(false);
     expect(sendSms).not.toHaveBeenCalled();
-    expect(writePendingVerification).not.toHaveBeenCalled();
   });
 
-  it("removes the pending row when the provider fails, so a retry is possible immediately", async () => {
-    vi.mocked(sendSms).mockRejectedValue(new Error("provider down"));
+  it("refuses when the claim is lost even with no pending row to explain why", async () => {
+    vi.mocked(claimPhoneVerification).mockResolvedValue(false);
+    const res = await sendPhoneCodeAction();
+    expect(res.ok).toBe(false);
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+
+  // FIX 2: only a DEFINITIVE failure (never sent, never billed) may free the cooldown row.
+  it("removes the pending row when Twilio definitively rejected the message (4xx)", async () => {
+    vi.mocked(sendSms).mockRejectedValue(new SmsError("rejected", true));
     const res = await sendPhoneCodeAction();
     expect(res.ok).toBe(false);
     expect(clearPendingVerification).toHaveBeenCalledWith(serviceClient, ME.id);
+  });
+
+  // FIX 2: an AMBIGUOUS failure (5xx, network error, timeout) may have been sent and billed
+  // already — deleting the row here would let every retry re-bill.
+  it("KEEPS the pending row when the send outcome is ambiguous (5xx / network failure)", async () => {
+    vi.mocked(sendSms).mockRejectedValue(new SmsError("server error", false));
+    const res = await sendPhoneCodeAction();
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown|wait|couldn't confirm/i);
+    expect(clearPendingVerification).not.toHaveBeenCalled();
+  });
+
+  it("also keeps the pending row for a plain thrown error (treated as ambiguous, not a rejection)", async () => {
+    vi.mocked(sendSms).mockRejectedValue(new Error("something unexpected"));
+    const res = await sendPhoneCodeAction();
+    expect(res.ok).toBe(false);
+    expect(clearPendingVerification).not.toHaveBeenCalled();
   });
 });
 
@@ -123,7 +180,23 @@ describe("confirmPhoneCodeAction", () => {
     vi.mocked(readPendingVerification).mockResolvedValue(pending());
     const res = await confirmPhoneCodeAction(form({ code: "123456" }));
     expect(res.ok).toBe(true);
-    expect(markPhoneVerified).toHaveBeenCalledWith(serviceClient, ME.id, expect.any(String));
+    expect(markPhoneVerified).toHaveBeenCalledWith(
+      serviceClient, ME.id, expect.any(String), PROFILE.phone
+    );
+    expect(clearPendingVerification).toHaveBeenCalledWith(serviceClient, ME.id);
+  });
+
+  // FIX 1: the read-check-write race. markPhoneVerified's write is conditional on the phone still
+  // matching; if a concurrent save changed it in between, the write touches no row and returns
+  // false. Confirming must NOT report success on that outcome, or an unproven number gets badged
+  // "Verified".
+  it("does NOT report success when markPhoneVerified finds the number already changed", async () => {
+    vi.mocked(readPendingVerification).mockResolvedValue(pending());
+    vi.mocked(markPhoneVerified).mockResolvedValue(false);
+    const res = await confirmPhoneCodeAction(form({ code: "123456" }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/changed/i);
+    // The pending row is still cleared either way — a stale code should not linger.
     expect(clearPendingVerification).toHaveBeenCalledWith(serviceClient, ME.id);
   });
 
