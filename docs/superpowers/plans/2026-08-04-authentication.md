@@ -90,7 +90,9 @@ Run:
 ```bash
 docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -t -A -F'|' -c "select (select count(*) from clients), (select count(*) from sites), (select count(*) from rooms), (select count(*) from floor_devices);"
 ```
-Expected: `2|31|11|19`
+Expected: `3|31|11|19` — three client ROWS, one of which (`TEST`) the user archived while trying
+out the archive feature, so the app shows two. The number that matters is that it is unchanged by
+this migration.
 
 - [ ] **Step 4: Commit**
 
@@ -1597,7 +1599,8 @@ Run:
 ```bash
 docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -t -A -F'|' -c "select (select count(*) from clients), (select count(*) from sites), (select count(*) from rooms), (select count(plan_polygon) from rooms), (select count(*) from floor_devices), (select count(*) from floor_plans);"
 ```
-Expected: `2|31|11|9|19|2`
+Expected: `3|31|11|9|19|2` — three client rows (one archived), 31 sites, 11 rooms of which 9 are
+outlined, 19 floor devices, 2 floor plans.
 
 - [ ] **Step 4: Record the outcome in the ledger**
 
