@@ -16,6 +16,7 @@ const member: Member = {
   name: "Bob",
   authUserId: "au1",
   disabledAt: null,
+  avatarPath: null,
 };
 
 function formFor(email: string, password: string): FormData {

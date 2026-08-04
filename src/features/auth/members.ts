@@ -13,6 +13,11 @@ export interface Member {
   name: string;
   authUserId: string | null;
   disabledAt: string | null;
+  /** The member's stored avatar object, or null. The other profile columns deliberately stay out of
+   *  this type — it belongs to the gate and is read on every request, so it should carry only what
+   *  deciding needs. This one earns its place: the root layout draws the avatar on EVERY page, and
+   *  without it here the layout has to select the same row a second time on every navigation. */
+  avatarPath: string | null;
 }
 
 export type MemberDecision = { allowed: true; member: Member } | { allowed: false };
@@ -51,7 +56,7 @@ export async function getCurrentMember(): Promise<Member | null> {
   const db = createServiceClient();
   const { data, error } = await db
     .from("members")
-    .select("id, email, name, auth_user_id, disabled_at")
+    .select("id, email, name, auth_user_id, disabled_at, avatar_path")
     .eq("email", normaliseEmail(email))
     .maybeSingle();
   // A query failure (outage, bad credentials, misconfiguration) also leaves `data` null, which is
@@ -68,6 +73,7 @@ export async function getCurrentMember(): Promise<Member | null> {
         name: String(data.name ?? ""),
         authUserId: data.auth_user_id === null ? null : String(data.auth_user_id),
         disabledAt: data.disabled_at === null ? null : String(data.disabled_at),
+        avatarPath: data.avatar_path == null ? null : String(data.avatar_path),
       }
     : null;
   const decision = memberDecision(row);

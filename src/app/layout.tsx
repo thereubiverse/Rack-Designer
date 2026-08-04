@@ -3,7 +3,6 @@ import "./globals.css";
 import { AppShell } from "@/features/shell/AppShell";
 import { getCurrentMember } from "@/features/auth/members";
 import { createServiceClient } from "@/lib/supabase/server";
-import { readProfile } from "@/features/profile/repository";
 import { createAvatarSignedUrl } from "@/features/profile/avatarStorage";
 
 export const metadata: Metadata = {
@@ -25,13 +24,21 @@ export default async function RootLayout({
   const memberName = member ? member.name || member.email : null;
   const memberEmail = member ? member.email : null;
 
-  // Only costs a storage round trip for members who have actually uploaded a picture; everyone
-  // else keeps the initial-letter circle and this is skipped entirely.
+  // Only costs a storage round trip for members who have actually uploaded a picture; everyone else
+  // keeps the initial-letter circle and this is skipped entirely. The path rides along on
+  // getCurrentMember's existing row read, so there is no second query for it.
+  //
+  // Signing is wrapped because this is the ROOT layout: it renders on every route. Signing a path
+  // whose object is missing returns a 400, and an unguarded throw here would 500 the whole app for
+  // that member — including /profile, the one page where they could remove the broken picture. The
+  // row and the object can disagree after a failed removal, so this is reachable, not theoretical.
   let memberAvatarUrl: string | null = null;
-  if (member) {
-    const db = createServiceClient();
-    const profile = await readProfile(db, member.id);
-    if (profile?.avatarPath) memberAvatarUrl = await createAvatarSignedUrl(db, profile.avatarPath);
+  if (member?.avatarPath) {
+    try {
+      memberAvatarUrl = await createAvatarSignedUrl(createServiceClient(), member.avatarPath);
+    } catch (e) {
+      console.error("RootLayout: could not sign the member avatar", e);
+    }
   }
 
   return (

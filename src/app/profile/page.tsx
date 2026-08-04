@@ -18,9 +18,18 @@ export default async function ProfilePage() {
   const profile = await readProfile(db, member.id);
   if (!profile) redirect("/login");
 
-  const avatarUrl = profile.avatarPath
-    ? await createAvatarSignedUrl(db, profile.avatarPath)
-    : null;
+  // Guarded for the same reason the root layout is, and this one matters more: if the row names an
+  // object that is gone, an unguarded throw takes down the ONE page where the member could remove
+  // the broken picture. Falling back to the initial leaves Remove reachable, so the state is
+  // self-correcting rather than a dead end.
+  let avatarUrl: string | null = null;
+  if (profile.avatarPath) {
+    try {
+      avatarUrl = await createAvatarSignedUrl(db, profile.avatarPath);
+    } catch (e) {
+      console.error("ProfilePage: could not sign the member avatar", e);
+    }
+  }
 
   // A member who signed in with Google or Microsoft has no password. Offering to "change" one
   // would quietly SET one, creating a second way into an account whose owner believes their

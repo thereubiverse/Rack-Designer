@@ -7,6 +7,7 @@ const member = (over: Partial<Member> = {}): Member => ({
   name: "Bob",
   authUserId: "au1",
   disabledAt: null,
+  avatarPath: null,
   ...over,
 });
 
