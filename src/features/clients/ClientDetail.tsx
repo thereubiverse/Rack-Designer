@@ -12,6 +12,7 @@ import { IconButton } from "./IconButton";
 import { UnlocatedSites } from "./UnlocatedSites";
 import { toBlips } from "./sitesMapOps";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
+import { useCanEdit } from "@/features/shell/roleContext";
 
 // Leaflet touches `window` at import time, which breaks the server render of this page if
 // imported directly. Loading it via next/dynamic with ssr:false defers the import to the client.
@@ -24,6 +25,7 @@ const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focu
 export function ClientDetail({ client, sites }: { client: ClientRow; sites: SiteSummary[] }) {
   useHeaderTitle(client.name);
   const router = useRouter();
+  const canEdit = useCanEdit();
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<SiteSummary | null>(null);
@@ -94,14 +96,16 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
       <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
         <div className="flex items-center justify-between px-5 py-4">
           <h2 className="text-lg font-bold text-neutral-900">Sites</h2>
-          <button
-            type="button"
-            data-testid="table-create"
-            onClick={() => setCreateOpen(true)}
-            className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
-          >
-            + Add site
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              data-testid="table-create"
+              onClick={() => setCreateOpen(true)}
+              className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
+            >
+              + Add site
+            </button>
+          )}
         </div>
 
         <table className="w-full text-left text-sm">
@@ -137,19 +141,23 @@ export function ClientDetail({ client, sites }: { client: ClientRow; sites: Site
                       the same thing everywhere in the app. The tooltip carries the accessible name
                       now that the label is no longer visible. */}
                   <div className="flex items-center justify-end gap-1">
-                    <IconButton
-                      data-testid={`edit-site-${s.code}`}
-                      icon="tabler:pencil"
-                      tip="Rename site"
-                      onClick={() => setRenameTarget(s)}
-                    />
-                    <IconButton
-                      data-testid={`delete-site-${s.code}`}
-                      icon="tabler:trash"
-                      tip="Archive site"
-                      variant="danger"
-                      onClick={() => { setDeleteError(null); setDeleteTarget(s); }}
-                    />
+                    {canEdit && (
+                      <>
+                        <IconButton
+                          data-testid={`edit-site-${s.code}`}
+                          icon="tabler:pencil"
+                          tip="Rename site"
+                          onClick={() => setRenameTarget(s)}
+                        />
+                        <IconButton
+                          data-testid={`delete-site-${s.code}`}
+                          icon="tabler:trash"
+                          tip="Archive site"
+                          variant="danger"
+                          onClick={() => { setDeleteError(null); setDeleteTarget(s); }}
+                        />
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>

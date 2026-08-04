@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { ClientsTable } from "./ClientsTable";
 import { archiveClientAction, renameClientAction, createClientAction } from "./actions";
+import { RoleContext } from "@/features/shell/roleContext";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("./actions", () => ({
@@ -78,5 +79,25 @@ describe("ClientsTable", () => {
 
     await waitFor(() => expect(dialog.getByText("That code is taken")).toBeInTheDocument());
     expect((dialog.getByLabelText(/code/i) as HTMLInputElement).value).toBe("NEWCO");
+  });
+
+  // Presentation only — see roleContext.tsx. The server already refuses a viewer's create/rename/
+  // archive after Task 4; this just confirms the buttons that would only ever fail are not shown.
+  it("hides the create and edit/delete controls for a viewer, and shows them for an editor", () => {
+    const { rerender } = render(
+      <RoleContext.Provider value="viewer">
+        <ClientsTable clients={clients} />
+      </RoleContext.Provider>
+    );
+    expect(screen.queryByTestId("table-create")).toBeNull();
+    expect(screen.queryByTestId("edit-client-ACME")).toBeNull();
+
+    rerender(
+      <RoleContext.Provider value="editor">
+        <ClientsTable clients={clients} />
+      </RoleContext.Provider>
+    );
+    expect(screen.getByTestId("table-create")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-client-ACME")).toBeInTheDocument();
   });
 });

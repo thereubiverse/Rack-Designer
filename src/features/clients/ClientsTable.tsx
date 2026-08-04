@@ -7,6 +7,7 @@ import type { ClientSummary } from "./repository";
 import { createClientAction, renameClientAction, archiveClientAction } from "./actions";
 import { ArchiveDialog } from "./ArchiveDialog";
 import { IconButton } from "./IconButton";
+import { useCanEdit } from "@/features/shell/roleContext";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -16,6 +17,7 @@ const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focu
  *  place; it can be restored from Settings → Archive). */
 export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
   const router = useRouter();
+  const canEdit = useCanEdit();
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ClientSummary | null>(null);
@@ -73,14 +75,16 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
       <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex items-center justify-between px-5 py-4">
         <h2 className="text-lg font-bold text-neutral-900">Clients</h2>
-        <button
-          type="button"
-          data-testid="table-create"
-          onClick={() => setCreateOpen(true)}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
-        >
-          + Add client
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            data-testid="table-create"
+            onClick={() => setCreateOpen(true)}
+            className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-[#376ad9]"
+          >
+            + Add client
+          </button>
+        )}
       </div>
 
       <table className="w-full text-left text-sm">
@@ -111,19 +115,23 @@ export function ClientsTable({ clients }: { clients: ClientSummary[] }) {
               <td className="px-5 py-3 text-right">
                 {/* Matches the sites / rooms / devices tables — see ClientDetail. */}
                 <div className="flex items-center justify-end gap-1">
-                  <IconButton
-                    data-testid={`edit-client-${c.code}`}
-                    icon="tabler:pencil"
-                    tip="Rename client"
-                    onClick={() => setRenameTarget(c)}
-                  />
-                  <IconButton
-                    data-testid={`delete-client-${c.code}`}
-                    icon="tabler:trash"
-                    tip="Archive client"
-                    variant="danger"
-                    onClick={() => { setDeleteError(null); setDeleteTarget(c); }}
-                  />
+                  {canEdit && (
+                    <>
+                      <IconButton
+                        data-testid={`edit-client-${c.code}`}
+                        icon="tabler:pencil"
+                        tip="Rename client"
+                        onClick={() => setRenameTarget(c)}
+                      />
+                      <IconButton
+                        data-testid={`delete-client-${c.code}`}
+                        icon="tabler:trash"
+                        tip="Archive client"
+                        variant="danger"
+                        onClick={() => { setDeleteError(null); setDeleteTarget(c); }}
+                      />
+                    </>
+                  )}
                 </div>
               </td>
             </tr>

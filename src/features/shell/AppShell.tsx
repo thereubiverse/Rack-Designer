@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { AppSidebar, SIDEBAR_WIDTH, SIDEBAR_COLLAPSED } from "./AppSidebar";
 import { HeaderTitleContext } from "./headerTitle";
+import { RoleContext } from "./roleContext";
+import type { Role } from "@/features/auth/roles";
 
 const STORE_KEY = "dl-sidebar-collapsed";
 
@@ -28,11 +30,13 @@ export function AppShell({
   memberName,
   memberEmail,
   memberAvatarUrl,
+  memberRole,
 }: {
   children: React.ReactNode;
   memberName: string | null;
   memberEmail: string | null;
   memberAvatarUrl: string | null;
+  memberRole: Role | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
@@ -51,8 +55,12 @@ export function AppShell({
 
   return (
     <HeaderTitleContext.Provider value={setPageTitle}>
+    {/* memberRole falls back to "admin" only when there is no member at all, which — per the
+        comment above — doesn't happen on a non-bare route; this is just satisfying the context's
+        non-nullable type, not a real access decision. */}
+    <RoleContext.Provider value={memberRole ?? "admin"}>
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <AppSidebar collapsed={collapsed} memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl} />
+      <AppSidebar collapsed={collapsed} memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl} memberRole={memberRole} />
 
       <div
         className="transition-[padding] duration-300 ease-in-out"
@@ -92,6 +100,7 @@ export function AppShell({
         </div>
       </div>
     </div>
+    </RoleContext.Provider>
     </HeaderTitleContext.Provider>
   );
 }

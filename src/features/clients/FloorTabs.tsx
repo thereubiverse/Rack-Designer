@@ -5,7 +5,11 @@ import type { FloorRow } from "@/lib/supabase/types";
 /** Tab bar over a site's floors. Purely presentational — the repository already sorts floors by
  *  `sort_order`, so this renders them in exactly the order given and never re-sorts by code (a
  *  floor named "1F" can legitimately sit above "GF"). Selecting a floor and adding one are both
- *  left to the caller via callbacks. */
+ *  left to the caller via callbacks.
+ *
+ *  `onAdd` is optional so the caller can omit it to hide "+ Add floor" (SiteDetail does this for a
+ *  viewer, whose create would be refused server-side anyway) without this component knowing
+ *  anything about roles. */
 export function FloorTabs({
   floors,
   activeCode,
@@ -15,7 +19,7 @@ export function FloorTabs({
   floors: FloorRow[];
   activeCode: string;
   onSelect: (code: string) => void;
-  onAdd: () => void;
+  onAdd?: () => void;
 }) {
   return (
     <div className="flex items-center gap-1 border-b border-neutral-200">
@@ -40,14 +44,16 @@ export function FloorTabs({
           </button>
         );
       })}
-      <button
-        type="button"
-        data-testid="add-floor"
-        onClick={onAdd}
-        className="ml-2 px-3 py-2 text-sm font-semibold text-blue-700 hover:text-blue-800"
-      >
-        + Add floor
-      </button>
+      {onAdd && (
+        <button
+          type="button"
+          data-testid="add-floor"
+          onClick={onAdd}
+          className="ml-2 px-3 py-2 text-sm font-semibold text-blue-700 hover:text-blue-800"
+        >
+          + Add floor
+        </button>
+      )}
     </div>
   );
 }

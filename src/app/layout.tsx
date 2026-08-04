@@ -23,6 +23,7 @@ export default async function RootLayout({
   const member = await getCurrentMember();
   const memberName = member ? member.name || member.email : null;
   const memberEmail = member ? member.email : null;
+  const memberRole = member ? member.role : null;
 
   // Only costs a storage round trip for members who have actually uploaded a picture; everyone else
   // keeps the initial-letter circle and this is skipped entirely. The path rides along on
@@ -44,7 +45,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="bg-neutral-50 text-neutral-900">
-        <AppShell memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl}>{children}</AppShell>
+        <AppShell memberName={memberName} memberEmail={memberEmail} memberAvatarUrl={memberAvatarUrl} memberRole={memberRole}>{children}</AppShell>
       </body>
     </html>
   );

@@ -28,6 +28,7 @@ import { FloorPlanCanvas, type FloorPlanCanvasHandle } from "./FloorPlanCanvas";
 import { PlanBottomSheet, type PlanBottomSheetHandle } from "./PlanBottomSheet";
 import { PlanUploadZone } from "./PlanUploadZone";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
+import { useCanEdit } from "@/features/shell/roleContext";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -101,6 +102,7 @@ export function SiteDetail({
 }) {
   useHeaderTitle(site.name);
   const router = useRouter();
+  const canEdit = useCanEdit();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -276,13 +278,15 @@ export function SiteDetail({
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold">{site.name}</h2>
-        <IconButton
-          data-testid="table-create"
-          icon="tabler:plus"
-          tip="Add rack"
-          variant="primary"
-          onClick={() => setCreateOpen(true)}
-        />
+        {canEdit && (
+          <IconButton
+            data-testid="table-create"
+            icon="tabler:plus"
+            tip="Add rack"
+            variant="primary"
+            onClick={() => setCreateOpen(true)}
+          />
+        )}
       </div>
 
       <div className="flex items-center justify-between">
@@ -290,9 +294,9 @@ export function SiteDetail({
           floors={floors}
           activeCode={activeCode}
           onSelect={handleSelectFloor}
-          onAdd={() => { setAddFloorError(null); setAddFloorOpen(true); }}
+          onAdd={canEdit ? () => { setAddFloorError(null); setAddFloorOpen(true); } : undefined}
         />
-        {activeFloor && (
+        {activeFloor && canEdit && (
           <div className="flex items-center gap-1 pb-2">
             <IconButton
               data-testid="rename-floor"
@@ -380,13 +384,15 @@ export function SiteDetail({
                               <td className="px-5 py-3 text-neutral-600">{r.deviceCount}</td>
                               <td className="px-5 py-3">
                                 <div className="flex justify-end">
-                                  <IconButton
-                                    data-testid={`delete-rack-${r.id}`}
-                                    icon="tabler:trash"
-                                    tip="Delete rack"
-                                    variant="danger"
-                                    onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
-                                  />
+                                  {canEdit && (
+                                    <IconButton
+                                      data-testid={`delete-rack-${r.id}`}
+                                      icon="tabler:trash"
+                                      tip="Delete rack"
+                                      variant="danger"
+                                      onClick={() => { setDeleteError(null); setDeleteTarget(r); }}
+                                    />
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -403,60 +409,66 @@ export function SiteDetail({
             // panel's modal via the canvas callbacks below.
             const planTools = (
               <>
-                <IconButton
-                  data-testid="plan-add-room"
-                  icon="tabler:square-plus"
-                  tip="Add room"
-                  tipSide="right"
-                  variant="floating"
-                  onClick={startAddRoom}
-                />
-                <div className="relative">
-                  <IconButton
-                    data-testid="plan-add-device"
-                    icon="tabler:circle-plus"
-                    tip="Add device"
-                    tipSide="right"
-                    variant={deviceMenuOpen ? "floatingActive" : "floating"}
-                    aria-pressed={deviceMenuOpen}
-                    onClick={() => setDeviceMenuOpen((o) => !o)}
-                  />
-                  {deviceMenuOpen && (
-                    <div
-                      data-testid="device-type-menu"
-                      className="absolute left-full top-0 z-40 ml-2 max-h-64 w-56 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-1 shadow-lg"
-                    >
-                      <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                        Pick a device to place
-                      </p>
-                      {deviceTypes.length === 0 ? (
-                        <p className="px-3 py-2 text-sm text-neutral-400">No device types available</p>
-                      ) : (
-                        deviceTypes.map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            data-testid={`device-type-${t.id}`}
-                            onClick={() => startAddDevice(t.id)}
-                            className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
-                          >
-                            <Icon icon={resolveTypeIcon(t)} width={16} height={16} color={resolveTypeColor(t)} className="shrink-0" />
-                            {t.name}
-                          </button>
-                        ))
+                {canEdit && (
+                  <>
+                    <IconButton
+                      data-testid="plan-add-room"
+                      icon="tabler:square-plus"
+                      tip="Add room"
+                      tipSide="right"
+                      variant="floating"
+                      onClick={startAddRoom}
+                    />
+                    <div className="relative">
+                      <IconButton
+                        data-testid="plan-add-device"
+                        icon="tabler:circle-plus"
+                        tip="Add device"
+                        tipSide="right"
+                        variant={deviceMenuOpen ? "floatingActive" : "floating"}
+                        aria-pressed={deviceMenuOpen}
+                        onClick={() => setDeviceMenuOpen((o) => !o)}
+                      />
+                      {deviceMenuOpen && (
+                        <div
+                          data-testid="device-type-menu"
+                          className="absolute left-full top-0 z-40 ml-2 max-h-64 w-56 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-1 shadow-lg"
+                        >
+                          <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                            Pick a device to place
+                          </p>
+                          {deviceTypes.length === 0 ? (
+                            <p className="px-3 py-2 text-sm text-neutral-400">No device types available</p>
+                          ) : (
+                            deviceTypes.map((t) => (
+                              <button
+                                key={t.id}
+                                type="button"
+                                data-testid={`device-type-${t.id}`}
+                                onClick={() => startAddDevice(t.id)}
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                              >
+                                <Icon icon={resolveTypeIcon(t)} width={16} height={16} color={resolveTypeColor(t)} className="shrink-0" />
+                                {t.name}
+                              </button>
+                            ))
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
                 <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
-                <IconButton
-                  data-testid="delete-plan"
-                  icon="tabler:trash"
-                  tip="Delete plan"
-                  tipSide="right"
-                  variant="floatingDanger"
-                  onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                />
+                {canEdit && (
+                  <IconButton
+                    data-testid="delete-plan"
+                    icon="tabler:trash"
+                    tip="Delete plan"
+                    tipSide="right"
+                    variant="floatingDanger"
+                    onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                  />
+                )}
               </>
             );
 
@@ -527,13 +539,15 @@ export function SiteDetail({
                       </p>
                       <div className="flex items-center gap-2">
                         <PlanUploadZone floorId={activeFloor.id} hasPlan variant="icon" />
-                        <IconButton
-                          data-testid="delete-plan"
-                          icon="tabler:trash"
-                          tip="Delete plan"
-                          variant="floatingDanger"
-                          onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
-                        />
+                        {canEdit && (
+                          <IconButton
+                            data-testid="delete-plan"
+                            icon="tabler:trash"
+                            tip="Delete plan"
+                            variant="floatingDanger"
+                            onClick={() => { setDeletePlanError(null); setDeletePlanOpen(true); }}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>

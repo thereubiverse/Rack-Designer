@@ -21,6 +21,7 @@ import {
 import type { NormPoint } from "./floorPlanOps";
 import { DeleteDialog } from "./DeleteDialog";
 import { IconButton } from "./IconButton";
+import { useCanEdit } from "@/features/shell/roleContext";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
@@ -68,6 +69,7 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
     ref
   ) {
   const router = useRouter();
+  const canEdit = useCanEdit();
 
   const { sections, floorLevel } = groupDevicesByRoom(rooms, devices);
 
@@ -284,22 +286,26 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
         </td>
         <td className="px-4 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
-            <IconButton
-              data-testid={`device-edit-${device.code}`}
-              icon="tabler:pencil"
-              tip="Edit device"
-              onClick={() => {
-                setEditDeviceError(null);
-                setEditDeviceTarget(device);
-              }}
-            />
-            <IconButton
-              data-testid={`device-delete-${device.code}`}
-              icon="tabler:trash"
-              tip="Delete device"
-              variant="danger"
-              onClick={() => handleDeleteDevice(device.id)}
-            />
+            {canEdit && (
+              <>
+                <IconButton
+                  data-testid={`device-edit-${device.code}`}
+                  icon="tabler:pencil"
+                  tip="Edit device"
+                  onClick={() => {
+                    setEditDeviceError(null);
+                    setEditDeviceTarget(device);
+                  }}
+                />
+                <IconButton
+                  data-testid={`device-delete-${device.code}`}
+                  icon="tabler:trash"
+                  tip="Delete device"
+                  variant="danger"
+                  onClick={() => handleDeleteDevice(device.id)}
+                />
+              </>
+            )}
           </div>
         </td>
       </tr>
@@ -330,25 +336,27 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
       {showAddButtons && (
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-neutral-900">Rooms &amp; devices</h2>
-          <div className="flex items-center gap-1">
-            <IconButton
-              data-testid="add-room"
-              icon="tabler:door"
-              tip="Add room"
-              onClick={() => {
-                setAddRoomError(null);
-                setPendingRoomPolygon(null);
-                setAddRoomOpen(true);
-              }}
-            />
-            <IconButton
-              data-testid="add-device"
-              icon="tabler:plus"
-              tip="Add device"
-              variant="primary"
-              onClick={openAddDevice}
-            />
-          </div>
+          {canEdit && (
+            <div className="flex items-center gap-1">
+              <IconButton
+                data-testid="add-room"
+                icon="tabler:door"
+                tip="Add room"
+                onClick={() => {
+                  setAddRoomError(null);
+                  setPendingRoomPolygon(null);
+                  setAddRoomOpen(true);
+                }}
+              />
+              <IconButton
+                data-testid="add-device"
+                icon="tabler:plus"
+                tip="Add device"
+                variant="primary"
+                onClick={openAddDevice}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -372,25 +380,29 @@ export const FloorDevicesPanel = forwardRef<FloorDevicesPanelHandle, FloorDevice
               )}
             </div>
             <div className="flex items-center gap-1">
-              <IconButton
-                data-testid={`room-rename-${room.code}`}
-                icon="tabler:pencil"
-                tip="Rename room"
-                onClick={() => {
-                  setRenameRoomError(null);
-                  setRenameRoomTarget(room);
-                }}
-              />
-              <IconButton
-                data-testid={`room-delete-${room.code}`}
-                icon="tabler:trash"
-                tip="Delete room"
-                variant="danger"
-                onClick={() => {
-                  setDeleteRoomError(null);
-                  setDeleteRoomTarget(room);
-                }}
-              />
+              {canEdit && (
+                <>
+                  <IconButton
+                    data-testid={`room-rename-${room.code}`}
+                    icon="tabler:pencil"
+                    tip="Rename room"
+                    onClick={() => {
+                      setRenameRoomError(null);
+                      setRenameRoomTarget(room);
+                    }}
+                  />
+                  <IconButton
+                    data-testid={`room-delete-${room.code}`}
+                    icon="tabler:trash"
+                    tip="Delete room"
+                    variant="danger"
+                    onClick={() => {
+                      setDeleteRoomError(null);
+                      setDeleteRoomTarget(room);
+                    }}
+                  />
+                </>
+              )}
             </div>
           </div>
           {roomDevices.length === 0 ? (

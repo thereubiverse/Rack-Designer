@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { signOutAction } from "@/features/auth/authActions";
+import type { Role } from "@/features/auth/roles";
 
 export const SIDEBAR_WIDTH = 248;      // expanded rail width (px)
 export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
@@ -18,17 +19,22 @@ export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
  *
  *  `memberName` and `memberEmail` are resolved server-side (getCurrentMember is server-only) and
  *  passed down from the root layout; they are null only on the bare auth routes, where this
- *  component isn't rendered. */
+ *  component isn't rendered.
+ *
+ *  `memberRole` arrives the same way (not through RoleContext, unlike the rest of this task) so the
+ *  nav item below can be gated with a plain prop check right next to the others. */
 export function AppSidebar({
   collapsed,
   memberName,
   memberEmail,
   memberAvatarUrl,
+  memberRole,
 }: {
   collapsed: boolean;
   memberName: string | null;
   memberEmail: string | null;
   memberAvatarUrl: string | null;
+  memberRole: Role | null;
 }) {
   const pathname = usePathname();
   const displayName = memberName ?? "";
@@ -99,7 +105,11 @@ export function AppSidebar({
 
         <nav className="space-y-0.5">
           <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
-          <NavItem icon="tabler:users" label="Users & Permissions" href="/users" active={pathname.startsWith("/users")} />
+          {/* /users already redirects a non-admin to the dashboard, so showing this to everyone
+              would just offer a link that bounces them — not a permission check, just tidy nav. */}
+          {memberRole === "admin" && (
+            <NavItem icon="tabler:users" label="Users & Permissions" href="/users" active={pathname.startsWith("/users")} />
+          )}
           <NavItem icon="tabler:settings" label="Settings & Billing" href="/settings" active={pathname.startsWith("/settings")} />
         </nav>
 

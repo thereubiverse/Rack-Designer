@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AppSidebar } from "./AppSidebar";
+import type { Role } from "@/features/auth/roles";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
@@ -12,6 +13,7 @@ function renderSidebar(props?: {
   memberName?: string | null;
   memberEmail?: string | null;
   memberAvatarUrl?: string | null;
+  memberRole?: Role | null;
 }) {
   return render(
     <AppSidebar
@@ -19,6 +21,7 @@ function renderSidebar(props?: {
       memberName={props?.memberName === undefined ? "Reuben Singh" : props.memberName}
       memberEmail={props?.memberEmail === undefined ? "rsingh@qtsi.us" : props.memberEmail}
       memberAvatarUrl={props?.memberAvatarUrl === undefined ? null : props.memberAvatarUrl}
+      memberRole={props?.memberRole === undefined ? "admin" : props.memberRole}
     />
   );
 }
@@ -96,7 +99,7 @@ describe("AppSidebar account menu", () => {
     const { rerender } = renderSidebar();
     fireEvent.click(screen.getByTestId("account-trigger"));
     expect(screen.getByTestId("account-menu")).toBeTruthy();
-    rerender(<AppSidebar collapsed memberName="Reuben Singh" memberEmail="rsingh@qtsi.us" memberAvatarUrl={null} />);
+    rerender(<AppSidebar collapsed memberName="Reuben Singh" memberEmail="rsingh@qtsi.us" memberAvatarUrl={null} memberRole="admin" />);
     expect(screen.queryByTestId("account-menu")).toBeNull();
   });
 });
