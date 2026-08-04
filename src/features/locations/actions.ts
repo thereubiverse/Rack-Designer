@@ -12,11 +12,18 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 async function findOrCreateFloor(db: SupabaseClient, siteId: string, code: string) {
+  // An archived floor is invisible everywhere it's LISTED (listFloorsForSite hides it), so matching
+  // one here would silently attach the new rack to a floor the user can never see or reach — the
+  // rack vanishes the moment this returns. Excluding archived rows makes the create path behave as
+  // if that code doesn't exist at this site, which either finds a live floor or falls through to
+  // createFloor (and if the code is genuinely taken by the archived row, that insert fails loudly
+  // with a duplicate-key error instead of failing silently).
   const { data } = await db
     .from("floors")
     .select("*")
     .eq("site_id", siteId)
     .eq("code", code)
+    .is("archived_at", null)
     .maybeSingle();
   if (data) return data;
   return createFloor(db, { siteId, code });

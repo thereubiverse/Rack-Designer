@@ -54,14 +54,26 @@ export async function listClients(db: SupabaseClient): Promise<ClientSummary[]> 
   const rows = (clients ?? []) as ClientRow[];
   return Promise.all(
     rows.map(async (client) => {
-      const counts = await countClientCascade(db, client.id);
+      // NOT countClientCascade: that cascade deliberately counts archived sites/floors too (it
+      // answers "what would a permanent delete destroy"), which is exactly wrong for a listing —
+      // this row's counts must match what the client's own page actually lists below it. So the
+      // site count comes straight from the live sites query, and rack/device counts are walked
+      // through only THOSE sites' live floors via countLiveCascadeForSites.
+      const { data: liveSites, error: sitesErr } = await db
+        .from("sites")
+        .select("id")
+        .eq("client_id", client.id)
+        .is("archived_at", null);
+      if (sitesErr) throw new Error(`listClients(sites): ${sitesErr.message}`);
+      const liveSiteIds = ((liveSites ?? []) as { id: string }[]).map((s) => s.id);
+      const counts = await countLiveCascadeForSites(db, liveSiteIds);
       return {
         id: client.id,
         code: client.code,
         name: client.name,
-        siteCount: counts.sites ?? 0,
-        rackCount: counts.racks ?? 0,
-        deviceCount: counts.devices ?? 0,
+        siteCount: liveSiteIds.length,
+        rackCount: counts.racks,
+        deviceCount: counts.devices,
       };
     })
   );
@@ -93,7 +105,10 @@ export async function listSitesForClient(db: SupabaseClient, clientId: string): 
   const rows = (sites ?? []) as SiteRow[];
   return Promise.all(
     rows.map(async (site) => {
-      const counts = await countSiteCascade(db, site.id);
+      // NOT countSiteCascade: see the matching comment in listClients — a listing's counts must
+      // only reflect what's actually still visible, so archived floors under this (live) site are
+      // excluded here even though the cascade counter deliberately keeps them.
+      const counts = await countLiveCascadeForSites(db, [site.id]);
       return {
         id: site.id,
         code: site.code,
@@ -102,8 +117,8 @@ export async function listSitesForClient(db: SupabaseClient, clientId: string): 
         latitude: site.latitude,
         longitude: site.longitude,
         geocodeStatus: site.geocode_status,
-        rackCount: counts.racks ?? 0,
-        deviceCount: counts.devices ?? 0,
+        rackCount: counts.racks,
+        deviceCount: counts.devices,
       };
     })
   );
@@ -146,10 +161,17 @@ interface SiteRackJoinRow {
 }
 
 export async function listRacksForSite(db: SupabaseClient, siteId: string): Promise<SiteRackRow[]> {
+  // SiteDetail.tsx builds its floor/room code datalists straight from this list (`floorOptions`,
+  // `roomOptions` — the pickers offered when adding a rack), so a rack sitting under an archived
+  // floor must not surface that floor's code here: the floor is already unreachable (its tab is
+  // gone from `listFloorsForSite`), and offering the code would just walk a user back into the
+  // findOrCreateFloor collision that finding 1 fixes. This is a LISTING, so it follows the same
+  // archived_at is null rule as every other list query.
   const { data, error } = await db
     .from("racks")
-    .select("id, code, height_u, x, y, rooms!inner(code, type, floors!inner(code, site_id))")
+    .select("id, code, height_u, x, y, rooms!inner(code, type, floors!inner(code, site_id, archived_at))")
     .eq("rooms.floors.site_id", siteId)
+    .is("rooms.floors.archived_at", null)
     .order("code", { ascending: true });
   if (error) throw new Error(`listRacksForSite: ${error.message}`);
 
@@ -317,6 +339,49 @@ export async function countSiteCascade(db: SupabaseClient, siteId: string): Prom
   if (rackIds.length === 0) return { racks: 0, devices: floorDevices };
   const { count } = await db.from("rack_devices").select("id", { count: "exact", head: true }).in("rack_id", rackIds);
   return { racks: rackIds.length, devices: (count ?? 0) + floorDevices };
+}
+
+/** Rack/device count under a set of (already-live) sites, restricted to floors that are NOT
+ *  archived. This is the listing-layer counterpart to countSiteCascade/countClientCascade: it
+ *  exists solely so `/clients` and a client's site list show counts that match what their own
+ *  page actually lists, instead of the cascade counters' deliberately-inclusive-of-archived total.
+ *  floor_devices are counted by `floor_id` (not `site_id` like countSiteCascade does) precisely
+ *  because that's the one column that lets an archived floor's devices be excluded. */
+async function countLiveCascadeForSites(db: SupabaseClient, siteIds: string[]): Promise<{ racks: number; devices: number }> {
+  if (siteIds.length === 0) return { racks: 0, devices: 0 };
+
+  const { data: floors, error: floorsErr } = await db
+    .from("floors")
+    .select("id")
+    .in("site_id", siteIds)
+    .is("archived_at", null);
+  if (floorsErr) throw new Error(`countLiveCascadeForSites(floors): ${floorsErr.message}`);
+  const floorIds = ((floors ?? []) as { id: string }[]).map((f) => f.id);
+  if (floorIds.length === 0) return { racks: 0, devices: 0 };
+
+  const { count: floorDeviceCount, error: fdErr } = await db
+    .from("floor_devices")
+    .select("id", { count: "exact", head: true })
+    .in("floor_id", floorIds);
+  if (fdErr) throw new Error(`countLiveCascadeForSites(floor_devices): ${fdErr.message}`);
+
+  const { data: rooms, error: roomsErr } = await db.from("rooms").select("id").in("floor_id", floorIds);
+  if (roomsErr) throw new Error(`countLiveCascadeForSites(rooms): ${roomsErr.message}`);
+  const roomIds = ((rooms ?? []) as { id: string }[]).map((r) => r.id);
+  if (roomIds.length === 0) return { racks: 0, devices: floorDeviceCount ?? 0 };
+
+  const { data: racks, error: racksErr } = await db.from("racks").select("id").in("room_id", roomIds);
+  if (racksErr) throw new Error(`countLiveCascadeForSites(racks): ${racksErr.message}`);
+  const rackIds = ((racks ?? []) as { id: string }[]).map((r) => r.id);
+  if (rackIds.length === 0) return { racks: 0, devices: floorDeviceCount ?? 0 };
+
+  const { count: rackDeviceCount, error: rdErr } = await db
+    .from("rack_devices")
+    .select("id", { count: "exact", head: true })
+    .in("rack_id", rackIds);
+  if (rdErr) throw new Error(`countLiveCascadeForSites(rack_devices): ${rdErr.message}`);
+
+  return { racks: rackIds.length, devices: (rackDeviceCount ?? 0) + (floorDeviceCount ?? 0) };
 }
 
 export interface RackBreadcrumb {

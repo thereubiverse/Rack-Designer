@@ -190,7 +190,11 @@ describe("createFloorAction", () => {
 
     const res = await createFloorAction(createFloorForm());
 
-    expect(res).toEqual({ ok: false, error: "That floor code is already used at this site" });
+    expect(res).toEqual({
+      ok: false,
+      error:
+        "That floor code is already used at this site. If you don't see it, it may be archived — check Settings → Archive.",
+    });
   });
 });
 

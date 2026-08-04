@@ -74,12 +74,19 @@ function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "devi
   const msg = e instanceof Error ? e.message : "Unknown error";
   if (/duplicate key|already exists/i.test(msg)) {
     switch (kind) {
+      // Clients, sites and floors can be archived, which means the row a unique-constraint
+      // collision hits may be one the user cannot see anywhere on the page in front of them —
+      // `friendly` only sees a Postgres error string, so it can't tell whether the collision is
+      // against that hidden archived row or a live one it just failed to find. The wording below is
+      // written to stay true either way ("may be" — never asserts archived), and points at the one
+      // place that can resolve either case without claiming a permanent-delete feature that doesn't
+      // exist yet.
       case "client":
-        return "A client with that code already exists";
+        return "A client with that code already exists. If you don't see it, it may be archived — check Settings → Archive.";
       case "site":
-        return "That site code is already used by this client";
+        return "That site code is already used by this client. If you don't see it, it may be archived — check Settings → Archive.";
       case "floor":
-        return "That floor code is already used at this site";
+        return "That floor code is already used at this site. If you don't see it, it may be archived — check Settings → Archive.";
       case "room":
         return "That room code is already used on this floor";
       case "device":
