@@ -33,11 +33,15 @@ export interface AdminCount {
  *  admins demoting each other from two browsers both believe there are two. */
 export function wouldLeaveNoAdmin(
   members: AdminCount[],
-  change: { from: Role; to: Role | "revoked" }
+  change: { from: Role; to: Role | "revoked"; fromDisabled?: boolean }
 ): boolean {
   // Changing a non-admin cannot reduce the admin count, and neither can promoting someone to admin.
   if (change.from !== "admin") return false;
   if (change.to === "admin") return false;
+  // Nor can changing an admin who is ALREADY revoked — they are not in the active count to begin
+  // with. Without this, the sole active admin tidying up a revoked ex-admin's row is told there has
+  // to be at least one active admin, which is both wrong and baffling.
+  if (change.fromDisabled) return false;
   const activeAdmins = members.filter((m) => m.role === "admin" && m.disabledAt === null).length;
   return activeAdmins <= 1;
 }

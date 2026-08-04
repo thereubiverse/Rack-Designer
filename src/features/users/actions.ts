@@ -52,7 +52,7 @@ export const setMemberRoleAction: (
 
   // Read at write time. Two admins demoting each other from two browsers both saw "2 admins".
   const all = await listRolesForInvariant(db);
-  if (wouldLeaveNoAdmin(all, { from: target.role, to: role })) {
+  if (wouldLeaveNoAdmin(all, { from: target.role, to: role, fromDisabled: target.disabledAt !== null })) {
     return { ok: false, error: LAST_ADMIN };
   }
 
@@ -65,7 +65,9 @@ export const setMemberActiveAction: (
   formData: FormData
 ) => Promise<{ ok: boolean; error?: string }> = withAdmin(async (admin, formData: FormData) => {
   const id = String(formData.get("id") ?? "");
-  const active = String(formData.get("active") ?? "") === "true";
+  // Explicit "false" revokes; anything else — missing field, typo, malformed request — leaves
+  // access alone. The destructive branch must never be what a missing value falls into.
+  const active = String(formData.get("active") ?? "") !== "false";
   if (id === admin.id) return { ok: false, error: "You can't revoke your own access." };
 
   const db = createServiceClient();
@@ -75,7 +77,7 @@ export const setMemberActiveAction: (
   // Restoring can only ADD an active admin, so it can never trip the invariant.
   if (!active) {
     const all = await listRolesForInvariant(db);
-    if (wouldLeaveNoAdmin(all, { from: target.role, to: "revoked" })) {
+    if (wouldLeaveNoAdmin(all, { from: target.role, to: "revoked", fromDisabled: target.disabledAt !== null })) {
       return { ok: false, error: LAST_ADMIN };
     }
   }

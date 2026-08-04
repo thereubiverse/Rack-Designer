@@ -134,6 +134,13 @@ describe("setMemberActiveAction", () => {
     expect(setMemberDisabled).not.toHaveBeenCalled();
   });
 
+  it("does NOT revoke when the active field is missing — the destructive branch must not be the default", () => {
+    return setMemberActiveAction(form({ id: "other" })).then((res) => {
+      expect(res.ok).toBe(true);
+      expect(setMemberDisabled).toHaveBeenCalledWith(db, "other", false);
+    });
+  });
+
   it("restoring is never blocked by the invariant — it can only ADD an admin", async () => {
     vi.mocked(findMemberById).mockResolvedValue({ ...other, role: "admin", disabledAt: "2026-01-01" });
     const res = await setMemberActiveAction(form({ id: "other", active: "true" }));

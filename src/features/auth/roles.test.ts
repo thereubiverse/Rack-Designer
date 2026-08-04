@@ -48,6 +48,15 @@ describe("wouldLeaveNoAdmin", () => {
     expect(wouldLeaveNoAdmin([active("admin"), revoked("admin")], { from: "admin", to: "viewer" })).toBe(true);
   });
 
+  it("does not block changing an admin who is ALREADY revoked — they were never in the count", () => {
+    // The sole active admin tidying up a revoked ex-admin's row must not be told there has to be at
+    // least one active admin.
+    expect(wouldLeaveNoAdmin(
+      [active("admin"), revoked("admin")],
+      { from: "admin", to: "viewer", fromDisabled: true }
+    )).toBe(false);
+  });
+
   it("does not care when the person changing is not an admin", () => {
     expect(wouldLeaveNoAdmin([active("admin"), active("editor")], { from: "editor", to: "viewer" })).toBe(false);
     expect(wouldLeaveNoAdmin([active("admin"), active("viewer")], { from: "viewer", to: "revoked" })).toBe(false);
