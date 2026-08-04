@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
+import { withMember } from "@/features/auth/withMember";
 import { isValidCode, isValidRackHeight, type RoomType } from "@/domain/hierarchy";
 import { normaliseCode } from "@/features/clients/validation";
 import {
@@ -50,9 +51,10 @@ async function findOrCreateRoom(
  * flat flow this never creates a site from a typed code. Floors and rooms stay find-or-create:
  * the directory treats them as implicit, born when a rack needs them.
  */
-export async function createRackInSiteAction(
+export const createRackInSiteAction = withMember(async (
+  _member,
   formData: FormData,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
   const floorCode = normaliseCode(String(formData.get("floorCode") ?? ""));
   const roomCode = normaliseCode(String(formData.get("roomCode") ?? ""));
@@ -76,4 +78,4 @@ export async function createRackInSiteAction(
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
+import { withMember } from "@/features/auth/withMember";
 import { validateCode, normaliseCode } from "./validation";
 import { geocodeAddress } from "./geocode";
 import { ROOM_TYPES, type RoomType } from "@/domain/hierarchy";
@@ -96,7 +97,7 @@ function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "devi
   return msg;
 }
 
-export async function createClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const createClientAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
 
@@ -111,9 +112,9 @@ export async function createClientAction(formData: FormData): Promise<{ ok: bool
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function renameClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const renameClientAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -129,9 +130,9 @@ export async function renameClientAction(formData: FormData): Promise<{ ok: bool
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteClientAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -142,9 +143,9 @@ export async function deleteClientAction(formData: FormData): Promise<{ ok: bool
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function createSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const createSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const clientId = String(formData.get("clientId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -173,9 +174,9 @@ export async function createSiteAction(formData: FormData): Promise<{ ok: boolea
 
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function renameSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const renameSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -233,9 +234,9 @@ export async function renameSiteAction(formData: FormData): Promise<{ ok: boolea
 
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -246,9 +247,9 @@ export async function deleteSiteAction(formData: FormData): Promise<{ ok: boolea
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function locateSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const locateSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
 
   const db = createServiceClient();
@@ -262,9 +263,9 @@ export async function locateSiteAction(formData: FormData): Promise<{ ok: boolea
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteRackAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteRackAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const rackId = String(formData.get("rackId") ?? "");
 
   const db = createServiceClient();
@@ -276,9 +277,9 @@ export async function deleteRackAction(formData: FormData): Promise<{ ok: boolea
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function createFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const createFloorAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -296,9 +297,9 @@ export async function createFloorAction(formData: FormData): Promise<{ ok: boole
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function renameFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const renameFloorAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -314,9 +315,9 @@ export async function renameFloorAction(formData: FormData): Promise<{ ok: boole
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteFloorAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -327,7 +328,7 @@ export async function deleteFloorAction(formData: FormData): Promise<{ ok: boole
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
 // ---- Archive & restore -----------------------------------------------------------------------
 //
@@ -351,33 +352,34 @@ async function archiveOrRestore(
   return { ok: true };
 }
 
-export async function archiveClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const archiveClientAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveClient, "client");
-}
+});
 
-export async function restoreClientAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const restoreClientAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreClient, "client");
-}
+});
 
-export async function archiveSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const archiveSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveSite, "site");
-}
+});
 
-export async function restoreSiteAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const restoreSiteAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreSite, "site");
-}
+});
 
-export async function archiveFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const archiveFloorAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveFloor, "floor");
-}
+});
 
-export async function restoreFloorAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const restoreFloorAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreFloor, "floor");
-}
+});
 
-export async function createRoomAction(
+export const createRoomAction = withMember(async (
+  _member,
   formData: FormData
-): Promise<{ ok: boolean; error?: string; id?: string }> {
+): Promise<{ ok: boolean; error?: string; id?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -401,9 +403,9 @@ export async function createRoomAction(
   revalidatePath("/clients");
   // The new id lets the caller chain setRoomPolygonAction in the trace-then-name flow.
   return { ok: true, id: room.id };
-}
+});
 
-export async function renameRoomAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const renameRoomAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -425,9 +427,9 @@ export async function renameRoomAction(formData: FormData): Promise<{ ok: boolea
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteRoomAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteRoomAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -438,11 +440,12 @@ export async function deleteRoomAction(formData: FormData): Promise<{ ok: boolea
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function createFloorDeviceAction(
+export const createFloorDeviceAction = withMember(async (
+  _member,
   formData: FormData
-): Promise<{ ok: boolean; error?: string; id?: string }> {
+): Promise<{ ok: boolean; error?: string; id?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const roomIdRaw = String(formData.get("roomId") ?? "");
   const roomId = roomIdRaw === "" ? null : roomIdRaw;
@@ -469,9 +472,9 @@ export async function createFloorDeviceAction(
   revalidatePath("/clients");
   // The new id lets the caller chain placeFloorDeviceAction in the place-then-detail flow.
   return { ok: true, id: device.id };
-}
+});
 
-export async function updateFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const updateFloorDeviceAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const floorId = String(formData.get("floorId") ?? "");
   const roomIdRaw = String(formData.get("roomId") ?? "");
@@ -497,9 +500,9 @@ export async function updateFloorDeviceAction(formData: FormData): Promise<{ ok:
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteFloorDeviceAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -510,7 +513,7 @@ export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok:
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
 /** Trust posture for this slice: dimensions are decoded from the uploaded bytes (never taken from
  *  FormData), and the storage scope (site) is derived from the floor row (never from the caller).
@@ -524,7 +527,7 @@ export async function deleteFloorDeviceAction(formData: FormData): Promise<{ ok:
  *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
  *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
  *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
-export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const uploadFloorPlanAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
@@ -603,9 +606,9 @@ export async function uploadFloorPlanAction(formData: FormData): Promise<{ ok: b
 
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function deleteFloorPlanAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const deleteFloorPlanAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
 
   const db = createServiceClient();
@@ -638,12 +641,12 @@ export async function deleteFloorPlanAction(formData: FormData): Promise<{ ok: b
 
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
 /** `Number(String(...))` on a missing/blank field yields NaN, and NaN fails `isNorm`'s
  *  `Number.isFinite` check inside `placeFloorDevice` — a missing field rejects rather than
  *  placing a pin at NaN. */
-export async function placeFloorDeviceAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const placeFloorDeviceAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
@@ -656,9 +659,9 @@ export async function placeFloorDeviceAction(formData: FormData): Promise<{ ok: 
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function clearFloorDevicePlacementAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const clearFloorDevicePlacementAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -669,9 +672,9 @@ export async function clearFloorDevicePlacementAction(formData: FormData): Promi
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function placeRackAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const placeRackAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
@@ -684,9 +687,9 @@ export async function placeRackAction(formData: FormData): Promise<{ ok: boolean
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function clearRackPlacementAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const clearRackPlacementAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -697,12 +700,12 @@ export async function clearRackPlacementAction(formData: FormData): Promise<{ ok
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
 /** `JSON.parse` gets its OWN try/catch, separate from the repository call below — a malformed
  *  JSON string must reject with {ok:false} exactly like an invalid (but well-formed) polygon
  *  shape, never throw out of this action. */
-export async function setRoomPolygonAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const setRoomPolygonAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
   const raw = String(formData.get("polygon") ?? "");
 
@@ -721,9 +724,9 @@ export async function setRoomPolygonAction(formData: FormData): Promise<{ ok: bo
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});
 
-export async function clearRoomPolygonAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+export const clearRoomPolygonAction = withMember(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
 
   const db = createServiceClient();
@@ -734,4 +737,4 @@ export async function clearRoomPolygonAction(formData: FormData): Promise<{ ok: 
   }
   revalidatePath("/clients");
   return { ok: true };
-}
+});

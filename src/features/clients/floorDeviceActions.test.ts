@@ -7,6 +7,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // applied — so assertions can check real recorded arguments rather than just call counts.
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/features/auth/withMember", () => ({
+  // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
+  // action test would be re-testing the guard instead of the action.
+  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+}));
 
 import { createServiceClient } from "@/lib/supabase/server";
 import {
@@ -142,6 +148,7 @@ describe("createFloorDeviceAction", () => {
     const res = await createFloorDeviceAction(createDeviceForm());
 
     expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("unreachable");
     expect(res.id).toBeTruthy(); // new id is returned so the place-then-detail flow can chain
     const deviceInsert = insertCalls.find((c) => c.table === "floor_devices");
     expect(deviceInsert?.values.site_id).toBe("SITE-A");

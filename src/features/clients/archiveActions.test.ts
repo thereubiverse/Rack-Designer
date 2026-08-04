@@ -17,6 +17,12 @@ vi.mock("@/features/locations/repository", () => ({
   restoreFloor: vi.fn(),
   deleteFloor: vi.fn(),
 }));
+vi.mock("@/features/auth/withMember", () => ({
+  // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
+  // action test would be re-testing the guard instead of the action.
+  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+}));
 
 import { revalidatePath } from "next/cache";
 import { archiveClient, restoreClient, archiveSite, restoreSite, deleteClient, deleteSite } from "./repository";

@@ -14,6 +14,12 @@ vi.mock("./planStorage", () => ({
   uploadPlanPdf: vi.fn(),
   removePlanPdf: vi.fn(),
 }));
+vi.mock("@/features/auth/withMember", () => ({
+  // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
+  // action test would be re-testing the guard instead of the action.
+  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+}));
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf } from "./planStorage";
