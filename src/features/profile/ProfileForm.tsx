@@ -6,6 +6,7 @@ import { Icon } from "@iconify/react";
 import type { MemberProfile } from "./repository";
 import {
   updateProfileAction, uploadAvatarAction, removeAvatarAction, changePasswordAction,
+  sendPhoneCodeAction, confirmPhoneCodeAction,
 } from "./actions";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
 
@@ -44,6 +45,11 @@ export function ProfileForm({
   const [pwDone, setPwDone] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
   const pwFormRef = useRef<HTMLFormElement>(null);
+
+  const [phoneErr, setPhoneErr] = useState<string | null>(null);
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
+  const [phoneDone, setPhoneDone] = useState(false);
 
   const initial = (profile.name || profile.email).charAt(0).toUpperCase();
 
@@ -90,6 +96,28 @@ export function ProfileForm({
     if (!res.ok) { setPwErr(res.error ?? "Couldn't change your password."); return; }
     setPwDone(true);
     pwFormRef.current?.reset();
+  }
+
+  async function sendCode() {
+    setPhoneErr(null); setPhoneBusy(true);
+    const res = await sendPhoneCodeAction();
+    setPhoneBusy(false);
+    if (!res.ok) { setPhoneErr(res.error ?? "Couldn't send that text."); return; }
+    setCodeSent(true);
+  }
+
+  // Same onSubmit + preventDefault + manually built FormData as saveDetails, and for the same
+  // reason: <form action={fn}> resets uncontrolled inputs to defaultValue when the action
+  // completes, INCLUDING on a wrong code, which would clear what the member just typed.
+  async function confirmCode(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    setPhoneErr(null); setPhoneBusy(true);
+    const res = await confirmPhoneCodeAction(formData);
+    setPhoneBusy(false);
+    if (!res.ok) { setPhoneErr(res.error ?? "Couldn't confirm that code."); return; }
+    setCodeSent(false); setPhoneDone(true);
+    router.refresh();
   }
 
   return (
@@ -194,6 +222,62 @@ export function ProfileForm({
           )}
         </div>
       </form>
+
+      {/* Phone verification. This is its OWN card rather than living inside the details <form>
+          above: a <form> nested inside another <form> is invalid HTML — the parser drops the
+          inner tag on any real SSR/hydration pass, even though it can look like it works in a
+          jsdom-only test render. The status line stays right below the number either way. */}
+      {profile.phone && (
+        <div className={card}>
+          <h2 className="text-base font-bold text-neutral-900">Phone verification</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-neutral-700">{profile.phone}</span>
+            {profile.phoneVerifiedAt ? (
+              <span className="flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700">
+                <Icon icon="tabler:check" width={14} height={14} /> Verified
+              </span>
+            ) : (
+              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-600">
+                Not verified
+              </span>
+            )}
+          </div>
+
+          {!profile.phoneVerifiedAt && !codeSent && (
+            <button
+              type="button"
+              data-testid="verify-phone"
+              disabled={phoneBusy}
+              onClick={sendCode}
+              className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100 disabled:opacity-50"
+            >
+              {phoneBusy ? "Sending…" : "Verify"}
+            </button>
+          )}
+
+          {codeSent && (
+            <form onSubmit={confirmCode} className="flex items-end gap-3">
+              <div>
+                <label htmlFor="phone-code" className={label}>Enter the code</label>
+                <input
+                  id="phone-code" name="code" data-testid="phone-code"
+                  inputMode="numeric" autoComplete="one-time-code" className={input}
+                />
+              </div>
+              <button type="submit" disabled={phoneBusy} className={primary}>
+                {phoneBusy ? "Confirming…" : "Confirm"}
+              </button>
+            </form>
+          )}
+
+          {phoneErr && <p className="text-sm text-red-600">{phoneErr}</p>}
+          {phoneDone && (
+            <p className="flex items-center gap-1 text-sm text-green-700">
+              <Icon icon="tabler:check" width={16} height={16} /> Phone verified
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Password — only for members who actually have one. Offering this to a Google or Microsoft
           user would SET a password, creating a second way into an account whose owner believes

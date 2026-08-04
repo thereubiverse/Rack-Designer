@@ -6,11 +6,15 @@ const updateProfileAction = vi.fn();
 const uploadAvatarAction = vi.fn();
 const removeAvatarAction = vi.fn();
 const changePasswordAction = vi.fn();
+const sendPhoneCodeAction = vi.fn();
+const confirmPhoneCodeAction = vi.fn();
 vi.mock("./actions", () => ({
   updateProfileAction: (...a: unknown[]) => updateProfileAction(...a),
   uploadAvatarAction: (...a: unknown[]) => uploadAvatarAction(...a),
   removeAvatarAction: (...a: unknown[]) => removeAvatarAction(...a),
   changePasswordAction: (...a: unknown[]) => changePasswordAction(...a),
+  sendPhoneCodeAction: (...a: unknown[]) => sendPhoneCodeAction(...a),
+  confirmPhoneCodeAction: (...a: unknown[]) => confirmPhoneCodeAction(...a),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -67,5 +71,45 @@ describe("ProfileForm", () => {
       />
     );
     expect(screen.getByTestId("remove-avatar")).toBeTruthy();
+  });
+});
+
+describe("phone verification", () => {
+  it("offers Verify for a number that is not confirmed", () => {
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword />);
+    expect(screen.getByTestId("verify-phone")).toBeTruthy();
+    expect(document.body.textContent).toMatch(/not verified/i);
+  });
+
+  it("shows neither badge nor button once the number is confirmed", () => {
+    render(
+      <ProfileForm
+        profile={{ ...PROFILE, phoneVerifiedAt: "2026-08-04T12:00:00Z" }}
+        avatarUrl={null}
+        hasPassword
+      />
+    );
+    expect(screen.queryByTestId("verify-phone")).toBeNull();
+    expect(document.body.textContent).toMatch(/verified/i);
+  });
+
+  it("offers nothing to verify when there is no number", () => {
+    render(<ProfileForm profile={{ ...PROFILE, phone: "" }} avatarUrl={null} hasPassword />);
+    expect(screen.queryByTestId("verify-phone")).toBeNull();
+  });
+
+  it("asks for the code once one has been sent", async () => {
+    sendPhoneCodeAction.mockResolvedValue({ ok: true });
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword />);
+    fireEvent.click(screen.getByTestId("verify-phone"));
+    await waitFor(() => expect(screen.getByTestId("phone-code")).toBeTruthy());
+  });
+
+  it("reports it plainly when SMS is not set up, and asks for no code", async () => {
+    sendPhoneCodeAction.mockResolvedValue({ ok: false, error: "Text confirmation isn't set up yet. Ask an administrator." });
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword />);
+    fireEvent.click(screen.getByTestId("verify-phone"));
+    await waitFor(() => expect(screen.getByText(/isn't set up yet/i)).toBeTruthy());
+    expect(screen.queryByTestId("phone-code")).toBeNull();
   });
 });
