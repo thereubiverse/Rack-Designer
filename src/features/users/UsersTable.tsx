@@ -114,10 +114,8 @@ export function UsersTable({ members, meId }: { members: MemberRow[]; meId: stri
 
   return (
     <div className="space-y-4">
-      <nav data-testid="users-breadcrumb" className="text-sm text-neutral-500">
-        <span className="text-neutral-900">Users &amp; Permissions</span>
-      </nav>
-
+      {/* No breadcrumb: this page has no parent, so a one-item trail would just be the title a
+          second time. The top bar already carries it via useHeaderTitle. */}
       {inviteWarning && (
         <div
           data-testid="invite-warning-banner"
