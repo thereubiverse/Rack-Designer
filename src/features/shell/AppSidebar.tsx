@@ -99,7 +99,7 @@ export function AppSidebar({
 
         <nav className="space-y-0.5">
           <NavItem icon="tabler:book-2" label="Device Library" href="/device-library" active={pathname.startsWith("/device-library")} />
-          <NavItem icon="tabler:users" label="Users & Permissions" />
+          <NavItem icon="tabler:users" label="Users & Permissions" href="/users" active={pathname.startsWith("/users")} />
           <NavItem icon="tabler:settings" label="Settings & Billing" href="/settings" active={pathname.startsWith("/settings")} />
         </nav>
 
