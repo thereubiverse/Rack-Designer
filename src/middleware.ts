@@ -1,18 +1,65 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-/** Routes an unauthenticated visitor may reach. Exact matches and one prefix, NOT startsWith on
- *  "/login" — that would also admit "/loginish". */
+/** Routes an unauthenticated visitor may reach. Exact match on "/login", NOT startsWith — that would
+ *  also admit "/loginish" — plus one prefix for the OAuth flow.
+ *
+ *  WARNING: the "/auth/" prefix means ANY future route created under /auth/ is public by default.
+ *  That is deliberate — the OAuth callback needs to be reachable with no session — but it is a
+ *  load-bearing property of this file, not an accident: do not add anything under /auth/ that needs
+ *  to be gated. */
 export function isPublicPath(pathname: string): boolean {
-  return pathname === "/login" || pathname === "/auth/callback" || pathname.startsWith("/auth/");
+  return pathname === "/login" || pathname.startsWith("/auth/");
+}
+
+/** Mirrors members.ts's normaliseEmail. That file carries a `server-only` import (it reaches
+ *  createServiceClient) and cannot be imported here — this middleware runs on the Edge runtime. Keep
+ *  these two IN STEP: if one changes how it normalises, the other must change too, or a real member
+ *  with unusual email capitalisation could be wrongly treated as inactive. */
+function normaliseEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/** Looks up the signed-in email in `members`, using the SAME anon-key client already built in
+ *  `middleware` — no service-role key, and none is needed. This schema has no row-level security and
+ *  the standard grants give the `anon` role `select` on every table in `public`, so this query works
+ *  from Edge.
+ *
+ *  Returns null (distinct from `false`) when the query itself errored, so the caller can tell "no
+ *  active member" apart from "couldn't find out" and fail open on the latter. */
+async function isActiveMember(
+  supabase: ReturnType<typeof createServerClient>,
+  email: string
+): Promise<boolean | null> {
+  const { data, error } = await supabase
+    .from("members")
+    .select("disabled_at")
+    .eq("email", normaliseEmail(email))
+    .maybeSingle();
+  if (error) {
+    console.error("middleware: members query failed", error);
+    return null;
+  }
+  return data !== null && data.disabled_at === null;
+}
+
+function redirectToLogin(request: NextRequest, pathname: string): NextResponse {
+  const to = request.nextUrl.clone();
+  to.pathname = "/login";
+  to.searchParams.set("next", pathname);
+  return NextResponse.redirect(to);
 }
 
 /** Closes the app. Every route except the sign-in routes requires a session, and the intended
  *  destination is preserved so a redirected visitor lands where they were going.
  *
- *  This checks the SESSION only, not membership: the session cannot exist without having passed the
- *  membership gate at sign-in, and hitting the database on every request for every asset would be a
- *  poor trade. Server actions re-check membership properly via withMember. */
+ *  This checks the session AND membership. A session surviving token refresh is NOT proof of current
+ *  membership: revoking someone sets `members.disabled_at` but does not touch their row in
+ *  `auth.users`, so `getUser()` below keeps succeeding for a revoked person forever — token refresh
+ *  has nothing to do with the `members` table at all. Without the membership check that follows, a
+ *  revoked person would keep loading every page indefinitely; `withMember` re-checks membership too,
+ *  but it only wraps server ACTIONS, so it never runs for a plain page render. This is what actually
+ *  enforces revocation for reads. */
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (isPublicPath(pathname)) return NextResponse.next();
@@ -35,12 +82,19 @@ export async function middleware(request: NextRequest) {
   );
 
   const { data } = await supabase.auth.getUser();
-  if (!data.user) {
-    const to = request.nextUrl.clone();
-    to.pathname = "/login";
-    to.searchParams.set("next", pathname);
-    return NextResponse.redirect(to);
+  if (!data.user) return redirectToLogin(request, pathname);
+
+  const active = data.user.email ? await isActiveMember(supabase, data.user.email) : false;
+  if (active === null) {
+    // The membership query itself errored (database unreachable, misconfiguration, etc). Do NOT
+    // treat that as "revoked" — allow the request through instead of locking out the entire company
+    // over a transient outage. A revoked person keeping read access for the length of the outage is
+    // a far smaller failure than every member being unable to read anything, and writes stay guarded
+    // regardless: `withMember` performs this same check (via the service-role client) before any
+    // server action runs, outage or not.
+    return response;
   }
+  if (!active) return redirectToLogin(request, pathname);
   return response;
 }
 

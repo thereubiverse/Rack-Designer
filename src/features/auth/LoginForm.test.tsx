@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { LoginForm } from "./LoginForm";
+import { LoginForm, safeNextPath } from "./LoginForm";
 
 vi.mock("./authActions", () => ({
   signInWithPasswordAction: vi.fn(async () => ({ ok: true })),
@@ -14,6 +14,24 @@ vi.mock("next/navigation", () => ({
 import { signInWithPasswordAction, oauthUrlAction } from "./authActions";
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("safeNextPath", () => {
+  it("passes through a normal same-site path", () => {
+    expect(safeNextPath("/clients/URI/HQ")).toBe("/clients/URI/HQ");
+  });
+
+  it("rejects a protocol-relative URL, which is absolute despite looking relative", () => {
+    expect(safeNextPath("//evil.com")).toBe("/");
+  });
+
+  it("rejects an absolute URL with a scheme", () => {
+    expect(safeNextPath("https://evil.com")).toBe("/");
+  });
+
+  it("falls back to / when there is no next parameter", () => {
+    expect(safeNextPath(null)).toBe("/");
+  });
+});
 
 describe("LoginForm", () => {
   it("offers all three ways in", () => {

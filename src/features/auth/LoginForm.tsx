@@ -8,6 +8,22 @@ import { signInWithPasswordAction, oauthUrlAction } from "./authActions";
 // throws the instant it is evaluated in a client bundle, and this is a client component.
 import { NOT_A_MEMBER } from "./messages";
 
+/** Validates a `?next=` redirect target before it is ever handed to router.replace().
+ *
+ *  `next` comes straight from the URL — an attacker can put anything there — so it must be a
+ *  same-site relative path, never used as-is. Accept only paths that start with "/" and reject
+ *  anything starting with "//": "//evil.com" LOOKS relative but a browser (and the WHATWG URL
+ *  parser) resolves it as protocol-relative, i.e. an absolute off-site URL. A scheme like
+ *  "https://evil.com" is rejected by the same "/" check since it does not start with "/" at all.
+ *  Anything that fails either check falls back to "/". Exported and pure so it is unit-testable
+ *  without rendering the form. */
+export function safeNextPath(next: string | null): string {
+  if (!next) return "/";
+  if (!next.startsWith("/")) return "/";
+  if (next.startsWith("//")) return "/";
+  return next;
+}
+
 /** The only page an unauthenticated visitor can reach. Deliberately says as little as possible about
  *  why a sign-in failed — see NOT_A_MEMBER. */
 export function LoginForm() {
@@ -29,7 +45,7 @@ export function LoginForm() {
       setError(res.error ?? "Sign-in failed.");
       return;
     }
-    router.replace("/");
+    router.replace(safeNextPath(params.get("next")));
     router.refresh();
   }
 
