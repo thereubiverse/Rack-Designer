@@ -12,7 +12,7 @@ import { replacePortEndpoints } from "./endpointsRepository";
 import { validateEndpoint, type PortEndpoint, type EndpointContext } from "./endpointOps";
 import { listSiteScope } from "./siteScope";
 import { listDeviceTypes } from "@/features/device-library/repository";
-import { withMember } from "@/features/auth/withMember";
+import { withEditor } from "@/features/auth/withMember";
 
 function toPlacementLike(rows: { id: string; device_template_id?: string; deviceTemplateId?: string; code: string; start_u?: number; startU?: number }[]): PlacementLike[] {
   return rows.map((r) => ({
@@ -25,7 +25,7 @@ function toPlacementLike(rows: { id: string; device_template_id?: string; device
 
 /** Reconcile the whole layout. Validates codes + occupancy against FRESH template heights so a
  *  racing template edit or stale client can't produce an overlapping rack. */
-export const saveRackLayoutAction = withMember(async (
+export const saveRackLayoutAction = withEditor(async (
   _member, rackId: string, devices: RackDeviceInput[],
 ): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
@@ -56,7 +56,7 @@ export const saveRackLayoutAction = withMember(async (
 
 /** Reconcile the rack's patch cables. Re-validates every edge against FRESH device snapshots so a
  *  stale client can't create a cable on a vanished port or double-book a port. */
-export const saveConnectionsAction = withMember(async (
+export const saveConnectionsAction = withEditor(async (
   _member, rackId: string, conns: Connection[],
 ): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
@@ -84,7 +84,7 @@ export const saveConnectionsAction = withMember(async (
   return { ok: true };
 });
 
-export const updateRackAction = withMember(async (
+export const updateRackAction = withEditor(async (
   _member, rackId: string, patch: { name?: string | null; heightU?: number },
 ): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
@@ -111,7 +111,7 @@ export const updateRackAction = withMember(async (
 /** Reconcile the rack's port endpoints. Re-validates every endpoint against FRESH device
  *  snapshots, floor types and site scope so a stale client can't attach a far end to a vanished
  *  port, use a non-floor type, or point at a rack/switch off this site. */
-export const saveEndpointsAction = withMember(async (
+export const saveEndpointsAction = withEditor(async (
   _member, rackId: string, eps: PortEndpoint[],
 ): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();

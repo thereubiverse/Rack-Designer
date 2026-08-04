@@ -1,7 +1,7 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/server";
-import { withMember } from "@/features/auth/withMember";
+import { withEditor } from "@/features/auth/withMember";
 import { getFloorPlan, listRoomsForFloor } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { geminiPlanBackend } from "./ai/planVisionBackend";
@@ -65,7 +65,7 @@ async function cropToDrawing(
   }
 }
 
-export const discoverRoomsAction = withMember(async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
+export const discoverRoomsAction = withEditor(async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;
@@ -88,7 +88,7 @@ export const discoverRoomsAction = withMember(async (_member, floorId: string): 
   }
 });
 
-export const discoverDevicesAction = withMember(async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
+export const discoverDevicesAction = withEditor(async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;

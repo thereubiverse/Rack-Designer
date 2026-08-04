@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import { createDeviceType, updateDeviceType, deleteDeviceType } from "./repository";
 import { validateCode, validateTypeName } from "./deviceTypeRules";
-import { withMember } from "@/features/auth/withMember";
+import { withEditor } from "@/features/auth/withMember";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -17,7 +17,7 @@ function friendly(e: unknown): string {
   return msg;
 }
 
-export const createDeviceTypeAction = withMember(async (
+export const createDeviceTypeAction = withEditor(async (
   _member, input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
 ): Promise<{ ok: boolean; error?: string }> => {
   const err =
@@ -52,7 +52,7 @@ export interface DeviceTypeChange {
 }
 
 /** Batch save from one column's "Save changes" — applied sequentially, first error aborts. */
-export const saveDeviceTypesAction = withMember(async (
+export const saveDeviceTypesAction = withEditor(async (
   _member, changes: DeviceTypeChange[],
 ): Promise<{ ok: boolean; error?: string }> => {
   for (const c of changes) {
@@ -79,7 +79,7 @@ export const saveDeviceTypesAction = withMember(async (
   return { ok: true };
 });
 
-export const deleteDeviceTypeAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
+export const deleteDeviceTypeAction = withEditor(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteDeviceType(db, id);

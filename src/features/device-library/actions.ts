@@ -9,7 +9,7 @@ import {
   type EditableTemplate, type BrandRow, type PickerTemplate,
 } from "./repository";
 import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
-import { withMember } from "@/features/auth/withMember";
+import { withMember, withEditor } from "@/features/auth/withMember";
 
 /** The rack builder's "Add device" picker refreshes one type's templates after a custom device is
  *  created inline (so the new template appears and can be inserted) without a full page reload. */
@@ -24,7 +24,7 @@ export const listTemplatesForTypeAction = withMember(async (
   }
 });
 
-export const saveNewDeviceTemplateAction = withMember(async (
+export const saveNewDeviceTemplateAction = withEditor(async (
   _member, input: DeviceTemplateInput,
 ): Promise<{ ok: boolean; id?: string; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
@@ -44,7 +44,7 @@ export const saveNewDeviceTemplateAction = withMember(async (
   }
 });
 
-export const saveDeviceTemplateAction = withMember(async (
+export const saveDeviceTemplateAction = withEditor(async (
   _member, id: string, input: DeviceTemplateInput,
 ): Promise<{ ok: boolean; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
@@ -77,7 +77,7 @@ export const getDeviceTemplateAction = withMember(async (
   }
 });
 
-export const createBrandAction = withMember(async (
+export const createBrandAction = withEditor(async (
   _member, name: string,
 ): Promise<{ ok: boolean; brand?: BrandRow; error?: string }> => {
   const trimmed = name.trim();
@@ -92,7 +92,7 @@ export const createBrandAction = withMember(async (
   }
 });
 
-export const deleteBrandAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
+export const deleteBrandAction = withEditor(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteBrand(db, id);
@@ -110,7 +110,7 @@ export const deleteBrandAction = withMember(async (_member, id: string): Promise
 // rejecting"). Left as a throw, the caller's catch would simply never fire and a failed delete would
 // look like a silent success. Converted to the same `{ ok, error }` shape every sibling action here
 // already uses, with the caller updated to check `res.ok` instead of try/catch.
-export const deleteDeviceTemplateAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
+export const deleteDeviceTemplateAction = withEditor(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteDeviceTemplate(db, id);
@@ -125,7 +125,7 @@ export const deleteDeviceTemplateAction = withMember(async (_member, id: string)
   return { ok: true };
 });
 
-export const duplicateDeviceTemplateAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
+export const duplicateDeviceTemplateAction = withEditor(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await duplicateDeviceTemplate(db, id);

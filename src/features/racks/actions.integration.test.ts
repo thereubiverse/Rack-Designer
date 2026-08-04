@@ -11,6 +11,10 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/features/auth/withMember", () => ({
   withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+  withEditor: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+  withAdmin: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 
 import { createServiceClient } from "@/lib/supabase/server";

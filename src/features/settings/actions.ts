@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { dbSettingsStore } from "./store";
 import { writeDeviceWizardSettings } from "./deviceWizardSettings";
-import { withMember } from "@/features/auth/withMember";
+import { withAdmin } from "@/features/auth/withMember";
 
-export const updateDeviceWizardSettings = withMember(async (
+export const updateDeviceWizardSettings = withAdmin(async (
   _member,
   patch: { enabled?: boolean; apiKey?: string },
 ): Promise<{ ok: boolean; error?: string }> => {

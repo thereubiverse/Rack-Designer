@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
-import { withMember } from "@/features/auth/withMember";
+import { withEditor } from "@/features/auth/withMember";
 import { isValidCode, isValidRackHeight, type RoomType } from "@/domain/hierarchy";
 import { normaliseCode } from "@/features/clients/validation";
 import {
@@ -51,7 +51,7 @@ async function findOrCreateRoom(
  * flat flow this never creates a site from a typed code. Floors and rooms stay find-or-create:
  * the directory treats them as implicit, born when a rack needs them.
  */
-export const createRackInSiteAction = withMember(async (
+export const createRackInSiteAction = withEditor(async (
   _member,
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> => {

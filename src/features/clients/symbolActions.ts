@@ -22,7 +22,7 @@ import {
   type StructHit,
 } from "./symbolStructure";
 import { coerceTypeCode, type Confidence, type DeviceProposal } from "./planDetect";
-import { withMember } from "@/features/auth/withMember";
+import { withEditor } from "@/features/auth/withMember";
 
 export type DiscoverSymbolsResult =
   | { ok: true; proposals: DeviceProposal[] }
@@ -161,7 +161,7 @@ async function structuralProposals(
  * matchSymbol can all throw, so every one of them is awaited INSIDE this single try/catch. An
  * earlier slice shipped exactly that bug by awaiting a helper outside it.
  */
-export const discoverSymbolsAction = withMember(async (_member, input: {
+export const discoverSymbolsAction = withEditor(async (_member, input: {
   floorId: string;
   box: { x: number; y: number; w: number; h: number };
   typeCode: string;
@@ -455,7 +455,7 @@ function pickSymbolGroup(
  * NOTHING may escape as a rejection: getFloorPlan, downloadPlanObject and decodePlanPage can all
  * throw, so every one of them is awaited INSIDE this single try/catch.
  */
-export const pickSymbolAction = withMember(async (_member, input: {
+export const pickSymbolAction = withEditor(async (_member, input: {
   floorId: string;
   point: { x: number; y: number };
 }): Promise<PickSymbolResult> => {
