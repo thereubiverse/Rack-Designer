@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getFloorPlan, saveFloorPlanGeometry } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { extractPlanGeometry } from "./planExtract";
+import { withMember } from "@/features/auth/withMember";
 
 export type ExtractResult =
   | { ok: true; walls: number; labels: number }
@@ -16,7 +17,7 @@ export type ExtractResult =
  *  PDF) — every one of them lives inside this single try/catch so nothing escapes as an
  *  unhandled rejection. Early-outs (no row, no PDF) return before their side effect
  *  (downloadPlanObject) runs. */
-export async function extractPlanGeometryAction(floorId: string): Promise<ExtractResult> {
+export const extractPlanGeometryAction = withMember(async (_member, floorId: string): Promise<ExtractResult> => {
   try {
     const db = createServiceClient();
     const plan = await getFloorPlan(db, floorId);
@@ -35,4 +36,4 @@ export async function extractPlanGeometryAction(floorId: string): Promise<Extrac
     console.error("[extractPlanGeometry]", detail);
     return { ok: false, error: "Couldn't extract wall geometry from this PDF." };
   }
-}
+});

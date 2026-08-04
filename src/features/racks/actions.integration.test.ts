@@ -5,6 +5,13 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 // not through a Next request). Stub it as a no-op — this is pure test infrastructure and doesn't
 // touch the action's validation/persistence logic under test.
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// saveConnectionsAction is now wrapped in withMember (Task 9), which resolves the current member
+// via a real Supabase session — unavailable when this test invokes the action directly outside a
+// Next.js request. Mock withMember transparently so the wrapped action still runs under test.
+vi.mock("@/features/auth/withMember", () => ({
+  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+}));
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { emptyFace, type Face, type PortGroup } from "@/domain/faceplate";

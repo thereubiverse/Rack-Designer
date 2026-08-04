@@ -1,6 +1,7 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { withMember } from "@/features/auth/withMember";
 import { getFloorPlan, listRoomsForFloor } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { geminiPlanBackend } from "./ai/planVisionBackend";
@@ -64,7 +65,7 @@ async function cropToDrawing(
   }
 }
 
-export async function discoverRoomsAction(floorId: string): Promise<DiscoverRoomsResult> {
+export const discoverRoomsAction = withMember(async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;
@@ -85,9 +86,9 @@ export async function discoverRoomsAction(floorId: string): Promise<DiscoverRoom
     console.error("[discoverRooms]", detail);
     return { ok: false, error: friendly(detail) };
   }
-}
+});
 
-export async function discoverDevicesAction(floorId: string): Promise<DiscoverDevicesResult> {
+export const discoverDevicesAction = withMember(async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;
@@ -99,4 +100,4 @@ export async function discoverDevicesAction(floorId: string): Promise<DiscoverDe
     console.error("[discoverDevices]", detail);
     return { ok: false, error: friendly(detail) };
   }
-}
+});

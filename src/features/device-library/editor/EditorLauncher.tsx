@@ -75,11 +75,11 @@ export function EditorLauncher({
   async function confirmDeleteNow() {
     if (!confirmDelete) return;
     setError(null);
-    try {
-      await deleteDeviceTemplateAction(confirmDelete.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Delete failed");
-    }
+    // deleteDeviceTemplateAction now resolves { ok: false, error } on failure instead of throwing
+    // (withMember never lets a wrapped action's throw reach the caller), so the result is checked
+    // directly rather than relying on a try/catch.
+    const res = await deleteDeviceTemplateAction(confirmDelete.id);
+    if (!res.ok) setError(res.error ?? "Delete failed");
     setConfirmDelete(null);
     router.refresh();
   }

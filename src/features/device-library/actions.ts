@@ -9,23 +9,24 @@ import {
   type EditableTemplate, type BrandRow, type PickerTemplate,
 } from "./repository";
 import { validateDeviceTemplateInput, type DeviceTemplateInput } from "./validation";
+import { withMember } from "@/features/auth/withMember";
 
 /** The rack builder's "Add device" picker refreshes one type's templates after a custom device is
  *  created inline (so the new template appears and can be inserted) without a full page reload. */
-export async function listTemplatesForTypeAction(
-  deviceTypeId: string,
-): Promise<{ ok: boolean; templates?: PickerTemplate[]; error?: string }> {
+export const listTemplatesForTypeAction = withMember(async (
+  _member, deviceTypeId: string,
+): Promise<{ ok: boolean; templates?: PickerTemplate[]; error?: string }> => {
   const db = createServiceClient();
   try {
     return { ok: true, templates: await listTemplatesForType(db, deviceTypeId) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function saveNewDeviceTemplateAction(
-  input: DeviceTemplateInput,
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+export const saveNewDeviceTemplateAction = withMember(async (
+  _member, input: DeviceTemplateInput,
+): Promise<{ ok: boolean; id?: string; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
   if (err) return { ok: false, error: err };
   const db = createServiceClient();
@@ -41,11 +42,11 @@ export async function saveNewDeviceTemplateAction(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function saveDeviceTemplateAction(
-  id: string, input: DeviceTemplateInput,
-): Promise<{ ok: boolean; error?: string }> {
+export const saveDeviceTemplateAction = withMember(async (
+  _member, id: string, input: DeviceTemplateInput,
+): Promise<{ ok: boolean; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
   if (err) return { ok: false, error: err };
   const db = createServiceClient();
@@ -61,11 +62,11 @@ export async function saveDeviceTemplateAction(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function getDeviceTemplateAction(
-  id: string,
-): Promise<{ ok: boolean; template?: EditableTemplate; error?: string }> {
+export const getDeviceTemplateAction = withMember(async (
+  _member, id: string,
+): Promise<{ ok: boolean; template?: EditableTemplate; error?: string }> => {
   const db = createServiceClient();
   try {
     const row = await getDeviceTemplate(db, id);
@@ -74,11 +75,11 @@ export async function getDeviceTemplateAction(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function createBrandAction(
-  name: string,
-): Promise<{ ok: boolean; brand?: BrandRow; error?: string }> {
+export const createBrandAction = withMember(async (
+  _member, name: string,
+): Promise<{ ok: boolean; brand?: BrandRow; error?: string }> => {
   const trimmed = name.trim();
   if (!trimmed) return { ok: false, error: "Brand name is required" };
   const db = createServiceClient();
@@ -89,9 +90,9 @@ export async function createBrandAction(
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function deleteBrandAction(id: string): Promise<{ ok: boolean; error?: string }> {
+export const deleteBrandAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteBrand(db, id);
@@ -100,23 +101,31 @@ export async function deleteBrandAction(id: string): Promise<{ ok: boolean; erro
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
-}
+});
 
-export async function deleteDeviceTemplateAction(id: string): Promise<void> {
+// NOTE (Task 9 deviation): this action used to return `Promise<void>` and THROW on failure, relying
+// on the caller's try/catch (EditorLauncher.confirmDeleteNow). withMember never lets a wrapped
+// action's throw reach the caller — it catches it and resolves `{ ok: false, error }` instead (see
+// withMember's doc comment: "every action in this codebase resolves {ok:false} rather than
+// rejecting"). Left as a throw, the caller's catch would simply never fire and a failed delete would
+// look like a silent success. Converted to the same `{ ok, error }` shape every sibling action here
+// already uses, with the caller updated to check `res.ok` instead of try/catch.
+export const deleteDeviceTemplateAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteDeviceTemplate(db, id);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     if (msg.includes("foreign key constraint")) {
-      throw new Error("This device is placed in a rack — remove it from all racks first");
+      return { ok: false, error: "This device is placed in a rack — remove it from all racks first" };
     }
-    throw e;
+    return { ok: false, error: msg };
   }
   revalidatePath("/device-library");
-}
+  return { ok: true };
+});
 
-export async function duplicateDeviceTemplateAction(id: string): Promise<{ ok: boolean; error?: string }> {
+export const duplicateDeviceTemplateAction = withMember(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await duplicateDeviceTemplate(db, id);
@@ -126,4 +135,4 @@ export async function duplicateDeviceTemplateAction(id: string): Promise<{ ok: b
   }
   revalidatePath("/device-library");
   return { ok: true };
-}
+});
