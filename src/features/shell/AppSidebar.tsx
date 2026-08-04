@@ -3,21 +3,37 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
+import { signOutAction } from "@/features/auth/authActions";
 
 export const SIDEBAR_WIDTH = 248;      // expanded rail width (px)
 export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
-
-// Signed-in user (placeholder until auth lands). The avatar defaults to the first-name initial.
-const USER = { name: "Reuben Singh" };
 
 /** The app's left navigation rail. Clients, Device Library and Settings & Billing are live
  *  routes; the other destinations are placeholders until those areas ship. Active state is
  *  derived from the current pathname so it stays correct across navigations.
  *  Collapsing animates the aside's width while the inner content stays a fixed width and is clipped
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
- *  translate keeps them centred in the narrow rail). */
-export function AppSidebar({ collapsed }: { collapsed: boolean }) {
+ *  translate keeps them centred in the narrow rail).
+ *
+ *  `memberName` is resolved server-side (getCurrentMember is server-only) and passed down from the
+ *  root layout; it is null only on the bare auth routes, where this component isn't rendered. */
+export function AppSidebar({
+  collapsed,
+  memberName,
+}: {
+  collapsed: boolean;
+  memberName: string | null;
+}) {
   const pathname = usePathname();
+  const displayName = memberName ?? "";
+  const initial = displayName ? displayName.charAt(0).toUpperCase() : "?";
+
+  // signOutAction resolves to { ok, error } (it redirects before returning in practice), which isn't
+  // assignable to a <form action> handler's expected `void | Promise<void>` — this wrapper discards
+  // the value so the types line up.
+  async function handleSignOut() {
+    await signOutAction();
+  }
 
   return (
     <aside
@@ -68,18 +84,29 @@ export function AppSidebar({ collapsed }: { collapsed: boolean }) {
 
           <div className="px-3 text-xs text-neutral-400 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0">2026.7.1 · <span className="text-neutral-500">Changelog</span></div>
 
-          <button
-            type="button"
-            className="flex w-full items-center gap-3 rounded-xl border border-neutral-200 p-2 text-left transition-colors hover:bg-neutral-50"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
-              {USER.name.charAt(0).toUpperCase()}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-900 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0">{USER.name}</span>
-            <span className="shrink-0 text-neutral-400 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0">
-              <Icon icon="tabler:selector" width={16} height={16} />
-            </span>
-          </button>
+          <div className="flex w-full items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-neutral-200 p-2">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
+                {initial}
+              </span>
+              <span
+                title={displayName}
+                className="min-w-0 flex-1 truncate text-sm font-semibold text-neutral-900 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0"
+              >
+                {displayName}
+              </span>
+            </div>
+            <form action={handleSignOut}>
+              <button
+                type="submit"
+                title="Sign out"
+                aria-label="Sign out"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200 text-neutral-500 transition-colors hover:bg-neutral-50"
+              >
+                <Icon icon="tabler:logout" width={17} height={17} />
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </aside>

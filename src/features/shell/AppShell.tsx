@@ -23,7 +23,13 @@ const TITLES: [prefix: string, title: string][] = [
  *  sidebar can share it. Lives in the root layout, so the state survives route navigations; it's
  *  also persisted to localStorage. Both the rail and the content offset animate together. The
  *  page title in the top bar is derived from the current route. */
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  memberName,
+}: {
+  children: React.ReactNode;
+  memberName: string | null;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
   const pathname = usePathname();
@@ -42,7 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <HeaderTitleContext.Provider value={setPageTitle}>
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <AppSidebar collapsed={collapsed} />
+      <AppSidebar collapsed={collapsed} memberName={memberName} />
 
       <div
         className="transition-[padding] duration-300 ease-in-out"
