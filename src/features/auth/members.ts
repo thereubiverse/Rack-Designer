@@ -46,11 +46,18 @@ export async function getCurrentMember(): Promise<Member | null> {
   const email = await getSessionEmail();
   if (!email) return null;
   const db = createServiceClient();
-  const { data } = await db
+  const { data, error } = await db
     .from("members")
     .select("id, email, name, auth_user_id, disabled_at")
     .eq("email", normaliseEmail(email))
     .maybeSingle();
+  // A query failure (outage, bad credentials, misconfiguration) also leaves `data` null, which is
+  // indistinguishable from "never invited" in the return value on purpose — the refusal message must
+  // not leak which case occurred. Log server-side so an operator can tell them apart; the return
+  // value stays the same uniform null either way.
+  if (error) {
+    console.error("getCurrentMember: members query failed", { error });
+  }
   const row = data
     ? {
         id: String(data.id),
