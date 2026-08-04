@@ -29,12 +29,14 @@ export async function signInWithPasswordAction(
 
   const auth = await createSessionClient();
   const { error } = await auth.auth.signInWithPassword({ email, password });
-  // Deliberately the same message as a non-member: a distinct "wrong password" reveals that the
-  // address exists.
-  if (error) return { ok: false, error: NOT_A_MEMBER };
 
+  // Deliberately the same message as a non-member: a distinct "wrong password" reveals that the
+  // address exists. That means the two refusal paths must also take the same TIME, or the latency
+  // itself becomes the tell. So do NOT return early when the password is wrong: run the membership
+  // lookup (and signOut) on both refusal paths, discarding the lookup's result when the password
+  // already failed. Do not "optimise" this back into an early return.
   const member = await getCurrentMember();
-  if (!member) {
+  if (error || !member) {
     await auth.auth.signOut();
     return { ok: false, error: NOT_A_MEMBER };
   }
