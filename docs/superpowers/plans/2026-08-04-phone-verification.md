@@ -953,7 +953,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:** none — this task produces evidence. Run by the controller.
 
-Signed-in account: `rsingh@qtsi.us`, password `Qtsi-2026-Rack!`. Dev server: preview
+Signed-in account: the seeded member; take the password from the operator, never from this file. Dev server: preview
 `rack-designer-dev` on port 3100. **No Twilio credentials exist**, so the send path cannot complete.
 
 - [ ] **Step 1: The unconfigured path**
