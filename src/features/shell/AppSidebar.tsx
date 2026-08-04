@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@iconify/react";
@@ -15,18 +16,45 @@ export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
  *  translate keeps them centred in the narrow rail).
  *
- *  `memberName` is resolved server-side (getCurrentMember is server-only) and passed down from the
- *  root layout; it is null only on the bare auth routes, where this component isn't rendered. */
+ *  `memberName` and `memberEmail` are resolved server-side (getCurrentMember is server-only) and
+ *  passed down from the root layout; they are null only on the bare auth routes, where this
+ *  component isn't rendered. */
 export function AppSidebar({
   collapsed,
   memberName,
+  memberEmail,
 }: {
   collapsed: boolean;
   memberName: string | null;
+  memberEmail: string | null;
 }) {
   const pathname = usePathname();
   const displayName = memberName ?? "";
   const initial = displayName ? displayName.charAt(0).toUpperCase() : "?";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+
+  // Same dismissal contract as the editor's BrandPicker: pointer outside closes, Escape closes.
+  // Both are bound only while open, so a closed menu costs nothing.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  // Collapsing the rail hides the labels, and a menu anchored to a 36px avatar reads as detached
+  // from anything. Closing on collapse avoids that entirely.
+  useEffect(() => { if (collapsed) setMenuOpen(false); }, [collapsed]);
 
   // signOutAction resolves to { ok, error } (it redirects before returning in practice), which isn't
   // assignable to a <form action> handler's expected `void | Promise<void>` — this wrapper discards
@@ -84,8 +112,55 @@ export function AppSidebar({
 
           <div className="px-3 text-xs text-neutral-400 transition-opacity duration-200 group-data-[collapsed=true]:opacity-0">2026.7.1 · <span className="text-neutral-500">Changelog</span></div>
 
-          <div className="flex w-full items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-neutral-200 p-2">
+          {/* Account menu. The card is the trigger; the menu opens UPWARD because the card sits at
+              the bottom of the rail and a downward menu would open off-screen. */}
+          <div ref={accountRef} className="relative">
+            {menuOpen && (
+              <div
+                role="menu"
+                aria-label="Account"
+                data-testid="account-menu"
+                className="absolute bottom-full left-0 z-40 mb-2 w-full overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-lg"
+              >
+                {/* Which account, not just whose name — two members can share a display name. */}
+                <div className="border-b border-neutral-100 px-3 py-2">
+                  <div className="truncate text-sm font-semibold text-neutral-900">{displayName}</div>
+                  {memberEmail && <div className="truncate text-xs text-neutral-500">{memberEmail}</div>}
+                </div>
+
+                <MenuItem icon="tabler:user-circle" label="Account" />
+                <MenuItem icon="tabler:id-badge-2" label="Profile" />
+
+                <div className="my-1 border-t border-neutral-100" />
+
+                <form action={handleSignOut}>
+                  <button
+                    type="submit"
+                    role="menuitem"
+                    title="Log out"
+                    aria-label="Log out"
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+                  >
+                    <span className="shrink-0 text-red-500">
+                      <Icon icon="tabler:logout" width={18} height={18} />
+                    </span>
+                    <span className="flex-1 whitespace-nowrap">Log out</span>
+                  </button>
+                </form>
+              </div>
+            )}
+
+            <button
+              type="button"
+              data-testid="account-trigger"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={displayName ? `Account menu for ${displayName}` : "Account menu"}
+              onClick={() => setMenuOpen((o) => !o)}
+              className={`flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-colors ${
+                menuOpen ? "border-neutral-300 bg-neutral-50" : "border-neutral-200 hover:bg-neutral-50"
+              }`}
+            >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
                 {initial}
               </span>
@@ -95,21 +170,37 @@ export function AppSidebar({
               >
                 {displayName}
               </span>
-            </div>
-            <form action={handleSignOut}>
-              <button
-                type="submit"
-                title="Sign out"
-                aria-label="Sign out"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200 text-neutral-500 transition-colors hover:bg-neutral-50"
+              <span
+                className={`shrink-0 text-neutral-400 transition-[transform,opacity] duration-200 group-data-[collapsed=true]:opacity-0 ${
+                  menuOpen ? "rotate-180" : ""
+                }`}
               >
-                <Icon icon="tabler:logout" width={17} height={17} />
-              </button>
-            </form>
+                <Icon icon="tabler:chevron-up" width={16} height={16} />
+              </span>
+            </button>
           </div>
         </div>
       </div>
     </aside>
+  );
+}
+
+/** A row in the account menu. Account and Profile have no destinations yet, so they are inert
+ *  buttons — the same placeholder treatment the nav rail gives Networks, Resources and the rest. */
+function MenuItem({ icon, label }: { icon: string; label: string }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      title={label}
+      aria-label={label}
+      className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100"
+    >
+      <span className="shrink-0 text-neutral-500">
+        <Icon icon={icon} width={18} height={18} />
+      </span>
+      <span className="flex-1 whitespace-nowrap">{label}</span>
+    </button>
   );
 }
 

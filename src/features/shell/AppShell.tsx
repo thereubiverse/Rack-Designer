@@ -26,9 +26,11 @@ const TITLES: [prefix: string, title: string][] = [
 export function AppShell({
   children,
   memberName,
+  memberEmail,
 }: {
   children: React.ReactNode;
   memberName: string | null;
+  memberEmail: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
@@ -48,7 +50,7 @@ export function AppShell({
   return (
     <HeaderTitleContext.Provider value={setPageTitle}>
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <AppSidebar collapsed={collapsed} memberName={memberName} />
+      <AppSidebar collapsed={collapsed} memberName={memberName} memberEmail={memberEmail} />
 
       <div
         className="transition-[padding] duration-300 ease-in-out"
