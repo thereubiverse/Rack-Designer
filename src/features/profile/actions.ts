@@ -7,6 +7,14 @@ import { withMember } from "@/features/auth/withMember";
 import { cleanProfileFields, checkAvatar, checkNewPassword } from "./profileRules";
 import { readProfile, writeProfile, writeAvatarPath } from "./repository";
 import { avatarPathFor, uploadAvatarObject, removeAvatarObject } from "./avatarStorage";
+import {
+  readPendingVerification, writePendingVerification, bumpVerificationAttempts,
+  clearPendingVerification, markPhoneVerified, clearPhoneVerified,
+} from "./repository";
+import { smsConfigured, sendSms } from "./sms";
+import {
+  toE164, sameNumber, generateCode, cooldownRemainingMs, pendingState, CODE_TTL_MS,
+} from "./phoneRules";
 
 /** Every action here writes to `member.id`, which withMember resolved from the session cookie.
  *  NOTHING reads an id from the form. An action that trusted a form-supplied id would let anyone
@@ -20,7 +28,20 @@ export const updateProfileAction = withMember(async (member, formData: FormData)
     address: formData.get("address"),
   });
   const db = createServiceClient();
+
+  // Read BEFORE writing: this is the only chance to see whether the number is actually changing.
+  // Reading after writeProfile would already show the new value, and the comparison below would
+  // always conclude nothing changed — leaving a verified badge on a number nobody proved.
+  const before = await readProfile(db, member.id);
   await writeProfile(db, member.id, fields);
+
+  // A number that changed has not been confirmed. Compared on the normalised form, so merely
+  // reformatting the same number does not cost the member their verification.
+  if (before && !sameNumber(before.phone, fields.phone)) {
+    await clearPhoneVerified(db, member.id);
+    await clearPendingVerification(db, member.id);
+  }
+
   revalidatePath("/profile");
   // The sidebar shows the name on every page, so it is stale everywhere until the layout re-renders.
   revalidatePath("/", "layout");
@@ -83,5 +104,79 @@ export const changePasswordAction = withMember(async (member, formData: FormData
 
   const { error } = await auth.auth.updateUser({ password: next });
   if (error) return { ok: false, error: "Couldn't change your password. Try again." };
+  return { ok: true as const };
+});
+
+export const sendPhoneCodeAction = withMember(async (member) => {
+  if (!smsConfigured()) {
+    return { ok: false, error: "Text confirmation isn't set up yet. Ask an administrator." };
+  }
+  const db = createServiceClient();
+  const profile = await readProfile(db, member.id);
+  if (!profile?.phone) return { ok: false, error: "Add a phone number first." };
+
+  const e164 = toE164(profile.phone);
+  // Never guess a country code: texting a stranger is the failure this feature exists to prevent.
+  if (!e164) return { ok: false, error: "Include the area code so we can text this number." };
+
+  const pending = await readPendingVerification(db, member.id);
+  if (pending) {
+    const waitMs = cooldownRemainingMs(Date.parse(pending.createdAt), Date.now());
+    if (waitMs > 0) {
+      const secs = Math.ceil(waitMs / 1000);
+      return { ok: false, error: `Wait ${secs} more second${secs === 1 ? "" : "s"} before asking for another code.` };
+    }
+  }
+
+  const code = generateCode();
+  await writePendingVerification(db, member.id, e164, code, new Date(Date.now() + CODE_TTL_MS).toISOString());
+  try {
+    await sendSms(e164, `Your confirmation code is ${code}`);
+  } catch (e) {
+    // The row is written first so the code exists before the text can arrive. If the send fails,
+    // remove it — otherwise the cooldown would block the retry for a minute over a message that
+    // was never delivered.
+    console.error("sendPhoneCodeAction: could not send", e);
+    await clearPendingVerification(db, member.id);
+    return { ok: false, error: "Couldn't send that text. Try again." };
+  }
+  return { ok: true as const };
+});
+
+export const confirmPhoneCodeAction = withMember(async (member, formData: FormData) => {
+  const entered = String(formData.get("code") ?? "").trim();
+  const db = createServiceClient();
+
+  const pending = await readPendingVerification(db, member.id);
+  if (!pending) return { ok: false, error: "Ask for a code first." };
+
+  const state = pendingState(
+    { expiresAtMs: Date.parse(pending.expiresAt), attempts: pending.attempts },
+    Date.now()
+  );
+  if (state === "expired") {
+    await clearPendingVerification(db, member.id);
+    return { ok: false, error: "That code has expired. Ask for a new one." };
+  }
+  if (state === "spent") {
+    return { ok: false, error: "Too many attempts. Ask for a new code." };
+  }
+
+  // The code proves control of the number it was SENT to. If the profile now holds a different
+  // number, confirming would mark an unrelated number verified.
+  const profile = await readProfile(db, member.id);
+  if (!profile || !sameNumber(profile.phone, pending.phone)) {
+    await clearPendingVerification(db, member.id);
+    return { ok: false, error: "That number changed since the code was sent. Ask for a new one." };
+  }
+
+  if (entered !== pending.code) {
+    await bumpVerificationAttempts(db, member.id, pending.attempts + 1);
+    return { ok: false, error: "That code isn't right." };
+  }
+
+  await markPhoneVerified(db, member.id, new Date().toISOString());
+  await clearPendingVerification(db, member.id);
+  revalidatePath("/profile");
   return { ok: true as const };
 });
