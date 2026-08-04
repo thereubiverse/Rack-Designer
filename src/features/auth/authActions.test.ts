@@ -48,6 +48,21 @@ describe("signInWithPasswordAction", () => {
     const res = await signInWithPasswordAction(formFor("bob@example.com", "wrongpass"));
 
     expect(res).toEqual({ ok: false, error: NOT_A_MEMBER });
+    // Load-bearing: this is what keeps the wrong-password path's timing equalised with the
+    // correct-password-but-not-a-member path. An early return on `error` would still pass the
+    // assertion above but would skip this call — that's the regression this line exists to catch.
+    expect(getCurrentMember).toHaveBeenCalled();
+  });
+
+  it("does NOT sign out an already-signed-in user who submits a wrong password (typo must not log them out)", async () => {
+    const client = fakeAuthClient({ signInError: true });
+    vi.mocked(createSessionClient).mockResolvedValue(client as never);
+    vi.mocked(getCurrentMember).mockResolvedValue(null);
+
+    const res = await signInWithPasswordAction(formFor("bob@example.com", "wrongpass"));
+
+    expect(res).toEqual({ ok: false, error: NOT_A_MEMBER });
+    expect(client.auth.signOut).not.toHaveBeenCalled();
   });
 
   it("refuses a correct password for a non-member with the SAME message, and signs them out", async () => {

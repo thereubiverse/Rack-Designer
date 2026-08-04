@@ -30,14 +30,31 @@ export async function signInWithPasswordAction(
   const auth = await createSessionClient();
   const { error } = await auth.auth.signInWithPassword({ email, password });
 
-  // Deliberately the same message as a non-member: a distinct "wrong password" reveals that the
-  // address exists. That means the two refusal paths must also take the same TIME, or the latency
-  // itself becomes the tell. So do NOT return early when the password is wrong: run the membership
-  // lookup (and signOut) on both refusal paths, discarding the lookup's result when the password
-  // already failed. Do not "optimise" this back into an early return.
+  // The refusal message is identical whether the password was wrong or the password was right but
+  // the account isn't an active member: a distinct "wrong password" message would tell someone
+  // outside the company that the address exists at all, so both cases share NOT_A_MEMBER.
+  //
+  // The membership lookup below runs unconditionally, even when signInWithPassword already failed,
+  // because it is the database round-trip and the dominant share of how long a refusal takes to
+  // answer. Skipping it when the credential check already failed would make "wrong password" answer
+  // faster than "correct password, not a member", and that latency gap would itself become the tell
+  // the identical error message is trying to avoid. Do not "optimise" this into an early return on
+  // `error` — that reintroduces the timing leak.
   const member = await getCurrentMember();
   if (error || !member) {
-    await auth.auth.signOut();
+    // Only tear down a session THIS call created. A failed signInWithPassword creates no new
+    // session, so when `error` is set there is nothing here to clean up — and signing out
+    // unconditionally previously meant a wrong-password attempt (a typo, or a probe at someone
+    // else's address) would destroy an already-signed-in user's legitimate session. So signOut only
+    // runs on the branch that actually opened a session: credentials checked out but the account
+    // isn't an active member.
+    //
+    // That leaves this one step unequalised between the two refusal paths — not padded, not timed to
+    // match. The residual is accepted: exploiting it requires already holding a valid password for an
+    // account that authenticates but isn't an active member, i.e. a revoked one. The alternative —
+    // unconditional signOut — logs out a real, currently signed-in user over a plain typo. That trade
+    // is not close.
+    if (!error) await auth.auth.signOut();
     return { ok: false, error: NOT_A_MEMBER };
   }
   await linkAuthUser(member.id, email);
