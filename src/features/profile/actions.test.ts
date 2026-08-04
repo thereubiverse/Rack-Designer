@@ -93,6 +93,7 @@ describe("removeAvatarAction", () => {
     vi.mocked(readProfile).mockResolvedValue({
       id: ME.id, email: ME.email, name: "Me", phone: "", position: "", address: "",
       avatarPath: `${ME.id}/avatar`,
+      phoneVerifiedAt: null,
     });
     const order: string[] = [];
     vi.mocked(removeAvatarObject).mockImplementation(async () => { order.push("object"); });
@@ -106,6 +107,7 @@ describe("removeAvatarAction", () => {
   it("succeeds when there is no picture, rather than erroring", async () => {
     vi.mocked(readProfile).mockResolvedValue({
       id: ME.id, email: ME.email, name: "Me", phone: "", position: "", address: "", avatarPath: null,
+      phoneVerifiedAt: null,
     });
     const res = await removeAvatarAction(form({}));
     expect(res.ok).toBe(true);

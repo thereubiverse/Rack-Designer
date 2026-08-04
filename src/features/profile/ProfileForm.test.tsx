@@ -17,6 +17,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const PROFILE = {
   id: "m1", email: "me@example.com", name: "Reuben Singh",
   phone: "555-0100", position: "Foreman", address: "12 Main St", avatarPath: null,
+  phoneVerifiedAt: null,
 };
 
 beforeEach(() => { vi.clearAllMocks(); });
