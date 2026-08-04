@@ -27,11 +27,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [pageTitle, setPageTitle] = useState<string | null>(null);
   const pathname = usePathname();
+  // The auth routes render bare: a sidebar full of links you cannot use, above a sign-in form, is
+  // both confusing and a hint about what exists inside. AppShell already knows the pathname, so this
+  // is cheaper than splitting every page into a route group.
+  const bare = pathname === "/login" || pathname.startsWith("/auth/");
   const fallback = TITLES.find(([p]) => pathname.startsWith(p))?.[1] ?? "Rack Designer";
   const title = pageTitle ?? fallback;
 
   useEffect(() => { if (localStorage.getItem(STORE_KEY) === "1") setCollapsed(true); }, []);
   useEffect(() => { localStorage.setItem(STORE_KEY, collapsed ? "1" : "0"); }, [collapsed]);
+
+  if (bare) return <>{children}</>;
 
   return (
     <HeaderTitleContext.Provider value={setPageTitle}>
