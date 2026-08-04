@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@iconify/react";
 import { signInWithPasswordAction, oauthUrlAction } from "./authActions";
+// NOT_A_MEMBER lives in ./messages, not ./members: members.ts carries a `server-only` import that
+// throws the instant it is evaluated in a client bundle, and this is a client component.
+import { NOT_A_MEMBER } from "./messages";
 
 /** The only page an unauthenticated visitor can reach. Deliberately says as little as possible about
  *  why a sign-in failed — see NOT_A_MEMBER. */
@@ -11,6 +14,10 @@ export function LoginForm() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The callback route cannot pass a message through a redirect, so it sets a flag and the copy
+  // lives here — one sentence, the same one every other refusal uses.
+  const params = useSearchParams();
+  const shown = error ?? (params.get("error") ? NOT_A_MEMBER : null);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -50,13 +57,13 @@ export function LoginForm() {
         <p className="mt-1 text-sm text-neutral-500">Network Documentation Platform</p>
       </div>
 
-      {error && (
+      {shown && (
         <p
           data-testid="login-error"
           role="alert"
           className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
-          {error}
+          {shown}
         </p>
       )}
 

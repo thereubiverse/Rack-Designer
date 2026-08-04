@@ -18,9 +18,12 @@ export interface Member {
 export type MemberDecision = { allowed: true; member: Member } | { allowed: false };
 
 /** ONE refusal message for every reason. Distinguishing "revoked" from "never invited" from "no such
- *  account" would tell someone outside the company which addresses are real. */
-export const NOT_A_MEMBER =
-  "That account doesn't have access to this app. Ask an administrator to invite you.";
+ *  account" would tell someone outside the company which addresses are real.
+ *
+ *  Re-exported here (defined in ./messages) so every existing `import { NOT_A_MEMBER } from
+ *  "./members"` keeps working — only LoginForm, a client component, needs to import it from
+ *  ./messages directly, to avoid this file's `server-only` import. */
+export { NOT_A_MEMBER } from "./messages";
 
 /** Emails arrive from three different providers with three different ideas about capitalisation, and
  *  the invite was typed by a human. Normalise both sides or a real member gets refused. */

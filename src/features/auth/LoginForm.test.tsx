@@ -6,7 +6,10 @@ vi.mock("./authActions", () => ({
   signInWithPasswordAction: vi.fn(async () => ({ ok: true })),
   oauthUrlAction: vi.fn(async () => ({ ok: true, url: "https://accounts.google.com/x" })),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 import { signInWithPasswordAction, oauthUrlAction } from "./authActions";
 

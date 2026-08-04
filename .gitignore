@@ -1,6 +1,7 @@
 .superpowers/
 node_modules/
 .env*
+!.env.local.example
 .next/
 next-env.d.ts
 
