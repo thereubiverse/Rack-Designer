@@ -16,6 +16,7 @@ const member: Member = {
   authUserId: "au1",
   disabledAt: null,
   avatarPath: null,
+  role: "admin",
 };
 
 beforeEach(() => vi.clearAllMocks());

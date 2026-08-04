@@ -6,6 +6,7 @@
 import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getSessionEmail } from "@/lib/supabase/auth";
+import { isRole, type Role } from "./roles";
 
 export interface Member {
   id: string;
@@ -18,6 +19,7 @@ export interface Member {
    *  deciding needs. This one earns its place: the root layout draws the avatar on EVERY page, and
    *  without it here the layout has to select the same row a second time on every navigation. */
   avatarPath: string | null;
+  role: Role;
 }
 
 export type MemberDecision = { allowed: true; member: Member } | { allowed: false };
@@ -56,7 +58,7 @@ export async function getCurrentMember(): Promise<Member | null> {
   const db = createServiceClient();
   const { data, error } = await db
     .from("members")
-    .select("id, email, name, auth_user_id, disabled_at, avatar_path")
+    .select("id, email, name, auth_user_id, disabled_at, avatar_path, role")
     .eq("email", normaliseEmail(email))
     .maybeSingle();
   // A query failure (outage, bad credentials, misconfiguration) also leaves `data` null, which is
@@ -74,6 +76,7 @@ export async function getCurrentMember(): Promise<Member | null> {
         authUserId: data.auth_user_id === null ? null : String(data.auth_user_id),
         disabledAt: data.disabled_at === null ? null : String(data.disabled_at),
         avatarPath: data.avatar_path == null ? null : String(data.avatar_path),
+        role: isRole(data.role) ? data.role : "viewer",
       }
     : null;
   const decision = memberDecision(row);

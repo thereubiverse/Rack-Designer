@@ -1,5 +1,6 @@
 import "server-only";
 import { getCurrentMember, NOT_A_MEMBER, type Member } from "./members";
+import { satisfies, NEEDS_EDITOR, NEEDS_ADMIN, type Role } from "./roles";
 
 /**
  * Wrap a server action so it only runs for an active member, and receives them.
@@ -33,4 +34,32 @@ export function withMember<A extends unknown[], R>(
       return { ok: false, error: e instanceof Error ? e.message : "Something went wrong" };
     }
   };
+}
+
+/** The same guard as withMember, plus a minimum role. Built on withMember rather than beside it, so
+ *  there is still exactly ONE place that resolves the acting member — a second lookup is a second
+ *  thing to get wrong. */
+function withRole<A extends unknown[], R>(
+  required: Role,
+  refusal: string,
+  action: (member: Member, ...args: A) => Promise<R>
+): (...args: A) => Promise<R | { ok: false; error: string }> {
+  return withMember(async (member, ...args: A) => {
+    // Checked BEFORE the action runs, never after: a guard that refuses once the write has already
+    // happened is not a guard.
+    if (!satisfies(member.role, required)) return { ok: false as const, error: refusal };
+    return action(member, ...args);
+  });
+}
+
+export function withEditor<A extends unknown[], R>(
+  action: (member: Member, ...args: A) => Promise<R>
+) {
+  return withRole<A, R>("editor", NEEDS_EDITOR, action);
+}
+
+export function withAdmin<A extends unknown[], R>(
+  action: (member: Member, ...args: A) => Promise<R>
+) {
+  return withRole<A, R>("admin", NEEDS_ADMIN, action);
 }
