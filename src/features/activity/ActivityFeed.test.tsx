@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
-import { ActivityFeed, PAGE_SIZE, type ActivityFilterState } from "./ActivityFeed";
+import { ActivityFeed, type ActivityFilterState } from "./ActivityFeed";
+import { PAGE_SIZE } from "./constants";
 import type { ActivityEntry } from "./repository";
 
 const push = vi.fn();

@@ -20,7 +20,7 @@ const OUTCOMES = ["ok", "refused", "failed"] as const;
 /** How many rows the page asks the repository for. Exported so the page passes the exact same
  *  number to `listEntries({ limit })` — the two must agree, or "Next" either skips rows or repeats
  *  them. */
-export const PAGE_SIZE = 50;
+import { PAGE_SIZE } from "./constants";
 
 const OUTCOME_LABEL: Record<ActivityEntry["outcome"], string> = {
   ok: "Succeeded",

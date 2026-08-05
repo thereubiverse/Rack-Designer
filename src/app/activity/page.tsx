@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/features/auth/members";
 import { listEntries, listActors, type ActivityFilter } from "@/features/activity/repository";
-import { ActivityFeed, PAGE_SIZE, type ActivityFilterState } from "@/features/activity/ActivityFeed";
+import { ActivityFeed, type ActivityFilterState } from "@/features/activity/ActivityFeed";
+import { PAGE_SIZE } from "@/features/activity/constants";
 
 export const dynamic = "force-dynamic";
 

@@ -80,8 +80,14 @@ export async function writeEntry(
 export async function listEntries(
   db: SupabaseClient, f: ActivityFilter
 ): Promise<{ entries: ActivityEntry[]; total: number }> {
-  const limit = Math.min(Math.max(f.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
-  const offset = Math.max(f.offset ?? 0, 0);
+  // Number.isFinite, not `?? DEFAULT`: a NaN limit is not null or undefined, so `??` passes it
+  // straight through, every Math.min/max keeps it NaN, and `.range(0, NaN)` returns ZERO rows while
+  // PostgREST still reports an exact count. That renders an empty feed under a pager reading
+  // "1-0 of 3" and raises no error anywhere. It happened — see constants.ts.
+  const limit = Number.isFinite(f.limit)
+    ? Math.min(Math.max(Math.floor(f.limit as number), 1), MAX_LIMIT)
+    : DEFAULT_LIMIT;
+  const offset = Number.isFinite(f.offset) ? Math.max(Math.floor(f.offset as number), 0) : 0;
 
   let query = db.from("activity_log").select("*", { count: "exact" });
   if (f.memberId !== undefined) query = query.eq("member_id", f.memberId);
