@@ -78,10 +78,17 @@ describe("the publishable key's reach into schema public", () => {
     ]);
   });
 
-  it("cannot execute any function in public", () => {
+  it("holds exactly one documented function grant, and nothing else", () => {
     // claim_phone_verification is SECURITY-sensitive and 0024 had to revoke it from PUBLIC
     // explicitly, for the same reason the table check above uses has_*_privilege: a grant to PUBLIC
     // is invisible to the grantee-listing views.
+    //
+    // is_device_trusted (0029) is the one deliberate exception: middleware runs on the Edge runtime
+    // with the publishable key and must ask "is this device trusted for this member" without ever
+    // gaining read access to trusted_devices itself. A security-definer function that answers one
+    // yes/no question is the narrow surface; granting authenticated execute on it is the point of
+    // that migration, not a leak. anon must still get nothing — the middleware only ever calls this
+    // once getUser() has already succeeded, so the request always reaches PostgREST as authenticated.
     const rows = sql(`
       select r.rolname || ' ' || p.proname
       from pg_proc p
@@ -90,7 +97,7 @@ describe("the publishable key's reach into schema public", () => {
       where n.nspname = 'public' and has_function_privilege(r.rolname, p.oid, 'execute')
       order by 1
     `);
-    expect(rows).toEqual([]);
+    expect(rows).toEqual(["authenticated is_device_trusted"]);
   });
 
   it("gives a table created by postgres nothing, while keeping it usable by the app", () => {
