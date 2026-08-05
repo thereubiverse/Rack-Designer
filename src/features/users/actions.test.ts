@@ -8,9 +8,9 @@ const ME = {
 // withAdmin is replaced by a transparent wrapper injecting OUR member. The guard itself is tested in
 // withRole.test.ts; here we test what the actions DO with the member they are handed.
 vi.mock("@/features/auth/withMember", () => ({
-  withMember: (fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
-  withAdmin: (fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
-  withEditor: (fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
+  withMember: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
+  withAdmin: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
+  withEditor: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
 }));
 const db = {};
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => db }));

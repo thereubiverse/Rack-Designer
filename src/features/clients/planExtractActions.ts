@@ -17,7 +17,7 @@ export type ExtractResult =
  *  PDF) — every one of them lives inside this single try/catch so nothing escapes as an
  *  unhandled rejection. Early-outs (no row, no PDF) return before their side effect
  *  (downloadPlanObject) runs. */
-export const extractPlanGeometryAction = withEditor(async (_member, floorId: string): Promise<ExtractResult> => {
+export const extractPlanGeometryAction = withEditor("ai.extractGeometry", async (_member, floorId: string): Promise<ExtractResult> => {
   try {
     const db = createServiceClient();
     const plan = await getFloorPlan(db, floorId);

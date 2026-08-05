@@ -8,11 +8,11 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // a real Supabase session — unavailable when this test invokes the action directly outside a
 // Next.js request. Mock withMember transparently so the wrapped action still runs under test.
 vi.mock("@/features/auth/withMember", () => ({
-  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withMember: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withEditor: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withEditor: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withAdmin: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 

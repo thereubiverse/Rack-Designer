@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/features/auth/withMember", () => ({
-  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withMember: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withEditor: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withEditor: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withAdmin: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));

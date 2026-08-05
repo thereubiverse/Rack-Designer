@@ -21,7 +21,7 @@ import {
  *  NOTHING reads an id from the form. An action that trusted a form-supplied id would let anyone
  *  overwrite anyone else's profile — including their name and picture — from a crafted request. */
 
-export const updateProfileAction = withMember(async (member, formData: FormData) => {
+export const updateProfileAction = withMember("profile.update", async (member, formData: FormData) => {
   const fields = cleanProfileFields({
     name: formData.get("name"),
     phone: formData.get("phone"),
@@ -49,7 +49,7 @@ export const updateProfileAction = withMember(async (member, formData: FormData)
   return { ok: true as const };
 });
 
-export const uploadAvatarAction = withMember(async (member, formData: FormData) => {
+export const uploadAvatarAction = withMember("profile.avatar.upload", async (member, formData: FormData) => {
   const file = formData.get("file");
   if (!(file instanceof File)) return { ok: false, error: "Choose an image file." };
 
@@ -68,7 +68,7 @@ export const uploadAvatarAction = withMember(async (member, formData: FormData) 
   return { ok: true as const };
 });
 
-export const removeAvatarAction = withMember(async (member, _formData: FormData) => {
+export const removeAvatarAction = withMember("profile.avatar.remove", async (member, _formData: FormData) => {
   const db = createServiceClient();
   const profile = await readProfile(db, member.id);
   // No picture is not an error — the button simply had nothing to do.
@@ -83,7 +83,7 @@ export const removeAvatarAction = withMember(async (member, _formData: FormData)
   return { ok: true as const };
 });
 
-export const changePasswordAction = withMember(async (member, formData: FormData) => {
+export const changePasswordAction = withMember("password.change", async (member, formData: FormData) => {
   const current = String(formData.get("current") ?? "");
   const next = String(formData.get("next") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
@@ -108,7 +108,7 @@ export const changePasswordAction = withMember(async (member, formData: FormData
   return { ok: true as const };
 });
 
-export const sendPhoneCodeAction = withMember(async (member) => {
+export const sendPhoneCodeAction = withMember("phone.sendCode", async (member) => {
   if (!smsConfigured()) {
     return { ok: false, error: "Text confirmation isn't set up yet. Ask an administrator." };
   }
@@ -168,7 +168,7 @@ export const sendPhoneCodeAction = withMember(async (member) => {
   return { ok: true as const };
 });
 
-export const confirmPhoneCodeAction = withMember(async (member, formData: FormData) => {
+export const confirmPhoneCodeAction = withMember("phone.confirm", async (member, formData: FormData) => {
   const entered = String(formData.get("code") ?? "").trim();
   const db = createServiceClient();
 

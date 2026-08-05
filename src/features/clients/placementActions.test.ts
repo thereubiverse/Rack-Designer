@@ -14,11 +14,11 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/features/auth/withMember", () => ({
   // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
   // action test would be re-testing the guard instead of the action.
-  withMember: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withMember: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withEditor: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withEditor: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
-  withAdmin: (fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
+  withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 

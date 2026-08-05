@@ -8,7 +8,7 @@ import { withEditor } from "@/features/auth/withMember";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // cap uploads at 8 MB
 
-export const detectPortsAction = withEditor(async (
+export const detectPortsAction = withEditor("ai.detectPorts", async (
   _member, input: { imageBase64: string; mimeType: string; modelHint?: string },
 ): Promise<DetectResult> => {
   if (!input.imageBase64) return { ok: false, error: "No image provided." };
@@ -19,7 +19,7 @@ export const detectPortsAction = withEditor(async (
 });
 
 // Model-name search: generate the layout from Gemini's knowledge (no image, no grounding).
-export const identifyDeviceAction = withEditor(async (_member, modelName: string): Promise<DetectResult> => {
+export const identifyDeviceAction = withEditor("ai.identifyDevice", async (_member, modelName: string): Promise<DetectResult> => {
   const name = modelName.trim();
   if (!name) return { ok: false, error: "Enter a model name to search." };
   const apiKey = await resolveGeminiKey(dbSettingsStore);

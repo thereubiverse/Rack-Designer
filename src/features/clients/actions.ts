@@ -97,7 +97,7 @@ function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "devi
   return msg;
 }
 
-export const createClientAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createClientAction = withEditor("client.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
 
@@ -114,7 +114,7 @@ export const createClientAction = withEditor(async (_member, formData: FormData)
   return { ok: true };
 });
 
-export const renameClientAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameClientAction = withEditor("client.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -132,7 +132,7 @@ export const renameClientAction = withEditor(async (_member, formData: FormData)
   return { ok: true };
 });
 
-export const deleteClientAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteClientAction = withEditor("client.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -145,7 +145,7 @@ export const deleteClientAction = withEditor(async (_member, formData: FormData)
   return { ok: true };
 });
 
-export const createSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createSiteAction = withEditor("site.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const clientId = String(formData.get("clientId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -176,7 +176,7 @@ export const createSiteAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const renameSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameSiteAction = withEditor("site.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -236,7 +236,7 @@ export const renameSiteAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const deleteSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteSiteAction = withEditor("site.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -249,7 +249,7 @@ export const deleteSiteAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const locateSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const locateSiteAction = withEditor("site.locate", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
 
   const db = createServiceClient();
@@ -265,7 +265,7 @@ export const locateSiteAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const deleteRackAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteRackAction = withEditor("rack.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const rackId = String(formData.get("rackId") ?? "");
 
   const db = createServiceClient();
@@ -279,7 +279,7 @@ export const deleteRackAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const createFloorAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createFloorAction = withEditor("floor.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -299,7 +299,7 @@ export const createFloorAction = withEditor(async (_member, formData: FormData):
   return { ok: true };
 });
 
-export const renameFloorAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameFloorAction = withEditor("floor.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -317,7 +317,7 @@ export const renameFloorAction = withEditor(async (_member, formData: FormData):
   return { ok: true };
 });
 
-export const deleteFloorAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorAction = withEditor("floor.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -352,31 +352,31 @@ async function archiveOrRestore(
   return { ok: true };
 }
 
-export const archiveClientAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const archiveClientAction = withEditor("client.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveClient, "client");
 });
 
-export const restoreClientAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const restoreClientAction = withEditor("client.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreClient, "client");
 });
 
-export const archiveSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const archiveSiteAction = withEditor("site.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveSite, "site");
 });
 
-export const restoreSiteAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const restoreSiteAction = withEditor("site.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreSite, "site");
 });
 
-export const archiveFloorAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const archiveFloorAction = withEditor("floor.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), archiveFloor, "floor");
 });
 
-export const restoreFloorAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const restoreFloorAction = withEditor("floor.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   return archiveOrRestore(String(formData.get("id") ?? ""), restoreFloor, "floor");
 });
 
-export const createRoomAction = withEditor(async (
+export const createRoomAction = withEditor("room.create", async (
   _member,
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; id?: string }> => {
@@ -405,7 +405,7 @@ export const createRoomAction = withEditor(async (
   return { ok: true, id: room.id };
 });
 
-export const renameRoomAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameRoomAction = withEditor("room.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -429,7 +429,7 @@ export const renameRoomAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const deleteRoomAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteRoomAction = withEditor("room.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -442,7 +442,7 @@ export const deleteRoomAction = withEditor(async (_member, formData: FormData): 
   return { ok: true };
 });
 
-export const createFloorDeviceAction = withEditor(async (
+export const createFloorDeviceAction = withEditor("floorDevice.create", async (
   _member,
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; id?: string }> => {
@@ -474,7 +474,7 @@ export const createFloorDeviceAction = withEditor(async (
   return { ok: true, id: device.id };
 });
 
-export const updateFloorDeviceAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const updateFloorDeviceAction = withEditor("floorDevice.update", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const floorId = String(formData.get("floorId") ?? "");
   const roomIdRaw = String(formData.get("roomId") ?? "");
@@ -502,7 +502,7 @@ export const updateFloorDeviceAction = withEditor(async (_member, formData: Form
   return { ok: true };
 });
 
-export const deleteFloorDeviceAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -527,7 +527,7 @@ export const deleteFloorDeviceAction = withEditor(async (_member, formData: Form
  *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
  *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
  *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
-export const uploadFloorPlanAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
@@ -608,7 +608,7 @@ export const uploadFloorPlanAction = withEditor(async (_member, formData: FormDa
   return { ok: true };
 });
 
-export const deleteFloorPlanAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
 
   const db = createServiceClient();
@@ -646,7 +646,7 @@ export const deleteFloorPlanAction = withEditor(async (_member, formData: FormDa
 /** `Number(String(...))` on a missing/blank field yields NaN, and NaN fails `isNorm`'s
  *  `Number.isFinite` check inside `placeFloorDevice` — a missing field rejects rather than
  *  placing a pin at NaN. */
-export const placeFloorDeviceAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const placeFloorDeviceAction = withEditor("floorDevice.place", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
@@ -661,7 +661,7 @@ export const placeFloorDeviceAction = withEditor(async (_member, formData: FormD
   return { ok: true };
 });
 
-export const clearFloorDevicePlacementAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearFloorDevicePlacementAction = withEditor("floorDevice.clearPlacement", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -674,7 +674,7 @@ export const clearFloorDevicePlacementAction = withEditor(async (_member, formDa
   return { ok: true };
 });
 
-export const placeRackAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const placeRackAction = withEditor("rack.place", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
@@ -689,7 +689,7 @@ export const placeRackAction = withEditor(async (_member, formData: FormData): P
   return { ok: true };
 });
 
-export const clearRackPlacementAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearRackPlacementAction = withEditor("rack.clearPlacement", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
   const db = createServiceClient();
@@ -705,7 +705,7 @@ export const clearRackPlacementAction = withEditor(async (_member, formData: For
 /** `JSON.parse` gets its OWN try/catch, separate from the repository call below — a malformed
  *  JSON string must reject with {ok:false} exactly like an invalid (but well-formed) polygon
  *  shape, never throw out of this action. */
-export const setRoomPolygonAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const setRoomPolygonAction = withEditor("room.polygon.set", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
   const raw = String(formData.get("polygon") ?? "");
 
@@ -726,7 +726,7 @@ export const setRoomPolygonAction = withEditor(async (_member, formData: FormDat
   return { ok: true };
 });
 
-export const clearRoomPolygonAction = withEditor(async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearRoomPolygonAction = withEditor("room.polygon.clear", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
 
   const db = createServiceClient();

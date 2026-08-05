@@ -17,7 +17,7 @@ function friendly(e: unknown): string {
   return msg;
 }
 
-export const createDeviceTypeAction = withEditor(async (
+export const createDeviceTypeAction = withEditor("deviceType.create", async (
   _member, input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
 ): Promise<{ ok: boolean; error?: string }> => {
   const err =
@@ -52,7 +52,7 @@ export interface DeviceTypeChange {
 }
 
 /** Batch save from one column's "Save changes" — applied sequentially, first error aborts. */
-export const saveDeviceTypesAction = withEditor(async (
+export const saveDeviceTypesAction = withEditor("deviceType.save", async (
   _member, changes: DeviceTypeChange[],
 ): Promise<{ ok: boolean; error?: string }> => {
   for (const c of changes) {
@@ -79,7 +79,7 @@ export const saveDeviceTypesAction = withEditor(async (
   return { ok: true };
 });
 
-export const deleteDeviceTypeAction = withEditor(async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
+export const deleteDeviceTypeAction = withEditor("deviceType.delete", async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
   const db = createServiceClient();
   try {
     await deleteDeviceType(db, id);

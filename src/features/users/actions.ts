@@ -12,7 +12,7 @@ import { inviteUserByEmail } from "./invite";
 
 export const inviteMemberAction: (
   formData: FormData
-) => Promise<{ ok: boolean; error?: string; warning?: string }> = withAdmin(async (_admin, formData: FormData) => {
+) => Promise<{ ok: boolean; error?: string; warning?: string }> = withAdmin("member.invite", async (_admin, formData: FormData) => {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const role = String(formData.get("role") ?? "");
@@ -38,7 +38,7 @@ export const inviteMemberAction: (
 
 export const setMemberRoleAction: (
   formData: FormData
-) => Promise<{ ok: boolean; error?: string }> = withAdmin(async (admin, formData: FormData) => {
+) => Promise<{ ok: boolean; error?: string }> = withAdmin("member.setRole", async (admin, formData: FormData) => {
   const id = String(formData.get("id") ?? "");
   const role = String(formData.get("role") ?? "");
   if (!isRole(role)) return { ok: false, error: "Choose a role." };
@@ -63,7 +63,7 @@ export const setMemberRoleAction: (
 
 export const setMemberActiveAction: (
   formData: FormData
-) => Promise<{ ok: boolean; error?: string }> = withAdmin(async (admin, formData: FormData) => {
+) => Promise<{ ok: boolean; error?: string }> = withAdmin("member.setActive", async (admin, formData: FormData) => {
   const id = String(formData.get("id") ?? "");
   // Explicit "false" revokes; anything else — missing field, typo, malformed request — leaves
   // access alone. The destructive branch must never be what a missing value falls into.

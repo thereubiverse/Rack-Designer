@@ -5,7 +5,7 @@ const ME = { id: "member-me", email: "me@example.com", name: "Me", authUserId: "
 // withMember is replaced by a transparent wrapper that injects OUR member — the guard itself is
 // tested in withMember.test.ts; here we are testing what the actions do with the member they get.
 vi.mock("@/features/auth/withMember", () => ({
-  withMember: (fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
+  withMember: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
 }));
 
 const serviceClient = { auth: {} };

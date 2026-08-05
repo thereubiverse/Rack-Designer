@@ -65,7 +65,7 @@ async function cropToDrawing(
   }
 }
 
-export const discoverRoomsAction = withEditor(async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
+export const discoverRoomsAction = withEditor("ai.discoverRooms", async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;
@@ -88,7 +88,7 @@ export const discoverRoomsAction = withEditor(async (_member, floorId: string): 
   }
 });
 
-export const discoverDevicesAction = withEditor(async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
+export const discoverDevicesAction = withEditor("ai.discoverDevices", async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
   try {
     const ready = await prepare(floorId);
     if (!ready.ok) return ready;

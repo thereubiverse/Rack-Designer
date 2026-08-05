@@ -51,7 +51,7 @@ async function findOrCreateRoom(
  * flat flow this never creates a site from a typed code. Floors and rooms stay find-or-create:
  * the directory treats them as implicit, born when a rack needs them.
  */
-export const createRackInSiteAction = withEditor(async (
+export const createRackInSiteAction = withEditor("rack.create", async (
   _member,
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> => {

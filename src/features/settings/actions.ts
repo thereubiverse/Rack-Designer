@@ -5,7 +5,7 @@ import { dbSettingsStore } from "./store";
 import { writeDeviceWizardSettings } from "./deviceWizardSettings";
 import { withAdmin } from "@/features/auth/withMember";
 
-export const updateDeviceWizardSettings = withAdmin(async (
+export const updateDeviceWizardSettings = withAdmin("settings.deviceWizard.update", async (
   _member,
   patch: { enabled?: boolean; apiKey?: string },
 ): Promise<{ ok: boolean; error?: string }> => {

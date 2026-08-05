@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const ME = { id: "m1", email: "me@example.com", name: "Me", authUserId: "au1", disabledAt: null, avatarPath: null };
 
 vi.mock("@/features/auth/withMember", () => ({
-  withMember: (fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
+  withMember: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
 }));
 const serviceClient = {};
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => serviceClient }));
