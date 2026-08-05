@@ -41,7 +41,11 @@ export function safeActorEmail(raw: unknown): string {
 export async function logAuthEvent(e: {
   action: "auth.signIn" | "auth.signOut";
   outcome: "ok" | "refused";
-  method: AuthMethod;
+  // Optional: the OAuth callback only knows the provider once Supabase's own app_metadata says so,
+  // and that value is validated against the known set (google/azure) rather than guessed — an
+  // unrecognised or missing provider means this is simply omitted. summarise() already renders an
+  // auth.signIn entry with no method sensibly.
+  method?: AuthMethod;
   email: unknown;
   memberId?: string | null;
   memberName?: string;

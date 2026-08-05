@@ -3,7 +3,20 @@
 import { redirect } from "next/navigation";
 import { createSessionClient } from "@/lib/supabase/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { getCurrentMember, normaliseEmail, NOT_A_MEMBER } from "./members";
+import { getCurrentMember, normaliseEmail, NOT_A_MEMBER, type Member } from "./members";
+import { logAuthEvent } from "@/features/activity/authLog";
+
+/** Record a sign-in/sign-out event without ever letting a logging failure change what the caller
+ *  sees. logAuthEvent already never throws (see authLog.ts) — this wraps it anyway, defensively,
+ *  the same way withMember's own logResult wraps writeEntry a second time: a call site auditing a
+ *  side effect must not trust that the thing it calls will always behave as documented. */
+async function safeLogAuthEvent(e: Parameters<typeof logAuthEvent>[0]): Promise<void> {
+  try {
+    await logAuthEvent(e);
+  } catch (err) {
+    console.error("authActions: logAuthEvent threw unexpectedly", err);
+  }
+}
 
 /** Providers this app offers. Supabase names the Microsoft provider "azure". */
 const PROVIDERS = { google: "google", microsoft: "azure" } as const;
@@ -55,9 +68,27 @@ export async function signInWithPasswordAction(
     // unconditional signOut — logs out a real, currently signed-in user over a plain typo. That trade
     // is not close.
     if (!error) await auth.auth.signOut();
+    // Recorded reason distinguishes a wrong password from a correct one for a non-member — the two
+    // refusal PATHS need different follow-up from whoever investigates — but the returned message
+    // stays the single NOT_A_MEMBER string above, so an outsider learns nothing from it.
+    await safeLogAuthEvent({
+      action: "auth.signIn",
+      outcome: "refused",
+      method: "password",
+      email,
+      reason: error ? "bad-credentials" : "not-a-member",
+    });
     return { ok: false, error: NOT_A_MEMBER };
   }
   await linkAuthUser(member.id, email);
+  await safeLogAuthEvent({
+    action: "auth.signIn",
+    outcome: "ok",
+    method: "password",
+    email,
+    memberId: member.id,
+    memberName: member.name,
+  });
   return { ok: true };
 }
 
@@ -78,7 +109,32 @@ async function linkAuthUser(memberId: string, email: string): Promise<void> {
 
 export async function signOutAction(): Promise<{ ok: boolean; error?: string }> {
   const auth = await createSessionClient();
+
+  // Resolved BEFORE signOut(): once the session is gone there is nothing left to look the member
+  // up from. A failure here (e.g. the members query itself) must not stop sign-out — it only means
+  // there is nobody to attribute the entry to, so the entry is skipped, same as withMember's own
+  // "no member -> no entry" rule.
+  let member: Member | null;
+  try {
+    member = await getCurrentMember();
+  } catch {
+    member = null;
+  }
+
   await auth.auth.signOut();
+
+  // Logged BEFORE redirect(): Next implements redirect() by throwing, so nothing after it ever
+  // runs — logging afterward would silently never happen.
+  if (member) {
+    await safeLogAuthEvent({
+      action: "auth.signOut",
+      outcome: "ok",
+      email: member.email,
+      memberId: member.id,
+      memberName: member.name,
+    });
+  }
+
   redirect("/login");
 }
 
