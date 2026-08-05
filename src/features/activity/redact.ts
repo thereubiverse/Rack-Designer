@@ -99,11 +99,16 @@ export const LOGGED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   // showing in a report — which device, in terms a person recognises. Neither the six-digit code
   // nor the device token is EVER passed to these actions as a field named here, so redact() drops
   // both by default; the empty-allowlist actions below carry nothing else worth logging at all.
-  "device.challenge": ["label"],
-  "device.approve": ["label"],
-  "device.revoke": ["label"],
-  "device.adminApprove": ["label"],
-  "device.adminRevoke": ["label"],
+  // Empty, not ["label"], because a label CANNOT arrive here. `redact` is handed the action's first
+  // argument, and the device label is derived server-side from the user-agent header — it is never
+  // in the FormData. Allowing a field that can never be supplied is worse than allowing none: it
+  // reads as "labels are recorded" to anyone auditing this list, when every entry is in fact empty.
+  // Actor, action and outcome are what these entries carry.
+  "device.challenge": [],
+  "device.approve": [],
+  "device.revoke": [],
+  "device.adminApprove": [],
+  "device.adminRevoke": [],
 };
 
 export function redact(action: string, raw: unknown): Record<string, string> {
