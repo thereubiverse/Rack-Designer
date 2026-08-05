@@ -1,5 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { safeActorEmail, NOT_AN_EMAIL, MAX_EMAIL_LENGTH } from "./authLog";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mocked one level DOWN, at the repository, so logAuthEvent's own body actually runs. Mocking
+// logAuthEvent itself — which every call-site test does — would leave the line that applies
+// safeActorEmail untested, and replacing it with String(e.email) would keep the whole suite green
+// while writing the next mistyped password verbatim into a table every member reads.
+const writeEntry = vi.fn();
+vi.mock("./repository", () => ({ writeEntry: (...a: unknown[]) => writeEntry(...a) }));
+vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => ({}) }));
+
+import { safeActorEmail, logAuthEvent, NOT_AN_EMAIL, MAX_EMAIL_LENGTH } from "./authLog";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  writeEntry.mockResolvedValue(undefined);
+});
 
 describe("safeActorEmail", () => {
   it("keeps a normal address, normalised", () => {
@@ -28,5 +42,48 @@ describe("safeActorEmail", () => {
   it("accepts an address right at the limit, so the boundary is not off by one", () => {
     const local = "a".repeat(MAX_EMAIL_LENGTH - "@example.com".length);
     expect(safeActorEmail(`${local}@example.com`)).toBe(`${local}@example.com`);
+  });
+});
+
+describe("logAuthEvent", () => {
+  const entry = () => writeEntry.mock.calls[0][1] as Record<string, unknown>;
+
+  it("puts the submitted address through safeActorEmail before it is stored", () => {
+    // The one that stops someone "simplifying" this to String(e.email).
+    return logAuthEvent({
+      action: "auth.signIn", outcome: "refused", method: "password", email: "hunter2",
+    }).then(() => {
+      expect(writeEntry).toHaveBeenCalledTimes(1);
+      expect(entry().actorEmail).toBe(NOT_AN_EMAIL);
+    });
+  });
+
+  it("keeps a real address intact", async () => {
+    await logAuthEvent({
+      action: "auth.signIn", outcome: "ok", method: "google",
+      email: "Bob@Example.com", memberId: "m1", memberName: "Bob",
+    });
+    expect(entry().actorEmail).toBe("bob@example.com");
+    expect(entry().memberId).toBe("m1");
+    expect(entry().actorName).toBe("Bob");
+  });
+
+  it("passes details through the allowlist rather than writing them raw", async () => {
+    // The extra field is not part of the call's type — a future caller could add one, and redact
+    // must drop it. Cast through unknown because that is precisely the point: this is a shape the
+    // types do not allow, and the runtime guard is what has to hold.
+    const withExtra = {
+      action: "auth.signIn", outcome: "ok", method: "password", email: "bob@example.com",
+      password: "hunter2",
+    } as unknown as Parameters<typeof logAuthEvent>[0];
+    await logAuthEvent(withExtra);
+    expect(entry().details).toEqual({ method: "password" });
+  });
+
+  it("does NOT reject when the write fails — recording a sign-in must never prevent one", async () => {
+    writeEntry.mockRejectedValue(new Error("database is down"));
+    await expect(
+      logAuthEvent({ action: "auth.signOut", outcome: "ok", email: "bob@example.com" })
+    ).resolves.toBeUndefined();
   });
 });

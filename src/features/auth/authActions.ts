@@ -76,6 +76,11 @@ export async function signInWithPasswordAction(
       outcome: "refused",
       method: "password",
       email,
+      // Caveat worth knowing when reading the log: getCurrentMember returns null both for "not a
+      // member" and for "the members query itself failed" — it swallows the error deliberately, so
+      // the refusal message cannot leak which happened. So a database blip is recorded here as
+      // "not-a-member". Corroborate an unexpected one against the server log, which does
+      // distinguish them (getCurrentMember console.errors the real failure).
       reason: error ? "bad-credentials" : "not-a-member",
     });
     return { ok: false, error: NOT_A_MEMBER };
