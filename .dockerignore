@@ -1,0 +1,23 @@
+# The build installs its own dependencies on Linux — copying the dev machine's would bring
+# @napi-rs/canvas's darwin-arm64 binary into a Linux image and break PDF rasterisation at runtime.
+node_modules
+.next
+out
+
+# Never let a real secret into a build context.
+.env
+.env.local
+.env.*.local
+
+.git
+.github
+.superpowers
+.claude
+coverage
+playwright-report
+test-results
+e2e
+docs
+supabase/.temp
+*.log
+.DS_Store

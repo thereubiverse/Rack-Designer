@@ -1,0 +1,6 @@
+Keeps public/ in the repository so the Dockerfile's `COPY /app/public` always has a source.
+
+It is currently empty: the Leaflet marker icons that used to live here were replaced by inline SVG
+(see src/features/clients/SitesMap.tsx). Anything dropped in here is served from the site root — a
+favicon, robots.txt — and is reachable without a session, because the middleware matcher excludes
+static files.

@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Emits .next/standalone with only the traced runtime dependencies, so the container ships the
+  // server and what it actually needs rather than the whole node_modules tree. Required by the
+  // Dockerfile; see docs/reference/deployment.md.
+  output: "standalone",
   // `@napi-rs/canvas` ships a platform-specific `.node` binary that symbol discovery uses to
   // rasterise a PDF page server-side. Bundling it breaks the native binding lookup — it fails at
   // runtime with "Cannot find native binding", which surfaces as a generic "couldn't search this

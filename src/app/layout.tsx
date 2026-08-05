@@ -20,7 +20,19 @@ export default async function RootLayout({
   //
   // The email travels separately rather than being folded into the name: two members can share a
   // display name, and the account menu is the only place that says which one you are signed in as.
-  const member = await getCurrentMember();
+  // Guarded because this runs at BUILD time too. Next prerenders /_not-found, which renders this
+  // layout with no request and no Supabase environment, and createSessionClient throws on missing
+  // credentials — so an unguarded call fails `next build` entirely, which is how it was found.
+  //
+  // Signed-out is the correct answer for a prerender: there is no session. It does not hide a real
+  // misconfiguration either — a deployment genuinely missing these variables fails in the
+  // middleware, which needs the same two and runs before any page.
+  let member: Awaited<ReturnType<typeof getCurrentMember>> = null;
+  try {
+    member = await getCurrentMember();
+  } catch (e) {
+    console.error("RootLayout: could not resolve the signed-in member", e);
+  }
   const memberName = member ? member.name || member.email : null;
   const memberEmail = member ? member.email : null;
   const memberRole = member ? member.role : null;

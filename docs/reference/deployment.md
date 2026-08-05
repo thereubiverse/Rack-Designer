@@ -19,10 +19,64 @@ invite email. Two things stop that reaching a colleague:
 
 Fixing only the first produces an email nobody can act on. They go together.
 
-## What needs to exist
+## The host has to be a container, and that is not a preference
 
-**A host for the Next app.** It needs Node, environment variables, and to sit at a stable URL.
-Nothing in the codebase constrains the choice.
+Two properties of this app rule out serverless platforms, Vercel included:
+
+- **Uploads exceed serverless body limits.** Floor plans are accepted up to 15 MB
+  (`MAX_PLAN_BYTES`) and Device Wizard photos up to 8 MB, with `bodySizeLimit: "12mb"` in
+  `next.config.ts`. Vercel caps a serverless function's request body at 4.5 MB. Uploading a real
+  floor plan — the centre of the product — would fail. Moving to signed direct-to-storage uploads
+  would fix it, and is a genuine piece of work rather than a setting.
+- **A platform-specific native binary.** `@napi-rs/canvas` rasterises a PDF page server-side for
+  symbol discovery. The dev machine has `canvas-darwin-arm64`; Linux needs `canvas-linux-x64-gnu`.
+  The `Dockerfile` therefore installs dependencies *inside* the image rather than copying
+  `node_modules` in — verified: the built image contains the linux binding.
+
+**Render** is the chosen host: it builds from the `Dockerfile`, deploys from the GitHub repo through
+a dashboard with no CLI, and has no request-body ceiling. `render.yaml` declares the service.
+
+### The image is known to work
+
+It was built and run before any of this was written down, which is how two problems were found:
+
+- `next build` failed because Next prerenders `/_not-found`, which renders the root layout, which
+  called `getCurrentMember()` — and there is no Supabase environment at build time. The layout now
+  treats a failed lookup as signed-out, which is the correct answer for a prerender.
+- The `COPY /app/public` step failed because there was no `public/` directory; the Leaflet icons
+  that used to live there were replaced by inline SVG. It now exists with a `.gitkeep`.
+
+Then, running the image against the local Supabase stack: `/login` returned 200 and `/` returned a
+307 to it, so the middleware reached the database from inside the container and the auth gate held.
+107 MB image, clean boot, no errors in the log.
+
+## The steps only you can take
+
+I can prepare configuration and prove the container builds; I cannot create accounts or enter
+credentials on your behalf. These are yours:
+
+1. **Create a Supabase project.** Note its region — put the Render service in the same one.
+2. **Create a Render account** and connect the GitHub repository. Choose "New Blueprint" so it reads
+   `render.yaml` rather than configuring a service by hand.
+3. **Paste the secrets into Render's dashboard**, from the table below. They are declared in
+   `render.yaml` as `sync: false`, which means "not stored in the repository" — this repo is public.
+4. **Set `NEXT_PUBLIC_SITE_URL`** to the URL Render gives you, and `site_url` in
+   `supabase/config.toml` to the same value, then `supabase config push`.
+5. **Seed the first member** (below). Nobody can invite anyone until this exists.
+
+## The first member is a chicken-and-egg problem
+
+Migration `0025` backfills existing members to `admin`. On an empty project that is nobody, and
+`/users` is admin-only — so a fresh deployment has no way in through the UI. Create the first member
+directly against the hosted database, exactly as was done locally:
+
+```sql
+insert into members (email, name, role) values ('you@qtsi.us', 'Your Name', 'admin');
+```
+
+then create the matching auth user through the Supabase dashboard (Authentication → Users → Add
+user), or let the invite email do it once SMTP is configured. Sign in once; `auth_user_id` links
+itself.
 
 **A hosted Supabase project**, replacing local Docker. Then:
 
