@@ -8,7 +8,26 @@ import {
   updateProfileAction, uploadAvatarAction, removeAvatarAction, changePasswordAction,
   sendPhoneCodeAction, confirmPhoneCodeAction,
 } from "./actions";
+import { revokeMyDeviceAction } from "@/features/devices/actions";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
+
+/** A device as this screen needs it — never the repository's `TrustedDevice`, which carries
+ *  `tokenHash`. That value is what a stolen cookie is checked against; there is no reason for it to
+ *  ever reach the browser, not even the owning member's own browser. `isCurrent` is computed
+ *  server-side (the page compares the request's own cookie hash against each row) so the client
+ *  never sees the hash it was computed from. */
+export interface DeviceView {
+  id: string;
+  label: string;
+  approvedAt: string | null;
+  lastSeenAt: string | null;
+  isCurrent: boolean;
+}
+
+function formatDeviceDate(value: string | null): string {
+  if (!value) return "Never";
+  return new Date(value).toLocaleDateString();
+}
 
 // Same input treatment as the client and site forms, so a field means the same thing everywhere.
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
@@ -22,11 +41,12 @@ const primary = "rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-whi
  *  Inputs are UNCONTROLLED with defaultValue: when a save fails, what the user typed is still in
  *  the field. Controlled inputs reset from props on the re-render and silently discard it. */
 export function ProfileForm({
-  profile, avatarUrl, hasPassword,
+  profile, avatarUrl, hasPassword, devices = [],
 }: {
   profile: MemberProfile;
   avatarUrl: string | null;
   hasPassword: boolean;
+  devices?: DeviceView[];
 }) {
   useHeaderTitle("Profile");
   const router = useRouter();
@@ -50,6 +70,10 @@ export function ProfileForm({
   const [phoneBusy, setPhoneBusy] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
   const [phoneDone, setPhoneDone] = useState(false);
+
+  const [revokeDeviceTarget, setRevokeDeviceTarget] = useState<DeviceView | null>(null);
+  const [revokeDeviceErr, setRevokeDeviceErr] = useState<string | null>(null);
+  const [revokeDeviceBusy, setRevokeDeviceBusy] = useState(false);
 
   const initial = (profile.name || profile.email).charAt(0).toUpperCase();
 
@@ -117,6 +141,19 @@ export function ProfileForm({
     setPhoneBusy(false);
     if (!res.ok) { setPhoneErr(res.error ?? "Couldn't confirm that code."); return; }
     setCodeSent(false); setPhoneDone(true);
+    router.refresh();
+  }
+
+  async function handleRevokeDevice() {
+    if (!revokeDeviceTarget) return;
+    setRevokeDeviceErr(null);
+    setRevokeDeviceBusy(true);
+    const formData = new FormData();
+    formData.set("id", revokeDeviceTarget.id);
+    const res = await revokeMyDeviceAction(formData);
+    setRevokeDeviceBusy(false);
+    if (!res.ok) { setRevokeDeviceErr(res.error ?? "Couldn't revoke that device."); return; }
+    setRevokeDeviceTarget(null);
     router.refresh();
   }
 
@@ -279,6 +316,89 @@ export function ProfileForm({
               <Icon icon="tabler:check" width={16} height={16} /> Phone verified
             </p>
           )}
+        </div>
+      )}
+
+      {/* Devices. This screen is unreachable without an approved device (the middleware sends
+          anyone else to /verify-device first), so `devices` always has at least one entry in
+          practice — the fallback message below is cheap insurance, not a state this member can
+          actually be in. */}
+      <div className={card} data-testid="devices-card">
+        <h2 className="text-base font-bold text-neutral-900">Devices</h2>
+        {devices.length === 0 ? (
+          <p className="text-sm text-neutral-400">No devices yet</p>
+        ) : (
+          <ul className="divide-y divide-neutral-100">
+            {devices.map((d) => (
+              <li
+                key={d.id}
+                data-testid={`device-row-${d.id}`}
+                className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+              >
+                <div>
+                  <p className="text-sm font-medium text-neutral-900">
+                    {d.label}
+                    {d.isCurrent && (
+                      <span className="ml-1 font-normal text-neutral-400">(this device)</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    {d.approvedAt ? `Approved ${formatDeviceDate(d.approvedAt)}` : "Pending approval"}
+                    {" · "}Last seen {formatDeviceDate(d.lastSeenAt)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`revoke-device-${d.id}`}
+                  onClick={() => { setRevokeDeviceErr(null); setRevokeDeviceTarget(d); }}
+                  className="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  Revoke
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {revokeDeviceTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" role="dialog" aria-label="Revoke device">
+          <div data-testid="revoke-device-dialog" className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-base font-bold">
+              Revoke &ldquo;{revokeDeviceTarget.label}&rdquo;?
+            </h3>
+            {/* The current device gets its OWN copy, stated plainly rather than folded into the
+                generic sentence below: revoking it ends the session on this device right now — the
+                very next request lands on /verify-device — and that must not be a surprise. */}
+            <p className="mt-2 text-sm text-neutral-600">
+              {revokeDeviceTarget.isCurrent
+                ? "This is the device you're using right now. Revoking it will end your session here — you'll be asked to verify this device again before you can continue."
+                : "That device will no longer be able to access your account. It can be approved again if it's still yours."}
+            </p>
+            {revokeDeviceErr && (
+              <p data-testid="revoke-device-error-message" className="mt-3 text-sm text-red-600">{revokeDeviceErr}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="revoke-device-cancel"
+                disabled={revokeDeviceBusy}
+                onClick={() => { setRevokeDeviceErr(null); setRevokeDeviceTarget(null); }}
+                className="rounded-lg border border-neutral-200 px-4 py-2 text-sm font-semibold hover:bg-neutral-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="revoke-device-confirm"
+                disabled={revokeDeviceBusy}
+                onClick={handleRevokeDevice}
+                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+              >
+                Revoke
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { UsersTable } from "./UsersTable";
 import { inviteMemberAction, setMemberRoleAction, setMemberActiveAction } from "./actions";
+import { adminApproveDeviceAction, adminRevokeDeviceAction } from "@/features/devices/actions";
 import type { MemberRow } from "./repository";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -9,6 +10,10 @@ vi.mock("./actions", () => ({
   inviteMemberAction: vi.fn(async () => ({ ok: true })),
   setMemberRoleAction: vi.fn(async () => ({ ok: true })),
   setMemberActiveAction: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("@/features/devices/actions", () => ({
+  adminApproveDeviceAction: vi.fn(async () => ({ ok: true })),
+  adminRevokeDeviceAction: vi.fn(async () => ({ ok: true })),
 }));
 
 function member(overrides: Partial<MemberRow> = {}): MemberRow {
@@ -164,5 +169,78 @@ describe("UsersTable", () => {
       expect(screen.getByTestId("revoke-error-message")).toHaveTextContent("There has to be at least one active admin.")
     );
     expect(screen.getByTestId("revoke-confirm")).toBeInTheDocument();
+  });
+});
+
+// The Approve/Reject controls exist for exactly one reason (spec §8): they are the way out when
+// EMAIL is what's broken. They must show only for a member who actually has a device waiting —
+// never as a row of controls sitting idle on everyone else.
+describe("pending device approval", () => {
+  it("shows no pending-device controls for a member with none waiting", () => {
+    const members = [member({ id: "other" })];
+    render(<UsersTable members={members} meId="me" pendingDevicesByMember={{}} />);
+    expect(screen.queryByTestId("pending-devices-other")).toBeNull();
+  });
+
+  it("shows Approve/Reject only for a member with a pending device", () => {
+    const members = [member({ id: "other" }), member({ id: "third", email: "third@example.com" })];
+    render(
+      <UsersTable
+        members={members}
+        meId="me"
+        pendingDevicesByMember={{ other: [{ id: "dev1", label: "Chrome on Mac", createdAt: "2026-08-01T00:00:00Z" }] }}
+      />
+    );
+    expect(screen.getByTestId("pending-devices-other")).toBeInTheDocument();
+    expect(screen.getByTestId("approve-device-dev1")).toBeInTheDocument();
+    expect(screen.getByTestId("reject-device-dev1")).toBeInTheDocument();
+    expect(screen.queryByTestId("pending-devices-third")).toBeNull();
+  });
+
+  it("approves the specific device, not any other", async () => {
+    const members = [member({ id: "other" })];
+    render(
+      <UsersTable
+        members={members}
+        meId="me"
+        pendingDevicesByMember={{ other: [{ id: "dev1", label: "Chrome on Mac", createdAt: "2026-08-01T00:00:00Z" }] }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("approve-device-dev1"));
+    await waitFor(() => expect(adminApproveDeviceAction).toHaveBeenCalled());
+    const sent = vi.mocked(adminApproveDeviceAction).mock.calls[0][0] as FormData;
+    expect(sent.get("id")).toBe("dev1");
+  });
+
+  it("rejects through adminRevokeDeviceAction", async () => {
+    const members = [member({ id: "other" })];
+    render(
+      <UsersTable
+        members={members}
+        meId="me"
+        pendingDevicesByMember={{ other: [{ id: "dev1", label: "Chrome on Mac", createdAt: "2026-08-01T00:00:00Z" }] }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("reject-device-dev1"));
+    await waitFor(() => expect(adminRevokeDeviceAction).toHaveBeenCalled());
+    const sent = vi.mocked(adminRevokeDeviceAction).mock.calls[0][0] as FormData;
+    expect(sent.get("id")).toBe("dev1");
+  });
+
+  it("shows the per-device error without hiding the controls", async () => {
+    vi.mocked(adminApproveDeviceAction).mockResolvedValueOnce({ ok: false, error: "That device is no longer listed." });
+    const members = [member({ id: "other" })];
+    render(
+      <UsersTable
+        members={members}
+        meId="me"
+        pendingDevicesByMember={{ other: [{ id: "dev1", label: "Chrome on Mac", createdAt: "2026-08-01T00:00:00Z" }] }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("approve-device-dev1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("pending-device-error-dev1")).toHaveTextContent("That device is no longer listed.")
+    );
+    expect(screen.getByTestId("approve-device-dev1")).toBeInTheDocument();
   });
 });

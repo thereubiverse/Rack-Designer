@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/features/auth/members";
 import { listMembers } from "@/features/users/repository";
-import { UsersTable } from "@/features/users/UsersTable";
+import { UsersTable, type PendingDeviceView } from "@/features/users/UsersTable";
+import { listPendingDevices } from "@/features/devices/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -18,5 +19,17 @@ export default async function UsersPage() {
 
   const db = createServiceClient();
   const members = await listMembers(db);
-  return <UsersTable members={members} meId={member.id} />;
+
+  // Grouped by member id here, in the server component, rather than handing the client a flat
+  // list to re-group on every render. `tokenHash` is dropped: nobody viewing this screen holds
+  // these devices, so there is no reason for the hash to leave this layer at all, same reasoning
+  // as ProfileForm's DeviceView.
+  const pendingDevicesByMember: Record<string, PendingDeviceView[]> = {};
+  for (const d of await listPendingDevices(db)) {
+    (pendingDevicesByMember[d.memberId] ??= []).push({ id: d.id, label: d.label, createdAt: d.createdAt });
+  }
+
+  return (
+    <UsersTable members={members} meId={member.id} pendingDevicesByMember={pendingDevicesByMember} />
+  );
 }

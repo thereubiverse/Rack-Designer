@@ -16,6 +16,12 @@ vi.mock("./actions", () => ({
   sendPhoneCodeAction: (...a: unknown[]) => sendPhoneCodeAction(...a),
   confirmPhoneCodeAction: (...a: unknown[]) => confirmPhoneCodeAction(...a),
 }));
+
+const revokeMyDeviceAction = vi.fn();
+vi.mock("@/features/devices/actions", () => ({
+  revokeMyDeviceAction: (...a: unknown[]) => revokeMyDeviceAction(...a),
+}));
+
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const PROFILE = {
@@ -111,5 +117,63 @@ describe("phone verification", () => {
     fireEvent.click(screen.getByTestId("verify-phone"));
     await waitFor(() => expect(screen.getByText(/isn't set up yet/i)).toBeTruthy());
     expect(screen.queryByTestId("phone-code")).toBeNull();
+  });
+});
+
+describe("Devices", () => {
+  const CURRENT = {
+    id: "d1", label: "Chrome on Mac", approvedAt: "2026-07-01T00:00:00Z",
+    lastSeenAt: "2026-08-01T00:00:00Z", isCurrent: true,
+  };
+  const OTHER = {
+    id: "d2", label: "Firefox on Windows", approvedAt: "2026-06-01T00:00:00Z",
+    lastSeenAt: "2026-07-15T00:00:00Z", isCurrent: false,
+  };
+
+  it("marks the current device and not any other", () => {
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[CURRENT, OTHER]} />);
+    expect(screen.getByTestId("device-row-d1")).toHaveTextContent("this device");
+    expect(screen.getByTestId("device-row-d2")).not.toHaveTextContent("this device");
+  });
+
+  it("offers a Revoke control on every device, including the current one", () => {
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[CURRENT, OTHER]} />);
+    expect(screen.getByTestId("revoke-device-d1")).toBeTruthy();
+    expect(screen.getByTestId("revoke-device-d2")).toBeTruthy();
+  });
+
+  it("warns plainly that revoking the CURRENT device ends this session", () => {
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[CURRENT]} />);
+    fireEvent.click(screen.getByTestId("revoke-device-d1"));
+    expect(screen.getByTestId("revoke-device-dialog")).toHaveTextContent(/end your session/i);
+  });
+
+  it("gives a different, milder warning for a device that is not the current one", () => {
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[OTHER]} />);
+    fireEvent.click(screen.getByTestId("revoke-device-d2"));
+    const dialog = screen.getByTestId("revoke-device-dialog");
+    expect(dialog).not.toHaveTextContent(/end your session/i);
+    expect(dialog).toHaveTextContent(/no longer be able to access/i);
+  });
+
+  it("revokes the device the confirm dialog was opened for", async () => {
+    revokeMyDeviceAction.mockResolvedValue({ ok: true });
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[CURRENT, OTHER]} />);
+    fireEvent.click(screen.getByTestId("revoke-device-d2"));
+    fireEvent.click(screen.getByTestId("revoke-device-confirm"));
+    await waitFor(() => expect(revokeMyDeviceAction).toHaveBeenCalled());
+    const sent = revokeMyDeviceAction.mock.calls[0][0] as FormData;
+    expect(sent.get("id")).toBe("d2");
+  });
+
+  it("keeps the dialog open and shows the error when revoking fails", async () => {
+    revokeMyDeviceAction.mockResolvedValue({ ok: false, error: "That device is no longer listed." });
+    render(<ProfileForm profile={PROFILE} avatarUrl={null} hasPassword devices={[OTHER]} />);
+    fireEvent.click(screen.getByTestId("revoke-device-d2"));
+    fireEvent.click(screen.getByTestId("revoke-device-confirm"));
+    await waitFor(() =>
+      expect(screen.getByTestId("revoke-device-error-message")).toHaveTextContent("That device is no longer listed.")
+    );
+    expect(screen.getByTestId("revoke-device-dialog")).toBeInTheDocument();
   });
 });

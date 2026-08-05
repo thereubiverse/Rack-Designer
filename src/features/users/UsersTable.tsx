@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@iconify/react";
 import type { MemberRow } from "./repository";
 import { inviteMemberAction, setMemberRoleAction, setMemberActiveAction } from "./actions";
+import { adminApproveDeviceAction, adminRevokeDeviceAction } from "@/features/devices/actions";
 import { ROLES, roleLabel, type Role } from "@/features/auth/roles";
 import { IconButton } from "@/features/clients/IconButton";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
@@ -12,6 +13,15 @@ import { useHeaderTitle } from "@/features/shell/headerTitle";
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 
 type Status = "active" | "pending" | "revoked";
+
+/** A pending device as this screen needs it — never the repository's `TrustedDevice`, which
+ *  carries `tokenHash`. Nobody viewing /users holds this device, so that hash has no business
+ *  reaching the browser, same reasoning as `DeviceView` in ProfileForm. */
+export interface PendingDeviceView {
+  id: string;
+  label: string;
+  createdAt: string;
+}
 
 /** Status is DERIVED, never stored. A `disabledAt` always wins — someone invited and then revoked
  *  before ever signing in is Revoked, not Pending. Otherwise a null `authUserId` means the invite
@@ -46,8 +56,19 @@ function formatLastSignIn(value: string | null): string {
  *
  *  `meId` marks the signed-in member's own row so it can withhold the role select and the revoke
  *  control: both are refused server-side — you cannot change your own role or revoke your own
- *  access — so offering them here is a trap that produces an error for no reason. */
-export function UsersTable({ members, meId }: { members: MemberRow[]; meId: string }) {
+ *  access — so offering them here is a trap that produces an error for no reason.
+ *
+ *  `pendingDevicesByMember` keyed by member id, defaulting to empty: these Approve/Reject controls
+ *  exist for ONE reason (spec §8) — they are the way out when EMAIL, not this screen, is what's
+ *  broken. If confirmation mail were reliable nobody would ever need them, so they show only for a
+ *  member who actually has a device waiting, never as a row of controls that apply to nobody. */
+export function UsersTable({
+  members, meId, pendingDevicesByMember = {},
+}: {
+  members: MemberRow[];
+  meId: string;
+  pendingDevicesByMember?: Record<string, PendingDeviceView[]>;
+}) {
   useHeaderTitle("Users & Permissions");
   const router = useRouter();
 
@@ -60,6 +81,8 @@ export function UsersTable({ members, meId }: { members: MemberRow[]; meId: stri
   const [revokeTarget, setRevokeTarget] = useState<MemberRow | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokeBusy, setRevokeBusy] = useState(false);
+
+  const [deviceError, setDeviceError] = useState<Record<string, string | null>>({});
 
   // onSubmit + preventDefault, NOT the <form action={fn}> pattern — see ProfileForm/ClientsTable.
   // React 19 schedules a native form.reset() as part of that pattern's transition whatever the
@@ -112,6 +135,24 @@ export function UsersTable({ members, meId }: { members: MemberRow[]; meId: stri
     router.refresh();
   }
 
+  async function handleApproveDevice(id: string) {
+    setDeviceError((prev) => ({ ...prev, [id]: null }));
+    const formData = new FormData();
+    formData.set("id", id);
+    const res = await adminApproveDeviceAction(formData);
+    if (!res.ok) { setDeviceError((prev) => ({ ...prev, [id]: res.error ?? "Failed" })); return; }
+    router.refresh();
+  }
+
+  async function handleRejectDevice(id: string) {
+    setDeviceError((prev) => ({ ...prev, [id]: null }));
+    const formData = new FormData();
+    formData.set("id", id);
+    const res = await adminRevokeDeviceAction(formData);
+    if (!res.ok) { setDeviceError((prev) => ({ ...prev, [id]: res.error ?? "Failed" })); return; }
+    router.refresh();
+  }
+
   return (
     <div className="space-y-4">
       {/* No breadcrumb: this page has no parent, so a one-item trail would just be the title a
@@ -154,9 +195,10 @@ export function UsersTable({ members, meId }: { members: MemberRow[]; meId: stri
             {members.map((m) => {
               const status = statusOf(m);
               const isMe = m.id === meId;
+              const pendingDevices = pendingDevicesByMember[m.id] ?? [];
               return (
+              <Fragment key={m.id}>
                 <tr
-                  key={m.id}
                   data-testid={`user-row-${m.id}`}
                   className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50"
                 >
@@ -217,6 +259,54 @@ export function UsersTable({ members, meId }: { members: MemberRow[]; meId: stri
                     </div>
                   </td>
                 </tr>
+                {/* Approve/Reject exist for exactly one reason: EMAIL being the thing that's broken
+                    (spec §8). Shown only when this member actually has a device waiting — never as
+                    controls sitting idle on a row with nothing pending. */}
+                {pendingDevices.length > 0 && (
+                  <tr data-testid={`pending-devices-${m.id}`} className="border-b border-neutral-100 bg-amber-50/40 last:border-0">
+                    <td colSpan={6} className="px-5 py-3">
+                      <div className="space-y-2">
+                        {pendingDevices.map((d) => (
+                          <div
+                            key={d.id}
+                            data-testid={`pending-device-${d.id}`}
+                            className="rounded-lg bg-white px-3 py-2 text-sm"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <span className="font-medium text-neutral-900">{d.label}</span>
+                                <span className="ml-2 text-xs text-neutral-500">
+                                  Requested {formatLastSignIn(d.createdAt)} — awaiting approval
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <IconButton
+                                  data-testid={`approve-device-${d.id}`}
+                                  icon="tabler:check"
+                                  tip="Approve device"
+                                  onClick={() => handleApproveDevice(d.id)}
+                                />
+                                <IconButton
+                                  data-testid={`reject-device-${d.id}`}
+                                  icon="tabler:x"
+                                  tip="Reject device"
+                                  variant="danger"
+                                  onClick={() => handleRejectDevice(d.id)}
+                                />
+                              </div>
+                            </div>
+                            {deviceError[d.id] && (
+                              <p data-testid={`pending-device-error-${d.id}`} className="mt-1 text-xs text-red-600">
+                                {deviceError[d.id]}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
               );
             })}
             {members.length === 0 && (

@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/server";
 import { createSessionClient } from "@/lib/supabase/auth";
 import { getCurrentMember } from "@/features/auth/members";
 import { readProfile } from "@/features/profile/repository";
 import { createAvatarSignedUrl } from "@/features/profile/avatarStorage";
-import { ProfileForm } from "@/features/profile/ProfileForm";
+import { ProfileForm, type DeviceView } from "@/features/profile/ProfileForm";
+import { listDevicesForMember } from "@/features/devices/repository";
+import { DEVICE_COOKIE, hashDeviceToken } from "@/features/devices/deviceRules";
 
 export const dynamic = "force-dynamic";
 
@@ -38,5 +41,21 @@ export default async function ProfilePage() {
   const { data } = await auth.auth.getUser();
   const hasPassword = (data.user?.identities ?? []).some((i) => i.provider === "email");
 
-  return <ProfileForm profile={profile} avatarUrl={avatarUrl} hasPassword={hasPassword} />;
+  // `isCurrent` is decided HERE, server-side, by comparing the request's own cookie against each
+  // row's stored hash — never by sending the hash itself down to the client. A device row this
+  // member does not currently hold (a stale cookie, a signed-out browser) simply matches nothing.
+  const jar = await cookies();
+  const token = jar.get(DEVICE_COOKIE)?.value;
+  const currentHash = token ? hashDeviceToken(token) : null;
+  const devices: DeviceView[] = (await listDevicesForMember(db, member.id)).map((d) => ({
+    id: d.id,
+    label: d.label,
+    approvedAt: d.approvedAt,
+    lastSeenAt: d.lastSeenAt,
+    isCurrent: currentHash !== null && d.tokenHash === currentHash,
+  }));
+
+  return (
+    <ProfileForm profile={profile} avatarUrl={avatarUrl} hasPassword={hasPassword} devices={devices} />
+  );
 }
