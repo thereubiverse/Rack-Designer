@@ -89,7 +89,7 @@ function redirectToVerifyDevice(request: NextRequest, pathname: string): NextRes
  *  — verified directly against `hashDeviceToken`'s output. The two must never drift: this is the same
  *  hash `hashDeviceToken` writes when a device cookie is first minted in actions.ts, and the RPC below
  *  compares against that stored value. */
-async function hashDeviceTokenEdge(token: string): Promise<string> {
+export async function hashDeviceTokenEdge(token: string): Promise<string> {
   const bytes = new TextEncoder().encode(token);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest))
