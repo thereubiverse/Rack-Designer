@@ -10,9 +10,9 @@ import type { Role } from "@/features/auth/roles";
 export const SIDEBAR_WIDTH = 248;      // expanded rail width (px)
 export const SIDEBAR_COLLAPSED = 52;   // icon-only rail width (px)
 
-/** The app's left navigation rail. Clients, Device Library and Settings & Billing are live
- *  routes; the other destinations are placeholders until those areas ship. Active state is
- *  derived from the current pathname so it stays correct across navigations.
+/** The app's left navigation rail. Clients, Activity Log, Device Library and Settings & Billing
+ *  are live routes; the other destinations are placeholders until those areas ship. Active state
+ *  is derived from the current pathname so it stays correct across navigations.
  *  Collapsing animates the aside's width while the inner content stays a fixed width and is clipped
  *  by `overflow-hidden`, so the labels slide out of view while the icons hold position (a small
  *  translate keeps them centred in the narrow rail).
@@ -100,7 +100,7 @@ export function AppSidebar({
           <NavItem icon="tabler:building-community" label="Clients" href="/clients" active={pathname.startsWith("/clients")} />
           <NavItem icon="tabler:network" label="Networks" />
           <NavItem icon="tabler:folders" label="Resources" />
-          <NavItem icon="tabler:history" label="Activity Log" />
+          <NavItem icon="tabler:history" label="Activity Log" href="/activity" active={pathname.startsWith("/activity")} />
         </nav>
 
         <nav className="space-y-0.5">
