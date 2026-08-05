@@ -95,13 +95,22 @@ describe("middleware: device gate", () => {
     expect(location.searchParams.get("next")).toBe("/verify-device");
   });
 
-  it("fails OPEN when the RPC errors, and logs it — matching the membership check's documented trade", async () => {
+  it("fails CLOSED when the RPC errors, and logs it distinctly — the opposite of the membership check's trade", async () => {
+    // Failing open on MEMBERSHIP prevents an outage from locking out the whole company. Failing open
+    // on the DEVICE gate would reopen the exact door this feature exists to shut — and an attacker
+    // who already holds valid credentials can generate the load that trips it (a statement timeout,
+    // connection saturation, a 429) and walk through on the resulting error. So this gate fails
+    // CLOSED: an RPC error redirects to /verify-device, exactly like a genuine "not trusted".
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     rpc.mockResolvedValue({ data: null, error: { message: "connection refused" } });
     const res = await middleware(makeRequest("/clients", `${DEVICE_COOKIE}=some-token`));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("location")).toBeNull();
-    expect(spy).toHaveBeenCalled();
+    expect(res.status).toBe(307);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.pathname).toBe("/verify-device");
+    expect(location.searchParams.get("next")).toBe("/clients");
+    // Logged distinctly from a genuine refusal, so an operator can tell an outage apart from a
+    // real "device not trusted" in the logs.
+    expect(spy).toHaveBeenCalledWith("middleware: device check failed", expect.anything());
     spy.mockRestore();
   });
 });

@@ -134,10 +134,74 @@ export async function writeChallenge(
   if (error) throw new Error(`writeChallenge: ${error.message}`);
 }
 
-export async function bumpChallengeAttempts(db: SupabaseClient, deviceId: string, attempts: number): Promise<void> {
-  const { error } = await db
-    .from("device_challenges").update({ attempts }).eq("device_id", deviceId);
-  if (error) throw new Error(`bumpChallengeAttempts: ${error.message}`);
+export interface ConsumedAttempt {
+  code: string;
+  expiresAt: string;
+  attempts: number;
+}
+
+/** Atomically checks-and-increments a device's attempt counter via the `consume_device_attempt`
+ *  Postgres function (migration 0031). The old `bumpChallengeAttempts` this replaces read the
+ *  challenge, decided "spent or not" in JavaScript, and then wrote an ABSOLUTE attempts value taken
+ *  from that read — a thousand concurrent callers all read `attempts = 0` and all collapse into one
+ *  write of `attempts = 1`. This has no such window: the check (`attempts < 5 and expires_at > now()`)
+ *  and the increment are ONE statement, so Postgres serialises concurrent callers on the same row and
+ *  only the calls that actually land while the row still qualifies can consume a slot.
+ *
+ *  Returns null when the update touched no row — attempts already at MAX_ATTEMPTS, the challenge
+ *  expired, or no challenge exists at all for this device. The caller MUST treat that as "refuse",
+ *  and must never fall back to a separate read to figure out which of those three it was: doing so
+ *  would recreate exactly the read-then-write race this function exists to close. Returns the
+ *  post-increment row otherwise, so the caller compares the submitted code against what the database
+ *  just returned, never against a value read a moment earlier. */
+export async function consumeDeviceAttempt(db: SupabaseClient, deviceId: string): Promise<ConsumedAttempt | null> {
+  const { data, error } = await db.rpc("consume_device_attempt", { p_device_id: deviceId });
+  if (error) throw new Error(`consumeDeviceAttempt: ${error.message}`);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const row = rows[0];
+  if (!row) return null;
+  return { code: String(row.code), expiresAt: String(row.expires_at), attempts: Number(row.attempts) };
+}
+
+/** How many of this member's devices are still waiting on approval. Used to cap pending devices per
+ *  member (MAX_PENDING_DEVICES in deviceRules.ts) BEFORE a new one is created — a script that never
+ *  returns the Set-Cookie would otherwise mint an unbounded number of these, each with its own
+ *  five-guess budget and its own email to the member. */
+export async function countPendingDevicesForMember(db: SupabaseClient, memberId: string): Promise<number> {
+  const { count, error } = await db
+    .from("trusted_devices")
+    .select("id", { count: "exact", head: true })
+    .eq("member_id", memberId)
+    .is("approved_at", null);
+  if (error) throw new Error(`countPendingDevicesForMember: ${error.message}`);
+  return count ?? 0;
+}
+
+/** The member's single most recent challenge across ALL of their devices, not just one. The resend
+ *  cooldown has to key on this: a brand-new device has no challenge of its own yet, so keying the
+ *  cooldown on `device.id` (the old shape) let every new device through immediately, regardless of
+ *  how many codes the member had just been sent for OTHER devices. Two round trips rather than a
+ *  PostgREST embedded join, deliberately: it needs no foreign-table relationship configured, and
+ *  there is nothing here time-sensitive enough to need one query instead of two. */
+export async function mostRecentChallengeForMember(db: SupabaseClient, memberId: string): Promise<DeviceChallenge | null> {
+  const { data: devices, error: devicesError } = await db
+    .from("trusted_devices")
+    .select("id")
+    .eq("member_id", memberId);
+  if (devicesError) throw new Error(`mostRecentChallengeForMember: ${devicesError.message}`);
+  const ids = (devices ?? []).map((d: { id: string }) => d.id);
+  if (ids.length === 0) return null;
+
+  const { data, error } = await db
+    .from("device_challenges")
+    .select("device_id, code, attempts, expires_at, created_at")
+    .in("device_id", ids)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`mostRecentChallengeForMember: ${error.message}`);
+  if (!data) return null;
+  return toChallenge(data);
 }
 
 export async function clearChallenge(db: SupabaseClient, deviceId: string): Promise<void> {

@@ -13,6 +13,12 @@ export const DEVICE_COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
 export const CODE_TTL_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_MS = 60 * 1000;
+/** A member with no cookie can otherwise mint an unbounded number of pending devices — each one a
+ *  fresh five-guess budget and a fresh email to them, none of which the resend cooldown catches on
+ *  its own (a brand-new device has no prior challenge to be "recent"). Capping how many can be
+ *  waiting on approval at once bounds all three. Kept in step with the check in
+ *  startDeviceApprovalAction, the same way MAX_ATTEMPTS is kept in step with 0031's SQL. */
+export const MAX_PENDING_DEVICES = 3;
 
 /** The value stored in the member's cookie. 32 random bytes, base64url-encoded, so it is long
  *  enough to be unguessable and safe to put straight into a `Set-Cookie` header. */

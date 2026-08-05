@@ -8,13 +8,14 @@ import { withMember, withAdmin } from "@/features/auth/withMember";
 import type { Member } from "@/features/auth/members";
 import { emailConfigured, sendEmail } from "@/lib/email";
 import {
-  DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE_S, CODE_TTL_MS,
+  DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE_S, CODE_TTL_MS, MAX_PENDING_DEVICES,
   generateDeviceToken, hashDeviceToken, generateCode, deviceLabel,
-  challengeState, cooldownRemainingMs,
+  cooldownRemainingMs,
 } from "./deviceRules";
 import {
   findDeviceByHash, insertPendingDevice, approveDevice, listDevicesForMember,
-  deleteDevice, readChallenge, writeChallenge, bumpChallengeAttempts, clearChallenge,
+  deleteDevice, writeChallenge, clearChallenge, consumeDeviceAttempt,
+  countPendingDevicesForMember, mostRecentChallengeForMember,
   type TrustedDevice,
 } from "./repository";
 
@@ -55,9 +56,14 @@ async function issueChallenge(db: SupabaseClient, member: Member, device: Truste
     return { ok: false, error: "Email confirmation isn't set up yet. Ask an administrator." };
   }
 
-  const existing = await readChallenge(db, device.id);
-  if (existing) {
-    const remaining = cooldownRemainingMs(Date.parse(existing.createdAt), Date.now());
+  // Rate-limited per MEMBER, not per device. Keying this on device.id (the old shape) meant a
+  // brand-new device — which by definition has no challenge of its own yet — sailed through the
+  // cooldown for free: a script that never returns the Set-Cookie could mint one fresh device per
+  // request and get an immediate email for every single one. Looking at the member's most recent
+  // challenge across ALL their devices closes that regardless of which device asks.
+  const mostRecent = await mostRecentChallengeForMember(db, member.id);
+  if (mostRecent) {
+    const remaining = cooldownRemainingMs(Date.parse(mostRecent.createdAt), Date.now());
     if (remaining > 0) {
       const secs = Math.max(1, Math.ceil(remaining / 1000));
       return { ok: false, error: `Wait ${secs} more second${secs === 1 ? "" : "s"} before asking for another code.` };
@@ -85,6 +91,16 @@ export const startDeviceApprovalAction = withMember("device.challenge", async (m
   }
 
   if (!device) {
+    // Cap pending devices per member BEFORE creating one. A caller that never returns the
+    // Set-Cookie (a script, not a browser) otherwise looks like a brand-new device on every
+    // request: unlimited rows, unlimited emails to the member, and each row an independent
+    // five-guess budget. Refuse plainly once MAX_PENDING_DEVICES is reached, and do so before
+    // either the insert or the email below — neither must happen once this refuses.
+    const pending = await countPendingDevicesForMember(db, member.id);
+    if (pending >= MAX_PENDING_DEVICES) {
+      return { ok: false, error: "Too many devices are waiting for approval. Approve or remove one first, or ask an administrator." };
+    }
+
     const token = generateDeviceToken();
     const hdrs = await headers();
     const label = deviceLabel(hdrs.get("user-agent"));
@@ -115,20 +131,25 @@ export const confirmDeviceAction = withMember("device.approve", async (member, f
   const device = await deviceFromCookie(db, member.id);
   if (!device) return { ok: false, error: NO_DEVICE };
 
-  const chal = await readChallenge(db, device.id);
-  if (!chal) return { ok: false, error: "Ask for a new code." };
-
-  const state = challengeState({ expiresAtMs: Date.parse(chal.expiresAt), attempts: chal.attempts }, Date.now());
-  if (state === "expired") {
-    await clearChallenge(db, device.id);
-    return { ok: false, error: "That code has expired. Ask for a new one." };
+  // Rule 6 (Critical fix, migration 0031): check-and-increment is ONE atomic statement in Postgres,
+  // and the decision is made from what THAT statement returns — never from a prior read. The old
+  // shape read the challenge, decided "spent or not" in JavaScript, and then wrote an absolute
+  // attempts value computed from that read; a thousand concurrent callers all read attempts = 0 and
+  // all collapsed into a single write of attempts = 1, so a thousand guesses cost one attempt. There
+  // is no separate read here for the same reason: adding one back would recreate the exact race this
+  // closes, even if nothing else about this function looked different.
+  const consumed = await consumeDeviceAttempt(db, device.id);
+  if (!consumed) {
+    // No row means the WHERE clause in consume_device_attempt did not match: attempts already at
+    // MAX_ATTEMPTS, the challenge expired, or none exists for this device. All three land the caller
+    // in the same place (ask for a fresh code), so refuse uniformly — a second read to tell them
+    // apart would itself be the race being closed here.
+    return { ok: false, error: "That code has expired or too many attempts have been made. Ask for a new one." };
   }
-  if (state === "spent") {
-    return { ok: false, error: "Too many attempts. Ask for a new code." };
-  }
 
-  if (entered !== chal.code) {
-    await bumpChallengeAttempts(db, device.id, chal.attempts + 1);
+  if (entered !== consumed.code) {
+    // This attempt was ALREADY counted by consume_device_attempt above — a wrong code here still
+    // spends one of the five, exactly as it must.
     return { ok: false, error: "That code isn't right." };
   }
 

@@ -104,11 +104,15 @@ export async function hashDeviceTokenEdge(token: string): Promise<string> {
  *  even though `trusted_devices.member_id` is what the table actually keys on.
  *
  *  Returns null (distinct from `false`) when the RPC itself errored, exactly like `isActiveMember`
- *  above — so the caller can fail OPEN on "couldn't find out" without confusing it for "not trusted".
- *  Same trade as the membership check immediately above this one: a database outage must not lock out
- *  the whole company, and writes stay guarded regardless, because `withMember` performs its own checks
- *  (via the service-role client) before any server action runs, outage or not. This does not invent a
- *  second policy — it is the same one, applied to the same failure mode. */
+ *  above — but unlike that check, the caller below FAILS CLOSED on null here. Failing open on
+ *  MEMBERSHIP prevents an outage from locking out the whole company; failing open on the DEVICE gate
+ *  reopens the exact door this feature exists to shut, and it is not even a passive risk — an
+ *  attacker who already holds valid credentials can generate the load that trips it (a statement
+ *  timeout, connection-pool saturation, a 429) and walk straight through on the resulting error.
+ *  If we cannot evaluate whether the device is trusted, we cannot assert that it is, and asserting it
+ *  anyway is the whole feature failing silently instead of loudly. This costs little availability
+ *  that was not already gone: the same outage almost certainly breaks page rendering regardless,
+ *  since every page reads through the service client. */
 async function isDeviceTrusted(
   supabase: ReturnType<typeof createServerClient>,
   email: string,
@@ -119,7 +123,7 @@ async function isDeviceTrusted(
     p_token_hash: tokenHash,
   });
   if (error) {
-    console.error("middleware: is_device_trusted RPC failed", error);
+    console.error("middleware: device check failed", error);
     return null;
   }
   return data === true;
@@ -181,8 +185,11 @@ export async function middleware(request: NextRequest) {
     // `active` is `true` here only when data.user.email was truthy (isActiveMember's ternary above),
     // so this is safe.
     const trusted = await isDeviceTrusted(supabase, data.user.email!, await hashDeviceTokenEdge(token));
-    if (trusted === false) return redirectToVerifyDevice(request, pathname);
-    // trusted === true passes through; trusted === null is the RPC-error fail-open case.
+    // FAILS CLOSED: only `trusted === true` passes through. Both `false` (genuinely not trusted) and
+    // `null` (the RPC itself errored — see isDeviceTrusted's comment) land here and are refused the
+    // same way. Unlike the membership check above, an RPC error on the DEVICE gate must not be
+    // treated as "let them through" — see isDeviceTrusted for why.
+    if (trusted !== true) return redirectToVerifyDevice(request, pathname);
   }
 
   return response;
