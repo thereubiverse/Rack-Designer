@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { isPublicPath, middleware } from "./middleware";
+import { DEVICE_COOKIE } from "./features/devices/deviceRules";
 
 describe("isPublicPath", () => {
   it("lets an unauthenticated visitor reach the login page and the OAuth callback", () => {
@@ -33,6 +34,10 @@ describe("isPublicPath", () => {
 // queries `members` that one way.
 const getUser = vi.fn();
 const maybeSingle = vi.fn();
+// The device-gate RPC. None of the tests below exercise device approval itself — that is
+// middleware.device.test.ts's job — but the membership-passthrough test below now runs far enough
+// to reach it, so it needs a mock in place the same way maybeSingle does for membership.
+const rpc = vi.fn();
 
 vi.mock("@supabase/ssr", () => ({
   createServerClient: vi.fn(() => ({
@@ -42,11 +47,13 @@ vi.mock("@supabase/ssr", () => ({
         eq: () => ({ maybeSingle }),
       }),
     }),
+    rpc,
   })),
 }));
 
-function makeRequest(pathname: string): NextRequest {
-  return new NextRequest(new URL(pathname, "http://localhost:3100"));
+function makeRequest(pathname: string, cookie?: string): NextRequest {
+  const url = new URL(pathname, "http://localhost:3100");
+  return new NextRequest(url, cookie ? { headers: { cookie } } : undefined);
 }
 
 beforeEach(() => {
@@ -77,7 +84,11 @@ describe("middleware", () => {
   it("passes through an authenticated, active member with no redirect", async () => {
     getUser.mockResolvedValue({ data: { user: { email: "bob@example.com" } } });
     maybeSingle.mockResolvedValue({ data: { disabled_at: null }, error: null });
-    const res = await middleware(makeRequest("/clients"));
+    // This test is about MEMBERSHIP passing through, not the device gate — give it an approved
+    // device so the device check (proven separately in middleware.device.test.ts) doesn't mask the
+    // membership assertion behind an unrelated /verify-device redirect.
+    rpc.mockResolvedValue({ data: true, error: null });
+    const res = await middleware(makeRequest("/clients", `${DEVICE_COOKIE}=an-approved-token`));
     expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();
   });
