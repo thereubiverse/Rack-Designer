@@ -20,13 +20,20 @@ function normaliseEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-/** Looks up the signed-in email in `members`, using the SAME anon-key client already built in
- *  `middleware` — no service-role key, and none is needed. This schema has no row-level security and
- *  the standard grants give the `anon` role `select` on every table in `public`, so this query works
- *  from Edge.
+/** Looks up the signed-in email in `members`, using the SAME publishable-key client already built in
+ *  `middleware` — no service-role key, which could not be used here anyway: this runs on the Edge
+ *  runtime, where the `server-only` service client cannot be imported.
+ *
+ *  This is the ONLY thing either public role can reach in schema `public`. Migration 0027 revoked
+ *  everything else and 0028 narrowed what remains to `select (email, disabled_at) on members`, for
+ *  `authenticated` alone — which is the role this query runs as, because it is only ever called
+ *  after `getUser()` has found a user, so the request always carries a JWT.
+ *  `src/lib/supabase/grants.test.ts` fails if that ever widens.
  *
  *  Returns null (distinct from `false`) when the query itself errored, so the caller can tell "no
- *  active member" apart from "couldn't find out" and fail open on the latter. */
+ *  active member" apart from "couldn't find out" and fail open on the latter. That fail-open is why
+ *  a broken grant here is dangerous rather than merely annoying: the app would keep serving pages
+ *  with the gate silently off, which is what the live check in the plan's Task 4 exists to catch. */
 async function isActiveMember(
   supabase: ReturnType<typeof createServerClient>,
   email: string

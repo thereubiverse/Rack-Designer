@@ -24,22 +24,41 @@ plus TRUNCATE on every application table, bypassing all 61 server actions, the t
 
 `0027` closed it. **New migrations grant nothing to `anon` or `authenticated`.**
 
-A new table needs no grants at all: `service_role` is what the application runs on, and every server
-action reaches the database through `createServiceClient`. A table should start closed.
+A new table also needs no `service_role` grant, but *only because `0028` arranged that* — and this
+is the part that is easy to get wrong. Postgres's default privileges for this schema originally gave
+`service_role` just `Dxtm` (TRUNCATE, REFERENCES, TRIGGER, MAINTAIN) and no DML at all; every
+migration up to `0026` papered over that with its own
+`grant all privileges on all tables in schema public to service_role` tail. Drop the tail without
+fixing the default and the next table you create is unreadable and unwritable by all 61 server
+actions:
+
+```sql
+create table public._probe (id int);
+select has_table_privilege('service_role','public._probe','select');  -- was f, now t
+```
+
+`0028` ran `alter default privileges in schema public grant all on tables to service_role;`, so a
+new table is usable by the application the moment it exists. `grants.test.ts` asserts that default
+is still in place, in both directions.
 
 ## What those two roles can still reach
 
 Exactly one thing:
 
 ```sql
-grant select (email, disabled_at) on members to anon, authenticated;
+grant select (email, disabled_at) on members to authenticated;
 ```
 
 `src/middleware.ts` checks membership on every request with the publishable key, because it runs on
 the Edge runtime where the `server-only` service client cannot be imported. It selects `disabled_at`
-filtered by `email`, and Postgres requires `SELECT` on a column to filter by it — hence both. Both
-roles are granted because a signed-in request carries the user's JWT and arrives as `authenticated`
-rather than `anon`.
+filtered by `email`, and Postgres requires `SELECT` on a column to filter by it — hence both columns.
+
+**`authenticated` only.** `0027` granted this to `anon` as well, on the assumption the middleware
+might query as either. It cannot: the middleware returns early when `getUser()` finds no user, so
+that query only ever runs for a request carrying a JWT, which reaches PostgREST as `authenticated`.
+The `anon` half was dead weight that let anyone holding the publishable key list every member's
+email address — the same enumeration the authentication spec's uniform refusal message exists to
+prevent. `0028` revoked it.
 
 If a new feature appears to need more than this, that is a design question rather than a grant
 question. The application uses the service role for all data access.
