@@ -136,9 +136,15 @@ only admins can look.
 - **Redaction** (`redact.test.ts`): **the load-bearing test of the slice** — `password.change` yields
   `{}` even when handed `current`/`next`/`confirm`; `settings.deviceWizard.update` yields `{}` even
   when handed an `apiKey`; a key with no allowlist entry yields `{}` rather than everything. A test
-  asserts that for every action key in the registry, no allowlisted field name matches
-  `/pass|secret|token|key|code/i` — so the next person to add one is stopped by a test rather than by
-  an incident.
+  asserts that no allowlisted field name is a known secret (`password`, `current`, `next`, `confirm`,
+  `apiKey`, `token`, `secret`, `credential`), so the next person to add one is stopped by a test
+  rather than by an incident.
+
+  That guard deliberately does **not** match on `code`. A client, site or floor code is a short
+  public identifier — `ACME`, `HQ`, `2F` — and logging it is the entire point of the entry. The phone
+  verification code is a secret sharing the same field name, so it is excluded a different way: by
+  `phone.confirm` carrying an empty allowlist, asserted directly. A name-based rule cannot tell those
+  two apart, and one that tried would either leak the code or gut every useful entry in the log.
 - **Wrapper**: a successful action writes one entry with outcome `ok`; a refused one writes `refused`
   and the wrapped action still never ran; a throwing action writes `failed`; **an insert that throws
   does not fail the action** — the caller still gets its result.
