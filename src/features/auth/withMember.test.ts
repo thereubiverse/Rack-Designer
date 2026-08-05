@@ -27,7 +27,7 @@ describe("withMember", () => {
     // merely have its result discarded.
     vi.mocked(getCurrentMember).mockResolvedValue(null);
     const inner = vi.fn(async () => ({ ok: true as const }));
-    const guarded = withMember(inner);
+    const guarded = withMember("test.action", inner, { log: false });
 
     const res = await guarded();
 
@@ -38,7 +38,7 @@ describe("withMember", () => {
   it("runs the action and hands it the member", async () => {
     vi.mocked(getCurrentMember).mockResolvedValue(member);
     const inner = vi.fn(async (m: Member) => ({ ok: true as const, who: m.email }));
-    const guarded = withMember(inner);
+    const guarded = withMember("test.action", inner, { log: false });
 
     expect(await guarded()).toEqual({ ok: true, who: "bob@example.com" });
     expect(inner).toHaveBeenCalledTimes(1);
@@ -50,7 +50,7 @@ describe("withMember", () => {
     const fd = new FormData();
     fd.set("id", "abc");
     const inner = vi.fn(async (_m: Member, form: FormData) => ({ ok: true as const, id: form.get("id") }));
-    const guarded = withMember(inner);
+    const guarded = withMember("test.action", inner, { log: false });
 
     expect(await guarded(fd)).toEqual({ ok: true, id: "abc" });
   });
@@ -59,9 +59,9 @@ describe("withMember", () => {
     // Server actions in this codebase always RESOLVE {ok:false}; a rejection surfaces as an
     // unhandled error in the client component instead of an error message.
     vi.mocked(getCurrentMember).mockResolvedValue(member);
-    const guarded = withMember(async () => {
+    const guarded = withMember("test.action", async () => {
       throw new Error("boom");
-    });
+    }, { log: false });
 
     const res = await guarded();
     expect(res).toEqual(expect.objectContaining({ ok: false }));
@@ -72,7 +72,7 @@ describe("withMember", () => {
     vi.mocked(getCurrentMember).mockRejectedValue(new Error("db down"));
     const inner = vi.fn(async () => ({ ok: true as const }));
 
-    const res = await withMember(inner)();
+    const res = await withMember("test.action", inner, { log: false })();
 
     expect(inner).not.toHaveBeenCalled();
     expect(res).toEqual(expect.objectContaining({ ok: false }));
