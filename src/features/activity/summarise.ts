@@ -90,6 +90,27 @@ export const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
   "password.change": { verb: "change", noun: "password" },
   "settings.deviceWizard.update": { verb: "update", noun: "device wizard settings" },
   "phone.confirm": { verb: "confirm", noun: "phone" },
+
+  // Rendering for these two is special-cased in summarise() below — the generic verb/noun
+  // composition reads badly for them ("Not allowed to signed in"). These entries exist only to
+  // satisfy the drift guard and to give actionLabel() something sensible for the filter menu.
+  "auth.signIn": { verb: "sign in", noun: "" },
+  "auth.signOut": { verb: "sign out", noun: "" },
+};
+
+/** `method` as it reads after "with", e.g. "Signed in with a password". Supabase's provider name
+ *  for Microsoft is `azure`; the log must not expose that implementation detail. */
+const METHOD_WITH_LABELS: Readonly<Record<string, string>> = {
+  password: "a password",
+  google: "Google",
+  azure: "Microsoft",
+};
+
+/** `method` as it reads inside parentheses, e.g. "Sign-in refused (password)" — no article. */
+const METHOD_PAREN_LABELS: Readonly<Record<string, string>> = {
+  password: "password",
+  google: "Google",
+  azure: "Microsoft",
 };
 
 /** Irregular past tenses for the leading verb word. Everything else is conjugated by rule. */
@@ -125,10 +146,31 @@ function identifier(details: Record<string, string>): string | null {
 export function actionLabel(action: string): string {
   const entry = VERBS[action];
   if (!entry) return action;
-  return `${entry.noun} ${entry.verb}`;
+  return [entry.noun, entry.verb].filter(Boolean).join(" ");
 }
 
 export function summarise(e: Describable): string {
+  // Special-cased: the generic verb/noun composition below reads badly for these two
+  // ("Not allowed to signed in"). See the design doc, section 1, for why sign-in/sign-out cannot
+  // go through withMember's normal logging path in the first place.
+  if (e.action === "auth.signIn" || e.action === "auth.signOut") {
+    if (e.action === "auth.signOut") return "Signed out";
+    switch (e.outcome) {
+      case "ok": {
+        const method = METHOD_WITH_LABELS[e.details.method];
+        return method ? `Signed in with ${method}` : "Signed in";
+      }
+      case "refused": {
+        const method = METHOD_PAREN_LABELS[e.details.method];
+        return method ? `Sign-in refused (${method})` : "Sign-in refused";
+      }
+      case "failed": {
+        const method = METHOD_PAREN_LABELS[e.details.method];
+        return method ? `Sign-in failed (${method})` : "Sign-in failed";
+      }
+    }
+  }
+
   const entry = VERBS[e.action];
 
   // Unknown action: render the key itself, still with the outcome treatment, so an entry for an

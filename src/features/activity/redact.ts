@@ -89,6 +89,11 @@ export const LOGGED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   "password.change": [],
   "settings.deviceWizard.update": [],
   "phone.confirm": [],
+
+  // Which door somebody came through is the useful part. The address is in actor_email (shape-
+  // checked — see authLog.ts), and there is nothing else about a sign-in worth keeping.
+  "auth.signIn": ["method"],
+  "auth.signOut": ["method"],
 };
 
 export function redact(action: string, raw: unknown): Record<string, string> {

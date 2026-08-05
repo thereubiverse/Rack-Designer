@@ -34,6 +34,39 @@ describe("summarise", () => {
   });
 });
 
+describe("summarise: auth.signIn / auth.signOut", () => {
+  // The generic verb/noun composition reads badly for these two ("Not allowed to signed in"), so
+  // they are special-cased in summarise() — these strings are pinned exactly, not just matched.
+  it("renders a successful sign-in per method", () => {
+    expect(ok("auth.signIn", { method: "password" })).toBe("Signed in with a password");
+    expect(ok("auth.signIn", { method: "google" })).toBe("Signed in with Google");
+    expect(ok("auth.signIn", { method: "azure" })).toBe("Signed in with Microsoft");
+  });
+
+  it("renders a refused sign-in per method", () => {
+    const refused = (details: Record<string, string>) =>
+      summarise({ action: "auth.signIn", details, outcome: "refused" as const });
+    expect(refused({ method: "password" })).toBe("Sign-in refused (password)");
+    expect(refused({ method: "google" })).toBe("Sign-in refused (Google)");
+    expect(refused({ method: "azure" })).toBe("Sign-in refused (Microsoft)");
+  });
+
+  it("renders a failed sign-in", () => {
+    expect(summarise({ action: "auth.signIn", details: { method: "password" }, outcome: "failed" }))
+      .toBe("Sign-in failed (password)");
+  });
+
+  it("renders a successful sign-out", () => {
+    expect(ok("auth.signOut", { method: "password" })).toBe("Signed out");
+  });
+
+  it("still reads sensibly when details carries no method at all", () => {
+    const s = ok("auth.signIn", {});
+    expect(s).not.toMatch(/undefined/);
+    expect(s.length).toBeGreaterThan(0);
+  });
+});
+
 describe("actionLabel", () => {
   it("gives a short human label for the filter menu", () => {
     expect(actionLabel("client.rename")).toMatch(/client/i);
