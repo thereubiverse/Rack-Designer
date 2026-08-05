@@ -94,6 +94,16 @@ export const LOGGED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   // checked — see authLog.ts), and there is nothing else about a sign-in worth keeping.
   "auth.signIn": ["method"],
   "auth.signOut": ["method"],
+
+  // Trusted devices. `label` (a browser/OS guess like "Chrome on Mac") is the one thing worth
+  // showing in a report — which device, in terms a person recognises. Neither the six-digit code
+  // nor the device token is EVER passed to these actions as a field named here, so redact() drops
+  // both by default; the empty-allowlist actions below carry nothing else worth logging at all.
+  "device.challenge": ["label"],
+  "device.approve": ["label"],
+  "device.revoke": ["label"],
+  "device.adminApprove": ["label"],
+  "device.adminRevoke": ["label"],
 };
 
 export function redact(action: string, raw: unknown): Record<string, string> {

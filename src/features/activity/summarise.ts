@@ -96,6 +96,16 @@ export const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
   // satisfy the drift guard and to give actionLabel() something sensible for the filter menu.
   "auth.signIn": { verb: "sign in", noun: "" },
   "auth.signOut": { verb: "sign out", noun: "" },
+
+  // Trusted devices. `device.challenge` covers both the first request and a resend — see
+  // redact.ts — and, per the design note there, is also the entry that stands in for an
+  // unrecognised device announcing itself, since the middleware that would otherwise log a refused
+  // sign-in runs on the Edge runtime and cannot reach the service-role client.
+  "device.challenge": { verb: "request approval for", noun: "a device" },
+  "device.approve": { verb: "approve", noun: "a device" },
+  "device.revoke": { verb: "revoke", noun: "a device" },
+  "device.adminApprove": { verb: "approve", noun: "a device" },
+  "device.adminRevoke": { verb: "revoke", noun: "a device" },
 };
 
 /** `method` as it reads after "with", e.g. "Signed in with a password". Supabase's provider name
