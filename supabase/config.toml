@@ -156,11 +156,19 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# Port 3100, not the CLI's default 3000: the dev server runs on 3100 (see .claude/launch.json in the
+# parent directory). Every link Supabase puts in an email — invite, password recovery, email change —
+# is built from this, so while it said 3000 those links all pointed at a dead port. That was true of
+# the invite mail already caught in Mailpit.
+#
+# Changing this takes effect on the next `supabase start`; it is not picked up by a running stack.
+site_url = "http://localhost:3100"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# The OAuth callback must be listed explicitly — Google and Microsoft return here, and an unlisted
+# URL is refused by Auth rather than redirected to.
+additional_redirect_urls = ["http://localhost:3100", "http://localhost:3100/auth/callback"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -233,15 +241,26 @@ otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 
-# Use a production-ready SMTP server
+# Transactional email, for member invites and password recovery.
+#
+# LEFT COMMENTED DELIBERATELY. This file is the local stack's configuration AND — via
+# `supabase config push` — a linked hosted project's. Enabling SMTP here would take effect locally
+# too, replacing Mailpit, so every test invite written during development would leave the machine and
+# hit a real inbox. Mailpit (http://127.0.0.1:54324) is the right destination while developing.
+#
+# Uncomment as part of deploying, then `supabase config push`. See docs/reference/deployment.md —
+# the values below are Resend's, and SMTP is only half of what makes an invite usable: the link is
+# built from `site_url` above, which must point at the deployed app rather than localhost.
+#
+# The password is an env() reference and must stay one. This file is committed to a PUBLIC repo.
 # [auth.email.smtp]
 # enabled = true
-# host = "smtp.sendgrid.net"
+# host = "smtp.resend.com"
 # port = 587
-# user = "apikey"
-# pass = "env(SENDGRID_API_KEY)"
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+# user = "resend"
+# pass = "env(RESEND_SMTP_PASSWORD)"
+# admin_email = "invites@qtsi.us"
+# sender_name = "QTSI Network Documentation"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
