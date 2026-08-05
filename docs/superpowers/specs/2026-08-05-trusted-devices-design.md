@@ -26,13 +26,22 @@ member enumerate every other member's devices.
 So the check goes through a `security definer` function instead:
 
 ```sql
-create function is_device_trusted(p_member_id uuid, p_token_hash text) returns boolean
+create function is_device_trusted(p_email text, p_token_hash text) returns boolean
 ```
 
-It answers one yes/no question and leaks nothing else. `execute` is granted to `authenticated` and
-**revoked from `public`** — Postgres grants execute to PUBLIC by default, so revoking from
-`authenticated` alone does nothing, a trap this codebase already hit with
-`claim_phone_verification` in `0024`.
+It answers one yes/no question and leaks nothing else.
+
+**Corrected during implementation:** this was first written taking `p_member_id`, which is
+uncallable — the middleware never has `members.id`, only the email from the JWT. Migration `0030`
+replaces it with the email-resolving signature above. Migration `0031` adds
+`consume_device_attempt`, because checking the attempt count and incrementing it in two statements
+let concurrent requests share one attempt and made the six-digit code brute-forceable.
+
+On both, `execute` is **revoked from `public`** before being granted to the one role that needs it —
+Postgres grants execute to PUBLIC by default, so revoking from `authenticated` alone does nothing, a
+trap this codebase already hit with `claim_phone_verification` in `0024`. `is_device_trusted` goes to
+`authenticated` (the Edge middleware calls it); `consume_device_attempt` goes to `service_role` only,
+because a server action calls it and the middleware never does.
 
 ## 3. Data
 
@@ -94,9 +103,14 @@ absent means not configured, and the caller degrades rather than failing obscure
   exercisable end to end, code and all, without sending a real message anywhere.
 - **In production** the same two variables point at Resend.
 
-**When SMTP is not configured at all**, the code is written to the server log *in development only*,
-never in production. That keeps the flow usable on a fresh checkout without turning a production
-misconfiguration into a stream of one-time codes in a log file.
+**When SMTP is not configured at all**, `sendEmail` writes the body to the server log *in development
+only*, never in production — a production misconfiguration must not become a stream of one-time codes
+in a log file.
+
+That branch is currently unreachable for device codes: the action returns early on `emailConfigured()`
+being false, so `sendEmail` is never called. The guard stays because the wrapper is general, but a
+fresh checkout with no SMTP cannot approve a device at all — it needs Mailpit, which the local stack
+already runs.
 
 ## 6. Rate limits, mirroring what already works
 
@@ -106,8 +120,16 @@ sixty seconds. Every email costs money and every code is a guess someone else co
 
 ## 7. What must never be logged
 
-The activity log records `device.approved`, `device.revoked`, and a refused sign-in from an
-unapproved device — with the device **label** and nothing else.
+The activity log records `device.challenge`, `device.approve`, `device.revoke`,
+`device.adminApprove` and `device.adminRevoke` — actor, action and outcome, and **no details at
+all**.
+
+Two corrections to what this section originally claimed. It said entries carry the device *label*:
+they cannot, because `redact` is handed the action's first argument and the label is derived
+server-side from the user-agent header, so every allowlist here is `[]`. And it said a refused
+sign-in from an unapproved device is logged: it is not. The middleware runs on the Edge runtime and
+cannot reach the service-role client, so a bounce the member never acts on leaves no trace —
+`device.challenge` records only that they pressed the button.
 
 The code and the token are absent from `LOGGED_FIELDS`, which means `redact` drops them by default.
 That is the allowlist doing its job, and there is already a test asserting no allowlisted field name
@@ -115,15 +137,23 @@ is a known secret.
 
 ## 8. Getting locked out is the real risk
 
-A member with no access to their email cannot approve a device, and an admin has no way to do it for
-them. That is a genuine failure mode for a technician standing in a client's building.
+A member with no access to their email cannot approve a device themselves. That is a genuine failure
+mode for a technician standing in a client's building.
 
 Two mitigations, both deliberate:
 
 - **An already-approved device keeps working**, so this only bites on a genuinely new machine.
 - **An admin can revoke a device from `/users`, and can approve a pending one.** The emailed code is
-  the normal path; the admin route is the way out when email is the thing that is broken. Without it,
-  a mail outage locks out the whole company, and the person who would fix it is locked out too.
+  the normal path; the admin route is the way out when email is the thing that is broken.
+
+**That route has a bootstrap hole, and it is not solved.** `/users` sits behind this same gate, so it
+only helps when an admin *already* holds an approved device. On a fresh deployment, or any moment
+when no admin does, a mail failure means nobody can reach the screen and the only exit is
+`update trusted_devices set approved_at = now()` against the database. A deployment runbook needs
+that line until there is a break-glass path.
+
+Related: the cookie is `secure`, so a deployment served over plain HTTP loops on `/verify-device`
+forever, minting a device row per attempt. HTTPS is not optional for this feature.
 
 ## 9. Components
 
