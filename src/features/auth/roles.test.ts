@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { isRole, satisfies, wouldLeaveNoAdmin, ROLES, type Role } from "./roles";
+import {
+  isRole, satisfies, wouldLeaveNoAdmin, ROLES, type Role,
+  isRefusal, NEEDS_EDITOR, NEEDS_ADMIN, LAST_ADMIN, CANNOT_CHANGE_OWN_ROLE, CANNOT_REVOKE_SELF,
+} from "./roles";
 
 describe("isRole", () => {
   it("accepts the three real roles and nothing else", () => {
@@ -64,5 +67,21 @@ describe("wouldLeaveNoAdmin", () => {
 
   it("allows promoting someone TO admin, which can never reduce the count", () => {
     expect(wouldLeaveNoAdmin([active("admin"), active("editor")], { from: "editor", to: "admin" })).toBe(false);
+  });
+});
+
+describe("isRefusal", () => {
+  it("recognises every rule-refusal message", () => {
+    for (const msg of [NEEDS_EDITOR, NEEDS_ADMIN, LAST_ADMIN, CANNOT_CHANGE_OWN_ROLE, CANNOT_REVOKE_SELF]) {
+      expect(isRefusal(msg)).toBe(true);
+    }
+  });
+
+  it("does not treat a validation message as a refusal", () => {
+    expect(isRefusal("Enter an email address.")).toBe(false);
+  });
+
+  it("does not treat undefined as a refusal", () => {
+    expect(isRefusal(undefined)).toBe(false);
   });
 });

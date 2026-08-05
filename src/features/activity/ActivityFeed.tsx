@@ -2,10 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { ActivityEntry } from "./repository";
-import { summarise, actionLabel } from "./summarise";
+import { actionLabel } from "./summarise";
 import { LOGGED_FIELDS } from "./redact";
 import { useHeaderTitle } from "@/features/shell/headerTitle";
+import type { FeedRow } from "./constants";
 
 const input = "h-9 w-full rounded-lg border border-neutral-200 px-3 text-sm focus:border-neutral-400 focus:outline-none";
 const selectSm = `${input} bg-white`;
@@ -22,7 +22,7 @@ const OUTCOMES = ["ok", "refused", "failed"] as const;
  *  them. */
 import { PAGE_SIZE } from "./constants";
 
-const OUTCOME_LABEL: Record<ActivityEntry["outcome"], string> = {
+const OUTCOME_LABEL: Record<FeedRow["outcome"], string> = {
   ok: "Succeeded",
   refused: "Refused",
   failed: "Failed",
@@ -30,13 +30,13 @@ const OUTCOME_LABEL: Record<ActivityEntry["outcome"], string> = {
 
 // Refused reads muted on purpose — present for the record, not competing with a real (ok) change
 // for attention. Failed is a genuine system error, so unlike refused it keeps a warning color.
-const OUTCOME_BADGE: Record<ActivityEntry["outcome"], string> = {
+const OUTCOME_BADGE: Record<FeedRow["outcome"], string> = {
   ok: "bg-green-50 text-green-700",
   refused: "bg-neutral-100 text-neutral-400",
   failed: "bg-red-50 text-red-700",
 };
 
-const ROW_TEXT: Record<ActivityEntry["outcome"], string> = {
+const ROW_TEXT: Record<FeedRow["outcome"], string> = {
   ok: "text-neutral-900",
   refused: "text-neutral-400",
   failed: "text-neutral-900",
@@ -85,7 +85,7 @@ export function ActivityFeed({
   actors,
   filter,
 }: {
-  entries: ActivityEntry[];
+  entries: FeedRow[];
   total: number;
   actors: { id: string; name: string; email: string }[];
   filter: ActivityFilterState;
@@ -203,21 +203,21 @@ export function ActivityFeed({
             </tr>
           </thead>
           <tbody>
-            {entries.map((e) => (
+            {entries.map((row) => (
               <tr
-                key={e.id}
-                data-testid={`activity-row-${e.id}`}
+                key={row.id}
+                data-testid={`activity-row-${row.id}`}
                 className="border-b border-neutral-100 transition-colors last:border-0 hover:bg-neutral-50"
               >
-                <td className={`px-5 py-3 ${ROW_TEXT[e.outcome]}`}>{formatWhen(e.createdAt)}</td>
-                <td className={`px-5 py-3 ${ROW_TEXT[e.outcome]}`}>{e.actorName || e.actorEmail}</td>
-                <td className={`px-5 py-3 ${ROW_TEXT[e.outcome]}`}>{summarise(e)}</td>
+                <td className={`px-5 py-3 ${ROW_TEXT[row.outcome]}`}>{formatWhen(row.createdAt)}</td>
+                <td className={`px-5 py-3 ${ROW_TEXT[row.outcome]}`}>{row.actorName || row.actorEmail}</td>
+                <td className={`px-5 py-3 ${ROW_TEXT[row.outcome]}`}>{row.summary}</td>
                 <td className="px-5 py-3">
                   <span
-                    data-testid={`outcome-badge-${e.id}`}
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${OUTCOME_BADGE[e.outcome]}`}
+                    data-testid={`outcome-badge-${row.id}`}
+                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${OUTCOME_BADGE[row.outcome]}`}
                   >
-                    {OUTCOME_LABEL[e.outcome]}
+                    {OUTCOME_LABEL[row.outcome]}
                   </span>
                 </td>
               </tr>

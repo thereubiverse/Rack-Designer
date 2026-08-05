@@ -12,7 +12,7 @@ vi.mock("@/features/activity/repository", () => ({ writeEntry: vi.fn() }));
 import { getCurrentMember, NOT_A_MEMBER, type Member } from "./members";
 import { writeEntry } from "@/features/activity/repository";
 import { withMember } from "./withMember";
-import { NEEDS_EDITOR, NEEDS_ADMIN } from "./roles";
+import { NEEDS_EDITOR, NEEDS_ADMIN, LAST_ADMIN } from "./roles";
 
 const member: Member = {
   id: "m1",
@@ -100,6 +100,17 @@ describe("withMember — activity logging", () => {
     expect(writeEntry).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ outcome: "refused", error: NEEDS_ADMIN })
+    );
+  });
+
+  it("rule 4 — {ok:false, error: LAST_ADMIN} → outcome 'refused', not 'failed' — a rule saying no is not a system fault", async () => {
+    const guarded = withMember("member.setRole", async (_m, ..._args: unknown[]) => ({ ok: false as const, error: LAST_ADMIN }));
+
+    await guarded(new FormData());
+
+    expect(writeEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ outcome: "refused", error: LAST_ADMIN })
     );
   });
 

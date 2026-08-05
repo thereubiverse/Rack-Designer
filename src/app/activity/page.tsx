@@ -3,7 +3,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/features/auth/members";
 import { listEntries, listActors, type ActivityFilter } from "@/features/activity/repository";
 import { ActivityFeed, type ActivityFilterState } from "@/features/activity/ActivityFeed";
-import { PAGE_SIZE } from "@/features/activity/constants";
+import { PAGE_SIZE, type FeedRow } from "@/features/activity/constants";
+import { summarise } from "@/features/activity/summarise";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,25 @@ function first(v: string | string[] | undefined): string | undefined {
 function parseOffset(v: string | string[] | undefined): number {
   const n = Number(first(v));
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// A filter value arrives from the URL — `?member=...`, `?from=...` — and is therefore untrusted
+// input. `member_id` is a `uuid` column: passing anything else to `.eq("member_id", ...)` raises
+// Postgres error 22P02 and throws out of listEntries, taking the whole server component down with
+// it. An unparseable value must narrow to "no filter", not reach the database.
+function parseUuid(v: string | string[] | undefined): string | undefined {
+  const s = first(v);
+  return s !== undefined && UUID_RE.test(s) ? s : undefined;
+}
+
+// Same reasoning as parseUuid: `from`/`to` are compared against `created_at` (a timestamp column),
+// and a crafted value like "notadate" must not reach the query.
+function parseDate(v: string | string[] | undefined): string | undefined {
+  const s = first(v);
+  return s !== undefined && DATE_RE.test(s) && Number.isFinite(Date.parse(s)) ? s : undefined;
 }
 
 /** The /activity screen: every signed-in member reads it, no role check — a foreman checking what
@@ -32,11 +52,11 @@ export default async function ActivityPage({
   if (!member) redirect("/login");
 
   const sp = await searchParams;
-  const memberId = first(sp.member);
+  const memberId = parseUuid(sp.member);
   const action = first(sp.action);
   const outcome = first(sp.outcome);
-  const from = first(sp.from);
-  const to = first(sp.to);
+  const from = parseDate(sp.from);
+  const to = parseDate(sp.to);
   const offset = parseOffset(sp.offset);
 
   const uiFilter: ActivityFilterState = { memberId, action, outcome, from, to, offset };
@@ -58,5 +78,17 @@ export default async function ActivityPage({
     listActors(db),
   ]);
 
-  return <ActivityFeed entries={entries} total={total} actors={actors} filter={uiFilter} />;
+  // summarise() runs here, on the server, so its inputs — `details` and `error`, which can carry
+  // raw database error text and the details of admin actions like member.setRole — never reach the
+  // "use client" ActivityFeed and are never serialised into the page payload. See FeedRow.
+  const rows: FeedRow[] = entries.map((e) => ({
+    id: e.id,
+    actorName: e.actorName,
+    actorEmail: e.actorEmail,
+    summary: summarise(e),
+    outcome: e.outcome,
+    createdAt: e.createdAt,
+  }));
+
+  return <ActivityFeed entries={rows} total={total} actors={actors} filter={uiFilter} />;
 }

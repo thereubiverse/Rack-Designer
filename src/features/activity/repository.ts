@@ -104,9 +104,16 @@ export async function listEntries(
   return { entries: (data ?? []).map(toEntry), total: count ?? 0 };
 }
 
-/** Distinct actors for the filter dropdown, newest-active first. Keyed by `member_id` when present
- *  so a member who was renamed still collapses to one entry; falls back to `actor_email` for
- *  entries left behind by a member since deleted (migration 0026's FK is ON DELETE SET NULL).
+/** Distinct actors for the filter dropdown, newest-active first. Keyed by `member_id` so a member
+ *  who was renamed still collapses to one entry.
+ *
+ *  An entry whose `member_id` is NULL (the member has since been hard-deleted — migration 0026's FK
+ *  is ON DELETE SET NULL) is dropped from the dropdown rather than offered under its `actor_email`:
+ *  `member_id` is a `uuid` column, so selecting an email-keyed option would send `?member=<email>`
+ *  back to listEntries, which reaches `.eq("member_id", <email>)` and throws (Postgres 22P02). An
+ *  option that cannot be filtered on must not be offered — the entries themselves still show up in
+ *  the unfiltered feed, which is what matters.
+ *
  *  Capped at a generous recent window rather than scanning the whole table — the dropdown needs
  *  "who has been active", not full historical membership. */
 export async function listActors(
@@ -122,9 +129,11 @@ export async function listActors(
 
   const seen = new Map<string, { id: string; name: string; email: string }>();
   for (const row of data ?? []) {
-    const email = String(row.actor_email);
-    const id = row.member_id === null || row.member_id === undefined ? email : String(row.member_id);
-    if (!seen.has(id)) seen.set(id, { id, name: String(row.actor_name ?? ""), email });
+    if (row.member_id === null || row.member_id === undefined) continue;
+    const id = String(row.member_id);
+    if (!seen.has(id)) {
+      seen.set(id, { id, name: String(row.actor_name ?? ""), email: String(row.actor_email) });
+    }
   }
   return [...seen.values()].sort(
     (a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email)

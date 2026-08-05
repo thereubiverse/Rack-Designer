@@ -52,3 +52,24 @@ export function wouldLeaveNoAdmin(
 export const NEEDS_EDITOR = "You need editor access to change this.";
 export const NEEDS_ADMIN = "You need admin access to do that.";
 export const LAST_ADMIN = "There has to be at least one active admin.";
+export const CANNOT_CHANGE_OWN_ROLE = "You can't change your own role.";
+export const CANNOT_REVOKE_SELF = "You can't revoke your own access.";
+
+/** Every message that means "a rule said no", as opposed to a genuine failure (a thrown error, a
+ *  validation message like "Enter an email address.", or "Couldn't save your details"). The ONE
+ *  source of truth for that distinction — see isRefusal, and withMember which uses it to decide
+ *  between the `refused` and `failed` outcomes on the activity log. */
+export const REFUSAL_MESSAGES: readonly string[] = [
+  NEEDS_EDITOR,
+  NEEDS_ADMIN,
+  LAST_ADMIN,
+  CANNOT_CHANGE_OWN_ROLE,
+  CANNOT_REVOKE_SELF,
+];
+
+/** Is this error message a rule correctly saying no, rather than something actually going wrong?
+ *  Used to classify an activity log entry as `refused` (present for the record, muted) instead of
+ *  `failed` (a real system fault, shown as an alarming red badge). */
+export function isRefusal(error: string | undefined): boolean {
+  return error !== undefined && REFUSAL_MESSAGES.includes(error);
+}

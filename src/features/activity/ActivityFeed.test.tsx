@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { ActivityFeed, type ActivityFilterState } from "./ActivityFeed";
-import { PAGE_SIZE } from "./constants";
-import type { ActivityEntry } from "./repository";
+import { PAGE_SIZE, type FeedRow } from "./constants";
+import { summarise } from "./summarise";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -15,18 +15,24 @@ const actors = [
   { id: "m2", name: "", email: "bob@example.com" },
 ];
 
-function entry(overrides: Partial<ActivityEntry> = {}): ActivityEntry {
+// The page computes `summary` on the server via summarise() and hands ActivityFeed only a FeedRow
+// — never the raw `details`/`error` a full ActivityEntry carries. Build rows the same way here:
+// `action`/`details` are accepted as convenience inputs to derive `summary` from the real
+// summarise(), then discarded, so these tests still exercise actual summarisation wording rather
+// than a hand-typed string that could drift from it.
+function entry(
+  overrides: Partial<FeedRow> & { action?: string; details?: Record<string, string> } = {}
+): FeedRow {
+  const { action = "client.rename", details = { code: "ACME" }, ...rowOverrides } = overrides;
+  const outcome = rowOverrides.outcome ?? "ok";
   return {
     id: "e1",
     actorEmail: "jane@example.com",
     actorName: "Jane Doe",
-    action: "client.rename",
-    memberId: "m1",
-    outcome: "ok",
-    details: { code: "ACME" },
-    error: null,
+    outcome,
+    summary: summarise({ action, details, outcome }),
     createdAt: "2026-08-01T12:00:00.000Z",
-    ...overrides,
+    ...rowOverrides,
   };
 }
 

@@ -10,3 +10,23 @@
  *  Nothing warned about it: the types were satisfied, no error was thrown, and every test passed
  *  because they all supply the value directly. Keep shared constants out of "use client" modules. */
 export const PAGE_SIZE = 50;
+
+/** What the client feed is allowed to see. The full `ActivityEntry` carries `details` and `error`
+ *  — raw database error text, and the details of every admin action including `member.setRole` and
+ *  `member.invite` — and `ActivityFeed` is a "use client" component, so passing it whole entries
+ *  serialises all of that into the page payload for any signed-in member to read, whether or not
+ *  the table ever renders it. The table only ever renders when/who/summary/outcome, so that is all
+ *  a row carries: `summarise()` runs on the SERVER (see src/app/activity/page.tsx), and `details`/
+ *  `error` never leave it.
+ *
+ *  Lives here, not in ActivityFeed.tsx: that module carries "use client", and the server page needs
+ *  this type too — see the PAGE_SIZE note above for why a client module is the wrong home for
+ *  anything a server component must import. */
+export interface FeedRow {
+  id: string;
+  actorName: string;
+  actorEmail: string;
+  summary: string;
+  outcome: "ok" | "refused" | "failed";
+  createdAt: string;
+}

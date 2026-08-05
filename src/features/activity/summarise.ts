@@ -1,8 +1,9 @@
 /** Turns one activity_log row into a short English sentence. PURE — no database, no React.
  *
- *  `VERBS` covers the keys in `LOGGED_FIELDS` (see redact.ts) but does not need to cover every one:
- *  an action added later without a VERBS entry falls back to rendering its raw key, which is a far
- *  better failure than throwing or going blank. */
+ *  `VERBS` SHOULD cover every key in `LOGGED_FIELDS` (see redact.ts) — summarise.test.ts asserts
+ *  this as a drift guard — but an action added later without a VERBS entry still falls back to
+ *  rendering its raw key rather than throwing or going blank, so a gap here is a readable regression
+ *  the guard test catches, not a crash. */
 
 export interface Describable {
   action: string;
@@ -12,17 +13,22 @@ export interface Describable {
 
 /** `verb` is the base (infinitive) form, e.g. "rename" or "clear the outline of" — used as-is for
  *  `refused`/`failed` ("Not allowed to rename client ACME") and conjugated to past tense for `ok`
- *  ("Renamed client ACME"). Only the leading word of a multi-word verb is conjugated. */
-const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
+ *  ("Renamed client ACME"). Only the leading word of a multi-word verb is conjugated.
+ *
+ *  Exported only for the drift-guard test below, which checks it against LOGGED_FIELDS — not
+ *  meant to be used elsewhere; go through summarise()/actionLabel() instead. */
+export const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
   "client.create": { verb: "create", noun: "client" },
   "client.rename": { verb: "rename", noun: "client" },
   "client.archive": { verb: "archive", noun: "client" },
   "client.restore": { verb: "restore", noun: "client" },
+  "client.delete": { verb: "delete", noun: "client" },
   "site.create": { verb: "create", noun: "site" },
   "site.rename": { verb: "rename", noun: "site" },
   "site.archive": { verb: "archive", noun: "site" },
   "site.restore": { verb: "restore", noun: "site" },
   "site.locate": { verb: "locate", noun: "site" },
+  "site.delete": { verb: "delete", noun: "site" },
   "floor.create": { verb: "create", noun: "floor" },
   "floor.rename": { verb: "rename", noun: "floor" },
   "floor.archive": { verb: "archive", noun: "floor" },
@@ -53,6 +59,11 @@ const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
   "deviceTemplate.update": { verb: "update", noun: "device template" },
   "deviceTemplate.delete": { verb: "delete", noun: "device template" },
   "deviceTemplate.duplicate": { verb: "duplicate", noun: "device template" },
+  // Pure reads, wrapped with { log: false } — never actually written to the log (see redact.ts) —
+  // but still given an entry so the drift guard (every LOGGED_FIELDS key has a VERBS entry) holds
+  // for the whole allowlist, not just the keys that happen to get logged today.
+  "deviceTemplate.list": { verb: "list", noun: "device templates" },
+  "deviceTemplate.get": { verb: "look up", noun: "device template" },
   "brand.create": { verb: "create", noun: "brand" },
   "brand.delete": { verb: "delete", noun: "brand" },
   "deviceType.create": { verb: "create", noun: "device type" },
@@ -62,6 +73,7 @@ const VERBS: Readonly<Record<string, { verb: string; noun: string }>> = {
   "ai.discoverRooms": { verb: "run room discovery on", noun: "floor" },
   "ai.discoverDevices": { verb: "run device discovery on", noun: "floor" },
   "ai.discoverSymbols": { verb: "run symbol discovery on", noun: "floor" },
+  "ai.pickSymbol": { verb: "pick a symbol on", noun: "floor" },
   "ai.extractGeometry": { verb: "extract geometry from", noun: "floor" },
   "ai.detectPorts": { verb: "run port detection on", noun: "device" },
   "ai.identifyDevice": { verb: "identify", noun: "device" },

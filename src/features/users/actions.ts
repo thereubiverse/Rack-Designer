@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import { withAdmin } from "@/features/auth/withMember";
 import { normaliseEmail } from "@/features/auth/members";
-import { isRole, wouldLeaveNoAdmin, LAST_ADMIN, type Role } from "@/features/auth/roles";
+import {
+  isRole, wouldLeaveNoAdmin, LAST_ADMIN, CANNOT_CHANGE_OWN_ROLE, CANNOT_REVOKE_SELF, type Role,
+} from "@/features/auth/roles";
 import {
   listRolesForInvariant, insertMember, updateMemberRole, setMemberDisabled, findMemberById,
 } from "./repository";
@@ -44,7 +46,7 @@ export const setMemberRoleAction: (
   if (!isRole(role)) return { ok: false, error: "Choose a role." };
   // Not because self-demotion is always unsafe, but because the safe cases are rare and the unsafe
   // one — the last admin demoting themselves — is unrecoverable without psql.
-  if (id === admin.id) return { ok: false, error: "You can't change your own role." };
+  if (id === admin.id) return { ok: false, error: CANNOT_CHANGE_OWN_ROLE };
 
   const db = createServiceClient();
   const target = await findMemberById(db, id);
@@ -68,7 +70,7 @@ export const setMemberActiveAction: (
   // Explicit "false" revokes; anything else — missing field, typo, malformed request — leaves
   // access alone. The destructive branch must never be what a missing value falls into.
   const active = String(formData.get("active") ?? "") !== "false";
-  if (id === admin.id) return { ok: false, error: "You can't revoke your own access." };
+  if (id === admin.id) return { ok: false, error: CANNOT_REVOKE_SELF };
 
   const db = createServiceClient();
   const target = await findMemberById(db, id);

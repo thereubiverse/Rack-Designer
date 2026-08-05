@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { summarise, actionLabel } from "./summarise";
+import { summarise, actionLabel, VERBS } from "./summarise";
+import { LOGGED_FIELDS } from "./redact";
 
 const ok = (action: string, details: Record<string, string> = {}) =>
   summarise({ action, details, outcome: "ok" as const });
@@ -37,5 +38,16 @@ describe("actionLabel", () => {
   it("gives a short human label for the filter menu", () => {
     expect(actionLabel("client.rename")).toMatch(/client/i);
     expect(actionLabel("unknown.key")).toBe("unknown.key");
+  });
+});
+
+describe("VERBS drift guard", () => {
+  // Every loggable action ought to render as a real sentence, not its raw key. summarise() falls
+  // back gracefully when an entry is missing (see the comment atop this file), so a gap here would
+  // not throw or fail any other test — this is the one test standing between "added a new logged
+  // action" and it silently rendering as a raw key like "client.delete" in the feed forever.
+  it("has a VERBS entry for every action key LOGGED_FIELDS knows about", () => {
+    const missing = Object.keys(LOGGED_FIELDS).filter((key) => !(key in VERBS));
+    expect(missing).toEqual([]);
   });
 });

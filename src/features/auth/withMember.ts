@@ -1,6 +1,6 @@
 import "server-only";
 import { getCurrentMember, NOT_A_MEMBER, type Member } from "./members";
-import { satisfies, NEEDS_EDITOR, NEEDS_ADMIN, type Role } from "./roles";
+import { satisfies, NEEDS_EDITOR, NEEDS_ADMIN, isRefusal, type Role } from "./roles";
 import { redact } from "@/features/activity/redact";
 import { writeEntry } from "@/features/activity/repository";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -124,7 +124,7 @@ export function withMember<A extends unknown[], R>(
         outcome = "failed";
         error = thrown;
       } else if (isFailure(result)) {
-        outcome = result.error === NEEDS_EDITOR || result.error === NEEDS_ADMIN ? "refused" : "failed";
+        outcome = isRefusal(result.error) ? "refused" : "failed";
         error = result.error;
       } else {
         outcome = "ok";
