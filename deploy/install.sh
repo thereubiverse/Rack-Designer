@@ -81,6 +81,9 @@ sign_jwt() {
 # this is the exact step people skip when they hand-roll these tokens.
 verify_jwt() {
   local token="$1" expected_role="$2"
+  # SC2016: the `${payload.role}` below is a JavaScript template literal, read by node, and must NOT
+  # be expanded by the shell — single quotes are the point.
+  # shellcheck disable=SC2016
   TOKEN_FOR_VERIFY="$token" EXPECTED_ROLE="$expected_role" node -e '
     const token = process.env.TOKEN_FOR_VERIFY;
     const expected = process.env.EXPECTED_ROLE;
@@ -195,32 +198,130 @@ until "${COMPOSE[@]}" exec -T db pg_isready -U postgres -h 127.0.0.1 >/dev/null 
 done
 log "postgres is ready"
 
+# pg_isready is NOT enough on its own. Migration 0012 inserts into storage.buckets and 0017
+# references auth.users, but neither of those tables is created by anything in this repo: the
+# `storage` service creates its schema from its own startup migrations, and `auth` (GoTrue) creates
+# `auth.users` from its. Both take several seconds longer than postgres does to accept connections,
+# and if either service is misconfigured they never arrive at all. Running migrations against a
+# ready-but-schemaless database is how a run dies half-applied at 0012 with
+#   ERROR: relation "storage.buckets" does not exist
+log "Waiting for the auth and storage services to create their schemas"
+schemas_timeout_s=180
+schemas_elapsed_s=0
+auth_users_present=""
+storage_buckets_present=""
+while :; do
+  # One round trip for both, so the two answers describe the same instant. Two boolean COLUMNS,
+  # printed by -tA as `t|f` — deliberately not `bool || ' ' || bool`, because concatenating a boolean
+  # casts it to text as "true"/"false", not the t/f psql displays, and the comparison below then
+  # never matches and the wait always times out. (Asked and answered: it did exactly that.)
+  regclass_pair="$(
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -tAc \
+      "select to_regclass('auth.users') is not null, to_regclass('storage.buckets') is not null" \
+      2>/dev/null | tr -d '[:space:]'
+  )"
+  auth_users_present="${regclass_pair%%|*}"
+  storage_buckets_present="${regclass_pair##*|}"
+  [[ "$auth_users_present" == "t" && "$storage_buckets_present" == "t" ]] && break
+
+  if (( schemas_elapsed_s >= schemas_timeout_s )); then
+    missing=""
+    [[ "$auth_users_present" == "t" ]] || missing="auth.users (created by the 'auth' service — read '${COMPOSE[*]} logs auth')"
+    if [[ "$storage_buckets_present" != "t" ]]; then
+      [[ -n "$missing" ]] && missing="$missing and "
+      missing="${missing}storage.buckets (created by the 'storage' service — read '${COMPOSE[*]} logs storage')"
+    fi
+    printf 'error: still missing after %ss: %s\n' "$schemas_timeout_s" "$missing" >&2
+    printf 'error: migrations were NOT applied. A service that cannot log in to the database will\n' >&2
+    printf 'error: crashloop silently — check %s ps for anything Restarting.\n' "${COMPOSE[*]}" >&2
+    exit 1
+  fi
+  sleep 3
+  schemas_elapsed_s=$(( schemas_elapsed_s + 3 ))
+done
+log "auth.users and storage.buckets both exist"
+
+# Now — and only now — give `postgres` rights on the storage tables, because until this moment they
+# did not exist to grant on.
+#
+# The image WANTS to do this itself: /docker-entrypoint-initdb.d/migrations/20250623125453_tmp_grant_
+# storage_tables_to_postgres_with_grant_option.sql is exactly this grant. But it is wrapped in
+# `if exists (... relname = 'buckets')`, and at database-init time storage.buckets does not exist —
+# this image's init-scripts create the storage SCHEMA but no longer its tables; the storage service
+# creates those at runtime, owned by supabase_storage_admin. So the image's grant is a silent no-op
+# and `postgres` ends up with nothing on storage.buckets, which makes migrations 0012 and 0021 die
+# with `ERROR: permission denied for table buckets`.
+#
+# Run as supabase_admin (the superuser; postgres is deliberately demoted and cannot grant privileges
+# it does not hold) over the container's local socket. GRANT is idempotent, so re-runs are free.
+"${COMPOSE[@]}" exec -T db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -c \
+  "grant all on storage.buckets to postgres with grant option;
+   grant all on storage.objects to postgres with grant option;"
+
 # ---------------------------------------------------------------------------
 # Step 4: migrations, in filename order
+#
+# Tracked in a ledger table keyed by filename, NOT by "does some table exist yet". A single
+# does-public.members-exist boolean cannot describe a run that died partway: the failure above left
+# 14 tables created and no members table, so a re-run would have restarted at 0001 and died
+# instantly on "relation already exists", leaving no way forward but `down -v`. Per-file rows make
+# a half-applied run resumable, which is what makes the "safe to re-run" promise in this script's
+# header true.
 # ---------------------------------------------------------------------------
 log "Step 4: migrations"
 
-schema_present="$(
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -tAc \
-    "select to_regclass('public.members') is not null" 2>/dev/null | tr -d '[:space:]'
+# Portable read loop rather than `mapfile`, which is bash 4+ — macOS ships bash 3.2, so an operator
+# running this from a Mac would get "mapfile: command not found" and no migrations at all. Same
+# reason deploy/backup.sh avoids it. Migration filenames are 0001_name.sql, never containing
+# newlines, so a plain line-at-a-time read is safe.
+migrations=()
+while IFS= read -r migration_path; do
+  migrations+=("$migration_path")
+done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
+[[ ${#migrations[@]} -gt 0 ]] || die "no migrations found under $MIGRATIONS_DIR"
+
+# Its own schema, not `public`. PostgREST serves `public` (PGRST_DB_SCHEMAS), and
+# src/lib/supabase/grants.test.ts enumerates every table in `public` to police the anon surface —
+# an installer bookkeeping table has no business in either. `installer` is not in PGRST_DB_SCHEMAS,
+# so this is unreachable through /rest/v1 by construction.
+"${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -c \
+  "create schema if not exists installer;
+   create table if not exists installer.schema_migrations (
+     filename text primary key,
+     applied_at timestamptz not null default now()
+   );"
+
+applied_count="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc \
+    "select count(*) from installer.schema_migrations" | tr -d '[:space:]'
 )"
 
-if [[ "$schema_present" == "t" ]]; then
-  log "schema already present (public.members exists) — skipping migrations"
+if [[ "$applied_count" == "${#migrations[@]}" ]]; then
+  # Fast path for the overwhelmingly common re-run against a complete install: one query, and none
+  # of the 31 files is opened or shipped into the container.
+  log "all ${#migrations[@]} migrations already recorded as applied — skipping"
 else
-  # Portable read loop rather than `mapfile`, which is bash 4+ — macOS ships bash 3.2, so an
-  # operator running this from a Mac would get "mapfile: command not found" and no migrations at
-  # all. Same reason deploy/backup.sh avoids it. Migration filenames are 0001_name.sql, never
-  # containing newlines, so a plain line-at-a-time read is safe.
-  migrations=()
-  while IFS= read -r migration_path; do
-    migrations+=("$migration_path")
-  done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
-  [[ ${#migrations[@]} -gt 0 ]] || die "no migrations found under $MIGRATIONS_DIR"
+  applied_list="$(
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc \
+      "select filename from installer.schema_migrations" | tr -d '\r'
+  )"
 
   for migration in "${migrations[@]}"; do
-    log "applying $(basename "$migration")"
-    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$migration"
+    migration_name="$(basename "$migration")"
+    if printf '%s\n' "$applied_list" | command grep -qxF "$migration_name"; then
+      log "skipping $migration_name (already applied)"
+      continue
+    fi
+    log "applying $migration_name"
+    # The ledger insert is appended to the SAME psql invocation, after the migration body, and the
+    # whole thing runs as one transaction (-1). ON_ERROR_STOP means a failing migration never
+    # reaches the insert, and -1 means it leaves nothing behind either — so the file is retried
+    # from scratch on the next run rather than half-recorded.
+    {
+      cat "$migration"
+      printf "\ninsert into installer.schema_migrations (filename) values (%s);\n" \
+        "$(printf "'%s'" "${migration_name//\'/\'\'}")"
+    } | "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -1
   done
 fi
 
@@ -232,9 +333,15 @@ log "Step 5: creating the first admin"
 SERVICE_ROLE_KEY="$(env_get SERVICE_ROLE_KEY)"
 [[ -n "$SERVICE_ROLE_KEY" ]] || die "SERVICE_ROLE_KEY missing from deploy/.env"
 
+# SQL on STDIN, not in -c. psql's -c takes "a command string that is completely parsable by the
+# server", which means it does NOT expand :'var' — a -c query containing one dies with
+#   ERROR: syntax error at or near ":"
+# Every query below that interpolates a -v variable is therefore fed on stdin, which does expand it.
+# :'...' still quotes the value as a literal, so the email is never pasted into SQL text raw.
 member_exists="$(
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tAc \
-    "select count(*) from members where email = :'email'"
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tA <<'SQL'
+select count(*) from members where email = :'email';
+SQL
 )"
 member_exists="$(printf '%s' "$member_exists" | tr -d '[:space:]')"
 
@@ -284,10 +391,11 @@ else
   )"
 
   "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$new_auth_user_id" \
-    -c "insert into members (email, name, role, auth_user_id)
-        values (:'email', :'name', 'admin', :'authid'::uuid)
-        on conflict (email) do nothing;"
+    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$new_auth_user_id" <<'SQL'
+insert into members (email, name, role, auth_user_id)
+values (:'email', :'name', 'admin', :'authid'::uuid)
+on conflict (email) do nothing;
+SQL
 
   log "created admin member and auth user for $ADMIN_EMAIL"
 fi
@@ -313,17 +421,19 @@ else
     'process.stdout.write(require("crypto").createHash("sha256").update(process.env.DEVICE_TOKEN_FOR_HASH).digest("hex"))')"
 
   member_id="$(
-    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tAc \
-      "select id from members where email = :'email'"
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tA <<'SQL'
+select id from members where email = :'email';
+SQL
   )"
   member_id="$(printf '%s' "$member_id" | tr -d '[:space:]')"
   [[ -n "$member_id" ]] || die "could not find the admin member row to attach a bootstrap device to"
 
   "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-    -v mid="$member_id" -v hash="$TOKEN_HASH" \
-    -c "insert into trusted_devices (member_id, token_hash, label, approved_at)
-        values (:'mid'::uuid, :'hash', 'install.sh bootstrap device', now())
-        on conflict (token_hash) do nothing;"
+    -v mid="$member_id" -v hash="$TOKEN_HASH" <<'SQL'
+insert into trusted_devices (member_id, token_hash, label, approved_at)
+values (:'mid'::uuid, :'hash', 'install.sh bootstrap device', now())
+on conflict (token_hash) do nothing;
+SQL
 
   (
     umask 077
