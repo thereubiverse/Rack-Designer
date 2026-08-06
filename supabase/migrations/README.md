@@ -83,6 +83,42 @@ the anon/authenticated surface is actually closed on that stack, rather than onl
 GRANTS_TEST_CONTAINER=<container name or id> ./node_modules/.bin/vitest run src/lib/supabase/grants.test.ts
 ```
 
+## Functions and sequences had the same hole, and only a deployment showed it
+
+`0027` closed the default privileges for **tables** and stopped there. Functions and sequences kept
+theirs, and that gap was invisible on this machine, because the local Supabase CLI stack and a fresh
+`supabase/postgres` image ship different defaults:
+
+| | local CLI stack | fresh image (every real deployment) |
+|---|---|---|
+| `postgres` default ACL, functions | `postgres=X` | `postgres=X, anon=X, authenticated=X, service_role=X` |
+
+So on a deployment — and only there — every function a migration creates is born with an explicit
+`EXECUTE` grant to `anon` and `authenticated`. The `revoke all on function … from public` line that
+`0029`, `0030` and `0031` each end with does **not** undo that: revoking from `PUBLIC` removes the
+implicit world grant, and does nothing to an explicit grant held by the roles themselves.
+
+Demonstrated against a real install, not inferred. A POST to `/rest/v1/rpc/consume_device_attempt`
+carrying nothing but the publishable key returned:
+
+```json
+[{"code":"424242","expires_at":"…","attempts":1}]
+```
+
+`consume_device_attempt` is `security definer` and returns the device-approval code, so anyone
+holding the publishable key — which is public by design — could read the emailed code for any
+pending device and approve their own machine. The trusted-device factor was defeated end to end on
+every fresh install while this machine showed nothing wrong.
+
+`0032` closes it: the function and sequence defaults, the grants the missing default already
+produced, and `execute … from public` by default as a backstop so forgetting the per-function revoke
+on a future migration leaves it closed rather than open. **Keep writing the per-function revoke
+anyway** — the backstop is not a replacement for it.
+
+`grants.test.ts` now asserts these defaults directly, in addition to the privileges on the functions
+themselves. This is also the reason `GRANTS_TEST_CONTAINER` exists: a guard that can only ever look
+at the development database will keep passing while the deployment is open.
+
 ## One known limit
 
 `0027` also revoked the schema's *default* privileges, so a newly created table inherits nothing.
