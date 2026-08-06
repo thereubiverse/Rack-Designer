@@ -34,3 +34,6 @@ deploy/.env
 deploy/caddy_data/
 deploy/caddy_config/
 deploy/first-device-token.txt
+
+# deploy/backup.sh output: database dumps and storage archives, real client data. Never committed.
+deploy/backups/

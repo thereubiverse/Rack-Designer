@@ -139,3 +139,16 @@ writing the next one.
 
 **Phone verification and OAuth stay inert** until their credentials exist, by design. The buttons
 explain themselves rather than failing obscurely.
+
+## Backups
+
+`deploy/backup.sh` and `deploy/restore.sh` dump the database and archive the storage volume (floor
+plans, avatars) for the self-hosted compose stack in `deploy/`. Both take `--compose-file` and
+`--env-file` so they work against whichever stack you point them at, and `restore.sh` refuses to run
+without an explicit `--yes-overwrite` flag, because a restore replaces whatever is currently there.
+
+**Test a restore before you need one.** A backup that has never been restored is a hope, not a
+backup — run `backup.sh` and then `restore.sh` against a throwaway stack (a separate compose project,
+never the production one) and confirm the data actually comes back, before relying on either script
+during a real incident. Task 5 of the self-hosted implementation plan does exactly this
+(`docs/superpowers/plans/2026-08-05-self-hosted-stack.md`).
