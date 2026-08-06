@@ -1,0 +1,207 @@
+# Self-hosted stack for network-doc-platform (Slice H7 — see
+# docs/superpowers/specs/2026-08-05-self-hosted-design.md).
+#
+# This is a wholly separate compose project from the local development Supabase stack (containers
+# named supabase_*_network-doc-platform, ports 54321-54326, real client data). Nothing here shares
+# a network, a volume, or a port with that stack, and this file must never be started with
+# `docker compose up` from an automated task — only `config` validation.
+#
+# Seven services. `realtime`, `imgproxy`, `studio` and `meta` are deliberately not present — see
+# spec §3 for why each is omitted; do not add them back "for convenience".
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.156
+    # Pinned to the exact version the local Supabase CLI stack runs, so migrations written and
+    # verified against that stack behave identically here.
+    restart: unless-stopped
+    # No `ports:` entry, deliberately. Postgres is reachable only on the `internal` network below —
+    # publishing it would put the database on the internet with a password as the only control.
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  kong:
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_started
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      # kong.yml is a template, not a final config: it references these by name, and the entrypoint
+      # below substitutes them into the real file at container start. This is the same mechanism
+      # Supabase's own self-hosting compose file uses, because Kong's declarative config loader does
+      # not do environment substitution itself.
+      ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
+    volumes:
+      - ./kong.yml:/home/kong/temp.yml:ro
+    entrypoint:
+      - bash
+      - -c
+      - 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+    # No `ports:` entry — only Caddy is reachable from outside the compose network. The browser
+    # reaches kong through Caddy's /auth/v1, /rest/v1 and /storage/v1 routes (see ../Caddyfile).
+    networks: [internal]
+
+  auth:
+    image: supabase/gotrue:v2.181.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${APP_HOSTNAME}
+      GOTRUE_SITE_URL: https://${APP_HOSTNAME}
+      GOTRUE_URI_ALLOW_LIST: https://${APP_HOSTNAME}/**
+      # Invite-only: members are created by an admin action (scripts/install.sh for the first one,
+      # the /users invite flow after that), never by self-serve signup.
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_DB_DRIVER: postgres
+      DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM}
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  rest:
+    image: postgrest/postgrest:v13.0.7
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: public
+      # anon can authenticate through PostgREST, but migrations 0027/0028 already revoked its
+      # privileges on `public` down to one column grant — see src/lib/supabase/grants.test.ts.
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUC: "false"
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  storage:
+    image: supabase/storage-api:v1.28.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      POSTGREST_URL: http://rest:3000
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      # imgproxy is not part of this stack (spec §3 — avatars render with object-cover, nothing
+      # resizes server-side), so image transformation stays off rather than pointed at a service
+      # that does not exist.
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    volumes:
+      - storage-data:/var/lib/storage
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      kong:
+        condition: service_started
+    environment:
+      # Same public origin used for the API routes below: the app calls Supabase server-side with
+      # this URL, and it is also what ends up embedded in signed storage URLs the browser fetches
+      # directly, so it must be the externally-resolvable hostname, not an internal service name.
+      NEXT_PUBLIC_SUPABASE_URL: https://${APP_HOSTNAME}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      NEXT_PUBLIC_SITE_URL: https://${APP_HOSTNAME}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SUPABASE_AUTH_GOOGLE_CLIENT_ID: ${SUPABASE_AUTH_GOOGLE_CLIENT_ID}
+      SUPABASE_AUTH_GOOGLE_SECRET: ${SUPABASE_AUTH_GOOGLE_SECRET}
+      SUPABASE_AUTH_AZURE_CLIENT_ID: ${SUPABASE_AUTH_AZURE_CLIENT_ID}
+      SUPABASE_AUTH_AZURE_SECRET: ${SUPABASE_AUTH_AZURE_SECRET}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER}
+    # No `ports:` entry — reached only through Caddy.
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      kong:
+        condition: service_started
+    # The only service publishing ports. 80 is used for the ACME HTTP challenge and redirects to
+    # 443; Caddy issues and renews the certificate for APP_HOSTNAME automatically.
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME:?APP_HOSTNAME is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  db-data:
+  storage-data:
