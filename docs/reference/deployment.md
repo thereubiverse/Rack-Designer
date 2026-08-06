@@ -88,10 +88,17 @@ ready-but-schemaless database is how a run dies half-applied. Then it applies
 `supabase/migrations/*.sql` in filename order, creates the first admin as a `members` row plus a
 matching GoTrue auth user, and mints the bootstrap device below.
 
-**It is safe to re-run.** It does not regenerate secrets once `deploy/.env` exists, every write is
-guarded by an existence check, and migrations are tracked in a ledger table keyed by filename
-(`installer.schema_migrations`, in its own schema so it stays outside PostgREST's reach). A run that
-died partway resumes from the file it died on rather than starting over and colliding with itself.
+**It is safe to re-run.** It does not regenerate secrets once `deploy/.env` exists, and migrations are
+tracked in a ledger table keyed by filename (`installer.schema_migrations`, in its own schema so it
+stays outside PostgREST's reach). A run that died partway resumes from the file it died on rather than
+starting over and colliding with itself.
+
+Every guard is against the **database**, never against a file on disk. The admin's GoTrue user and
+`members` row are resolved independently — either one already existing is fine, and a re-run repairs
+the link between them — and the bootstrap device below is minted only when the admin has no approved
+device at all. That last one matters: keying it off `deploy/first-device-token.txt`, a file this page
+tells you to delete, meant a later re-run silently minted a **second** permanent approved device and a
+fresh break-glass token. Deleting the file, as instructed, is safe.
 
 ## The break-glass first device
 
@@ -121,21 +128,38 @@ control of the email address. Treat it like a password until it is gone.
 and `--env-file` so they work against whichever stack you point them at, and `restore.sh` refuses to
 run without an explicit `--yes-overwrite`, because a restore replaces whatever is currently there.
 
-A backup directory holds four files, and the database is in three of them because `postgres` on the
-`supabase/postgres` image is **not a superuser** and does not own the `auth` and `storage` tables —
-it may INSERT into and TRUNCATE them, but not DROP them.
+A backup directory holds six files. The database is split along **schema versus data**, not by schema
+name, because `postgres` on the `supabase/postgres` image is **not a superuser** and does not own the
+`auth` and `storage` tables — it may INSERT into and TRUNCATE them, but not DROP them.
 
 | File | What it is |
 |---|---|
-| `db-public.sql.gz` | schema and data for `public`, `--clean --if-exists`. `postgres` owns every table here, so a DROP-then-CREATE replay works. |
-| `db-auth-storage.sql.gz` | rows only, for `auth` and `storage`. GoTrue and storage-api recreate those tables themselves; we carry only the data. |
+| `db-data.sql.gz` | every row from `public`, `auth` and `storage`, from a **single** `pg_dump --data-only` invocation — so one snapshot, internally consistent. |
+| `db-schema-public.sql.gz` | structure only for `public`, `--clean --if-exists`. `postgres` owns every table here, so a DROP-then-CREATE replay works. `auth` and `storage` have no schema dump: GoTrue and storage-api recreate their own tables. |
 | `db-superuser-only.sql` | the statements `pg_dump` emitted that `postgres` cannot execute, held out of the replayable dump so the restore can keep `ON_ERROR_STOP=1`. Plain text, applied by a human with superuser access if ever needed. |
+| `excluded-tables.txt` | the tables the data dump leaves out (`auth.schema_migrations`, `storage.migrations` — GoTrue's and storage-api's own ledgers, which `postgres` may not write). `restore.sh` reads this file to decide which tables it must not empty, so the two ends cannot drift apart. |
 | `storage.tar.gz` | the storage volume itself — every floor plan and avatar. A database-only backup silently loses all of them while looking complete. |
+| `COMPLETE` | written last, only on success. `restore.sh` refuses a directory without it, and retention only ever counts and deletes directories that have one — so a run that died mid-dump can never evict a good backup. A failed run removes its own directory anyway. |
 
 The split is not tidiness. A whole-database `pg_dump --clean` produces a file whose first statement is
 `DROP EVENT TRIGGER IF EXISTS pgrst_drop_watch;`, which `postgres` does not own and cannot run. That
 is exactly how the first real restore of this stack failed, leaving the database with its schema
 intact and every row gone. The headers of both scripts record the reasoning in full.
+
+**One snapshot, then the files.** `backup.sh` deliberately does not stop the stack — a nightly backup
+must not take the site down — so all three schemas' rows are taken in one `pg_dump`, which runs in one
+repeatable-read transaction. Taking `public` and `auth` separately, as an earlier version did, produced
+a torn backup: a member created between the two dumps came back as a `members` row whose `auth_user_id`
+had no `auth.users` row behind it. The storage archive is then taken **after** the database, so anything
+uploaded during the remaining window is a file with no row (harmless, costs disk) rather than a row with
+no file (a broken link in the app). That window is not closed; closing it needs a quiesce.
+
+**Every archive is verified before a restore destroys anything.** `restore.sh` decompresses and checks
+both SQL dumps and the storage archive up front and replays from the verified copies. This matters more
+than it sounds: `gunzip -c` on a truncated archive writes the valid *prefix* and only then fails, and
+psql — having seen a clean EOF — **commits**. A backup written by a filesystem that filled mid-`gzip`
+would otherwise replay `DROP SCHEMA public`, recreate half the tables, commit, and only then report a
+failure claiming nothing had been applied.
 
 **Test a restore before you need one. A backup that has never been restored is a hope, not a backup.**
 Run `backup.sh` and then `restore.sh` against a throwaway stack — a separate compose project, never
