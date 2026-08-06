@@ -196,7 +196,18 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy_data:/data
       - ./caddy_config:/config
-    networks: [internal]
+    networks:
+      internal:
+        # Make APP_HOSTNAME resolve to Caddy from INSIDE the compose network. Every server-side
+        # Supabase call the app makes goes to NEXT_PUBLIC_SUPABASE_URL, which is https://APP_HOSTNAME
+        # — the public origin, because that same value is baked into the signed storage URLs the
+        # browser fetches directly, so it cannot be an internal service name. Without this alias the
+        # app container resolves the public hostname to the server's public IP and has to leave the
+        # host and come back in through the published port, which depends on the provider's NAT
+        # hairpinning. With it, the lookup stays on the bridge and the TLS certificate still matches,
+        # because it is issued for exactly this name.
+        aliases:
+          - ${APP_HOSTNAME:?APP_HOSTNAME is required}
 
 networks:
   internal:

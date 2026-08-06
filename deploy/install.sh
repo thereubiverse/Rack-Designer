@@ -208,7 +208,14 @@ schema_present="$(
 if [[ "$schema_present" == "t" ]]; then
   log "schema already present (public.members exists) — skipping migrations"
 else
-  mapfile -t migrations < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
+  # Portable read loop rather than `mapfile`, which is bash 4+ — macOS ships bash 3.2, so an
+  # operator running this from a Mac would get "mapfile: command not found" and no migrations at
+  # all. Same reason deploy/backup.sh avoids it. Migration filenames are 0001_name.sql, never
+  # containing newlines, so a plain line-at-a-time read is safe.
+  migrations=()
+  while IFS= read -r migration_path; do
+    migrations+=("$migration_path")
+  done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
   [[ ${#migrations[@]} -gt 0 ]] || die "no migrations found under $MIGRATIONS_DIR"
 
   for migration in "${migrations[@]}"; do
