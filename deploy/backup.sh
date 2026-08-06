@@ -12,6 +12,41 @@
 # Postgres, but floor plans and avatars are files on the storage volume, not database rows. A
 # database-only backup silently loses every uploaded plan while looking complete.
 #
+# WHY THE DATABASE IS DUMPED IN TWO PIECES
+#
+# `postgres` on supabase/postgres is NOT a superuser, and it does not own the `auth` or `storage`
+# schemas or any table in them (they belong to supabase_auth_admin / supabase_storage_admin), nor
+# the global event triggers (supabase_admin). A whole-database `pg_dump --clean` therefore produces
+# a file that `postgres` can never replay: its first statement is `DROP EVENT TRIGGER IF EXISTS
+# pgrst_drop_watch;` and it dies there with "must be owner of event trigger". `--if-exists` does not
+# help — the trigger DOES exist. That is exactly how the first real restore of this stack failed,
+# after which the database was left with its schema intact and every row gone.
+#
+# So the dump is split along the line of what `postgres` is actually permitted to replace:
+#
+#   db-public.sql.gz        schema + data for `public`, --clean --if-exists, scoped with -n public.
+#                           `postgres` owns every table here, so DROP-then-CREATE replays normally.
+#                           Scoping with -n also excludes the event triggers, which are global
+#                           rather than schema-scoped.
+#   db-auth-storage.sql.gz  --data-only for `auth` and `storage`. Those tables are recreated by
+#                           GoTrue's and storage-api's own migrations, not by us; we only carry the
+#                           rows. Measured: `postgres` may INSERT into and TRUNCATE every table in
+#                           both schemas EXCEPT auth.schema_migrations and storage.migrations, which
+#                           it may not touch at all — those two are excluded here for that reason,
+#                           and they are the services' own migration ledgers, not user data.
+#   db-superuser-only.sql   the statements pg_dump emitted that `postgres` cannot execute, held back
+#                           out of the replayable dump so restore.sh can keep ON_ERROR_STOP=1. In
+#                           practice these are the `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin
+#                           IN SCHEMA public` lines. They are NOT applied by restore.sh; they are
+#                           kept in plain text so a human with superuser access can see and apply
+#                           them. Losing them costs nothing here — they only govern objects created
+#                           in `public` BY supabase_admin, and this application creates none; the
+#                           default privileges that DO matter (FOR ROLE postgres) stay in the
+#                           replayable dump. Note they grant ALL to `anon`, which migrations 0027/
+#                           0028 went out of their way to revoke, so not replaying them is if
+#                           anything the safer state.
+#   storage.tar.gz          the storage volume itself.
+#
 # Takes the compose file/env file as arguments rather than hardcoding a project, so the same script
 # backs up any deployment of this stack, not just the one at the default paths below. It never
 # touches the local development Supabase stack (supabase_*_network-doc-platform, ports
@@ -83,14 +118,47 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
 mkdir -p "$DEST"
 
-log "Dumping database to $DEST/db.sql.gz"
-# --clean --if-exists so the dump itself contains DROP-then-CREATE statements, making restore.sh a
+log "Dumping the public schema (schema + data) to $DEST/db-public.sql.gz"
+# --clean --if-exists so the dump carries its own DROP-then-CREATE statements, making restore.sh a
 # straight replay into an already-running (already-populated) database rather than requiring a
 # separate teardown step. $POSTGRES_DB is read from inside the container, where compose already
 # resolved it from the env file — this script never needs to parse the env file itself.
+#
+# The awk filter holds back the `ALTER DEFAULT PRIVILEGES FOR ROLE <someone-else>` statements (see
+# the header). pg_dump has no flag for this, and leaving them in would force restore.sh to either
+# drop ON_ERROR_STOP=1 or die on the last few lines of an otherwise complete restore. Anything held
+# back is written out in full rather than discarded, and a form this filter does not recognise (a
+# statement wrapped across lines) aborts the backup instead of being silently mangled.
 # shellcheck disable=SC2016 # intentional: $POSTGRES_DB must expand inside the container, not here.
-"${COMPOSE[@]}" exec -T db sh -c 'pg_dump -U postgres -d "$POSTGRES_DB" --clean --if-exists' \
-  | gzip > "$DEST/db.sql.gz"
+"${COMPOSE[@]}" exec -T db sh -c 'pg_dump -U postgres -d "$POSTGRES_DB" -n public --clean --if-exists' \
+  | awk -v holdback="$DEST/db-superuser-only.sql" '
+      BEGIN {
+        print "-- Held back from db-public.sql.gz by deploy/backup.sh: statements pg_dump emitted"  > holdback
+        print "-- that the `postgres` role is not permitted to execute on this image."              > holdback
+        print "-- deploy/restore.sh does NOT apply these. Apply them by hand as a superuser if you" > holdback
+        print "-- need them; see the header of deploy/backup.sh for why they are usually moot."     > holdback
+        print ""                                                                                   > holdback
+      }
+      /^ALTER DEFAULT PRIVILEGES FOR ROLE / {
+        if ($0 !~ /;[[:space:]]*$/) {
+          print "backup.sh: ALTER DEFAULT PRIVILEGES statement is not on one line — this filter" > "/dev/stderr"
+          print "backup.sh: cannot classify it safely. Refusing to write a dump that may not replay." > "/dev/stderr"
+          exit 1
+        }
+        if ($6 != "postgres") { print > holdback; next }
+      }
+      { print }
+    ' \
+  | gzip > "$DEST/db-public.sql.gz"
+
+log "Dumping auth and storage row data to $DEST/db-auth-storage.sql.gz"
+# --data-only, because `postgres` cannot create or drop these tables — only fill and empty them.
+# auth.schema_migrations and storage.migrations are excluded: `postgres` has no privilege on either
+# (measured with has_table_privilege), and they belong to GoTrue and storage-api, which maintain
+# them themselves.
+# shellcheck disable=SC2016 # intentional: $POSTGRES_DB must expand inside the container, not here.
+"${COMPOSE[@]}" exec -T db sh -c 'pg_dump -U postgres -d "$POSTGRES_DB" --data-only -n auth -n storage -T auth.schema_migrations -T storage.migrations' \
+  | gzip > "$DEST/db-auth-storage.sql.gz"
 
 log "Archiving storage volume to $DEST/storage.tar.gz"
 # A throwaway container mounts the storage container's volumes with --volumes-from and tars them.
