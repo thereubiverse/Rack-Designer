@@ -110,10 +110,19 @@ holding the publishable key — which is public by design — could read the ema
 pending device and approve their own machine. The trusted-device factor was defeated end to end on
 every fresh install while this machine showed nothing wrong.
 
-`0032` closes it: the function and sequence defaults, the grants the missing default already
-produced, and `execute … from public` by default as a backstop so forgetting the per-function revoke
-on a future migration leaves it closed rather than open. **Keep writing the per-function revoke
-anyway** — the backstop is not a replacement for it.
+`0032` closes it: the function and sequence defaults, plus the grants the missing default had already
+produced on the two existing functions.
+
+It also revokes `execute` on functions from `PUBLIC` by default. **That line does not work as a
+backstop, and it was added believing it would.** Measured afterwards: a schema-scoped
+`alter default privileges` is merged with Postgres's hard-wired default rather than replacing it, so
+a brand-new function still comes out `=X/postgres, postgres=X, service_role=X` with
+`has_function_privilege('anon', …)` true. Only a cluster-wide `alter default privileges` removes it,
+and that reaches `auth` and `storage` too.
+
+**So every new function still needs its own `revoke all on function … from public`,** exactly as
+`0024` and `0029`–`0031` do it. There is no safety net for forgetting it except `grants.test.ts`,
+which asks `has_function_privilege` and therefore sees PUBLIC grants.
 
 `grants.test.ts` now asserts these defaults directly, in addition to the privileges on the functions
 themselves. This is also the reason `GRANTS_TEST_CONTAINER` exists: a guard that can only ever look

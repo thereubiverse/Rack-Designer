@@ -33,11 +33,24 @@
 alter default privileges in schema public revoke all on functions from anon, authenticated;
 alter default privileges in schema public revoke all on sequences from anon, authenticated;
 
--- 2. Belt and braces on top of the convention. Postgres grants EXECUTE on a new function to PUBLIC
---    regardless of default privileges, which is why 0029-0031 each carry a `revoke ... from public`
---    line. Revoking it from PUBLIC *by default* means forgetting that line on a future migration
---    leaves the function closed rather than open — the failure mode stops being silent. Keep writing
---    the per-function revoke anyway; this is the backstop, not a replacement.
+-- 2. Kept, but it does NOT do what it was added for, and the difference matters.
+--
+--    It was written as a backstop: revoke EXECUTE from PUBLIC by default, so that forgetting the
+--    per-function `revoke ... from public` line on a future migration would leave the function
+--    closed rather than open. Measured afterwards, it does not work. A SCHEMA-scoped
+--    `alter default privileges` is MERGED with Postgres's hard-wired default rather than replacing
+--    it, so a newly created function still comes out:
+--
+--      proacl        = =X/postgres | postgres=X/postgres | service_role=X/postgres
+--      anon execute  = true
+--
+--    — that leading `=X/postgres` is the PUBLIC grant, still there. Only a cluster-wide
+--    `alter default privileges` (no `in schema`) removes it, and that would reach every schema in
+--    the database including auth and storage.
+--
+--    So THE PER-FUNCTION `revoke ... from function ... from public` REMAINS MANDATORY on every new
+--    function, exactly as 0024 and 0029-0031 do it. There is no backstop. `grants.test.ts` is what
+--    actually catches a missed one, because it asks has_function_privilege, which resolves PUBLIC.
 alter default privileges in schema public revoke execute on functions from public;
 
 -- 3. The functions and sequences that already exist inherited the grants above when they were
