@@ -1,0 +1,94 @@
+# kong.yml — declarative Kong config, templated at container start.
+#
+# Shape modeled on Supabase's own self-hosting config
+# (github.com/supabase/supabase, docker/docker-compose.yml + docker/volumes/api/kong.yml), trimmed
+# to only the three services this stack actually runs: auth (GoTrue), rest (PostgREST) and storage.
+# The realtime/meta/studio routes present in the upstream file are deliberately not reproduced here
+# — see spec §3 for why those services are absent entirely.
+#
+# The two __UPPER_SNAKE__ tokens under `consumers` below are placeholders: Kong's declarative-config
+# loader does no environment substitution. The `kong` service's entrypoint in ../docker-compose.yml
+# runs a `sed` over this file before Kong starts, replacing each with the real JWT from deploy/.env.
+# (This paragraph avoids spelling the tokens out so that the rendered file does not end up with the
+# keys pasted into a comment.)
+#
+# It is a `sed`, not the `eval "echo \"$(cat temp.yml)\""` that Supabase's own compose file uses,
+# because that eval feeds this entire file to the shell — so a backtick or $(...) ANYWHERE in it,
+# comments included, is run as a command and replaced by its output. The word `public` in a comment
+# below was executed exactly that way and replaced with "No such file or directory". Keep the
+# substitution non-executing. Placeholders are __UPPER_SNAKE__ so they cannot be confused with shell
+# or YAML syntax by whoever edits this next.
+
+_format_version: "2.1"
+_transform: true
+
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: __ANON_KEY__
+  - username: service_role
+    keyauth_credentials:
+      - key: __SERVICE_ROLE_KEY__
+
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+services:
+  - name: auth-v1
+    _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1-all
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: rest-v1
+    # Publicly reachable only because migrations 0027/0028 revoked anon's and authenticated's
+    # privileges on `public` down to a single column grant — see
+    # src/lib/supabase/grants.test.ts. A found /rest/v1 endpoint is not a database.
+    _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1-all
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: true
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: storage-v1
+    # Public on purpose: signed storage URLs are fetched directly by the browser (avatars, floor
+    # plans). See ../Caddyfile for the full reasoning.
+    _comment: "Storage: /storage/v1/* -> http://storage:5000/*"
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1-all
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors

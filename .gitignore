@@ -4,6 +4,7 @@ node_modules/
 # Un-ignore the committed example file that .env* above would otherwise block. Do NOT loosen this
 # into a wildcard (e.g. "!.env*") — that would un-ignore real .env files containing the service role key.
 !.env.local.example
+!deploy/.env.example
 .next/
 next-env.d.ts
 
@@ -22,3 +23,17 @@ playwright/.cache/
 
 # macOS
 .DS_Store
+
+# Self-hosted deploy stack (deploy/docker-compose.yml). deploy/.env holds the real JWT_SECRET,
+# ANON_KEY and SERVICE_ROLE_KEY that scripts/install.sh generates — only deploy/.env.example
+# (empty placeholders) is committed. caddy_data/caddy_config are Caddy's runtime state (TLS
+# certificates, its own config cache) written by the running container. first-device-token.txt is
+# the raw break-glass device token deploy/install.sh mints in Step 6 — whoever holds it can sign in
+# as the first admin without an emailed code, so it must never be committed.
+deploy/.env
+deploy/caddy_data/
+deploy/caddy_config/
+deploy/first-device-token.txt
+
+# deploy/backup.sh output: database dumps and storage archives, real client data. Never committed.
+deploy/backups/

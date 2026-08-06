@@ -1,0 +1,263 @@
+# Self-hosted stack for network-doc-platform (Slice H7 — see
+# docs/superpowers/specs/2026-08-05-self-hosted-design.md).
+#
+# This is a wholly separate compose project from the local development Supabase stack (containers
+# named supabase_*_network-doc-platform, ports 54321-54326, real client data). Nothing here shares
+# a network, a volume, or a port with that stack, and this file must never be started with
+# `docker compose up` from an automated task — only `config` validation.
+#
+# Seven services. `realtime`, `imgproxy`, `studio` and `meta` are deliberately not present — see
+# spec §3 for why each is omitted; do not add them back "for convenience".
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.156
+    # Pinned to the exact version the local Supabase CLI stack runs, so migrations written and
+    # verified against that stack behave identically here.
+    restart: unless-stopped
+    # No `ports:` entry, deliberately. Postgres is reachable only on the `internal` network below —
+    # publishing it would put the database on the internet with a password as the only control.
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # The supabase/postgres image creates the Supabase service roles (authenticator,
+      # supabase_auth_admin, supabase_storage_admin, ...) but only ever sets a password for
+      # `postgres`, so PostgREST and Storage cannot log in at all on a fresh volume. This script
+      # gives them all POSTGRES_PASSWORD. Mounted as a single FILE, not a directory: the image ships
+      # its own migrate.sh + migrations/ in /docker-entrypoint-initdb.d, and mounting a directory
+      # over it would hide them and produce a database with no Supabase schema whatsoever. The `zz-`
+      # prefix makes it sort after migrate.sh, so the roles exist by the time it runs.
+      - ./db-init/zz-service-role-passwords.sh:/docker-entrypoint-initdb.d/zz-service-role-passwords.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  kong:
+    image: kong:2.8.1
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_started
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      # kong.yml is a template, not a final config: it carries __ANON_KEY__ / __SERVICE_ROLE_KEY__
+      # placeholders, and the entrypoint below substitutes these values in at container start. Kong's
+      # declarative config loader does no environment substitution itself.
+      ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
+    volumes:
+      - ./kong.yml:/home/kong/temp.yml:ro
+    # `sed`, deliberately, and never `eval "echo \"$(cat ...)\""` (which is what Supabase's own
+    # compose file uses, and what this file used to). That eval runs the ENTIRE config file through
+    # the shell: every backtick and $(...) anywhere in it — including inside comments — is executed
+    # as a command and replaced by its output. It silently mangled a comment here once, and it means
+    # anything that can write kong.yml gets code execution in this container. sed substitutes text
+    # and can execute nothing.
+    #
+    # The `|` delimiter is safe because both values are JWTs: base64url plus dots, i.e. only
+    # [A-Za-z0-9-_.], so they can contain no `|`, no `&` and no `/`, and cannot break out of either
+    # the s/// or the replacement text. Do not casually switch the delimiter to `/`.
+    # `$$` is compose's escape for a literal `$`, so the container's shell — not compose — expands
+    # $ANON_KEY from the environment above.
+    entrypoint:
+      - bash
+      - -c
+      - 'sed -e "s|__ANON_KEY__|$$ANON_KEY|g" -e "s|__SERVICE_ROLE_KEY__|$$SERVICE_ROLE_KEY|g" ~/temp.yml > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+    # No `ports:` entry — only Caddy is reachable from outside the compose network. The browser
+    # reaches kong through Caddy's /auth/v1, /rest/v1 and /storage/v1 routes (see ../Caddyfile).
+    networks: [internal]
+
+  auth:
+    image: supabase/gotrue:v2.181.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${APP_HOSTNAME}
+      GOTRUE_SITE_URL: https://${APP_HOSTNAME}
+      GOTRUE_URI_ALLOW_LIST: https://${APP_HOSTNAME}/**
+      # Invite-only: members are created by an admin action (scripts/install.sh for the first one,
+      # the /users invite flow after that), never by self-serve signup.
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_DB_DRIVER: postgres
+      DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      # OAuth is configured on GOTRUE, not on the app. The app service below also receives
+      # SUPABASE_AUTH_GOOGLE_*/AZURE_*, but that only decides whether the sign-in BUTTONS render —
+      # the handshake itself happens entirely in GoTrue, so without these four the buttons appear
+      # and the flow can never complete. The redirect URI is fixed: it is Caddy's /auth/v1 route to
+      # kong, which is why that path has to be publicly reachable (see ../Caddyfile).
+      #
+      # ENABLED defaults to false and is a SEPARATE variable rather than being derived from whether
+      # the client id is set: GoTrue validates an enabled provider's configuration at startup and
+      # exits fatally when it is incomplete — exactly how an empty SMTP_PORT took the whole auth
+      # service down. Defaulting to false means an unconfigured provider is inert, not fatal.
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${SUPABASE_AUTH_GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${SUPABASE_AUTH_GOOGLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${SUPABASE_AUTH_GOOGLE_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: https://${APP_HOSTNAME}/auth/v1/callback
+      GOTRUE_EXTERNAL_AZURE_ENABLED: ${SUPABASE_AUTH_AZURE_ENABLED:-false}
+      GOTRUE_EXTERNAL_AZURE_CLIENT_ID: ${SUPABASE_AUTH_AZURE_CLIENT_ID}
+      GOTRUE_EXTERNAL_AZURE_SECRET: ${SUPABASE_AUTH_AZURE_SECRET}
+      GOTRUE_EXTERNAL_AZURE_REDIRECT_URI: https://${APP_HOSTNAME}/auth/v1/callback
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      # `:-587` is load-bearing, not tidiness. A fresh deploy/.env has SMTP_PORT= (empty) by design —
+      # SMTP is listed as "still to configure" — and GoTrue parses this one as an int at startup, so
+      # an empty string is a fatal config error and the auth service crashloops forever:
+      #   "assigning GOTRUE_SMTP_PORT to Port: converting '' to type int"
+      # i.e. the DEFAULT install would have no authentication at all. An unused 587 is harmless;
+      # GoTrue only dials SMTP once SMTP_HOST is also set. Every other numeric GoTrue variable in
+      # this service is either a literal (GOTRUE_API_PORT) or already defaulted (GOTRUE_JWT_EXP);
+      # do not add a bare ${...} numeric here without a default.
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM}
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  rest:
+    image: postgrest/postgrest:v13.0.7
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      PGRST_DB_SCHEMAS: public
+      # anon can authenticate through PostgREST, but migrations 0027/0028 already revoked its
+      # privileges on `public` down to one column grant — see src/lib/supabase/grants.test.ts.
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUC: "false"
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  storage:
+    image: supabase/storage-api:v1.28.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
+      POSTGREST_URL: http://rest:3000
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      # imgproxy is not part of this stack (spec §3 — avatars render with object-cover, nothing
+      # resizes server-side), so image transformation stays off rather than pointed at a service
+      # that does not exist.
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    volumes:
+      - storage-data:/var/lib/storage
+    # No `ports:` entry — reached only through kong.
+    networks: [internal]
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      kong:
+        condition: service_started
+    environment:
+      # Same public origin used for the API routes below: the app calls Supabase server-side with
+      # this URL, and it is also what ends up embedded in signed storage URLs the browser fetches
+      # directly, so it must be the externally-resolvable hostname, not an internal service name.
+      NEXT_PUBLIC_SUPABASE_URL: https://${APP_HOSTNAME}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      NEXT_PUBLIC_SITE_URL: https://${APP_HOSTNAME}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SUPABASE_AUTH_GOOGLE_CLIENT_ID: ${SUPABASE_AUTH_GOOGLE_CLIENT_ID}
+      SUPABASE_AUTH_GOOGLE_SECRET: ${SUPABASE_AUTH_GOOGLE_SECRET}
+      SUPABASE_AUTH_AZURE_CLIENT_ID: ${SUPABASE_AUTH_AZURE_CLIENT_ID}
+      SUPABASE_AUTH_AZURE_SECRET: ${SUPABASE_AUTH_AZURE_SECRET}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER}
+    # No `ports:` entry — reached only through Caddy.
+    networks: [internal]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      kong:
+        condition: service_started
+    # The only service publishing ports. 80 is used for the ACME HTTP challenge and redirects to
+    # 443; Caddy issues and renews the certificate for APP_HOSTNAME automatically.
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME:?APP_HOSTNAME is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    networks:
+      internal:
+        # Make APP_HOSTNAME resolve to Caddy from INSIDE the compose network. Every server-side
+        # Supabase call the app makes goes to NEXT_PUBLIC_SUPABASE_URL, which is https://APP_HOSTNAME
+        # — the public origin, because that same value is baked into the signed storage URLs the
+        # browser fetches directly, so it cannot be an internal service name. Without this alias the
+        # app container resolves the public hostname to the server's public IP and has to leave the
+        # host and come back in through the published port, which depends on the provider's NAT
+        # hairpinning. With it, the lookup stays on the bridge and the TLS certificate still matches,
+        # because it is issued for exactly this name.
+        aliases:
+          - ${APP_HOSTNAME:?APP_HOSTNAME is required}
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  db-data:
+  storage-data:

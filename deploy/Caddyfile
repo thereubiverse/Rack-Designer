@@ -1,0 +1,36 @@
+# Caddyfile — one hostname, automatic HTTPS.
+#
+# Caddy requests and renews a TLS certificate for {$APP_HOSTNAME} automatically (DNS must already
+# point here — see docs/superpowers/specs/2026-08-05-self-hosted-design.md §6). Plain HTTP on :80 is
+# used only for the ACME challenge and redirects to HTTPS.
+#
+# /auth/v1/*, /rest/v1/* and /storage/v1/* go to kong; everything else goes to the Next app. The
+# non-obvious part: those three API paths MUST be reachable from the public internet, not just from
+# the app container. The browser fetches signed storage URLs directly — createAvatarSignedUrl and
+# createPlanSignedUrl (used by <img src={avatarUrl}> in ProfileForm, and by every floor plan) hand
+# back a URL built from this same origin. If /storage/v1 (and, since they share an origin, /auth/v1
+# and /rest/v1 with it) were internal-only, the browser could not resolve it and every avatar and
+# floor plan would break.
+#
+# Exposing /rest/v1 alongside them is safe only because migrations 0027 and 0028 already revoked
+# anon's and authenticated's privileges on `public` down to a single column grant — see
+# src/lib/supabase/grants.test.ts, which is what keeps that true. Before those migrations, routing
+# this path here would have handed the whole database to anyone who found it.
+
+{$APP_HOSTNAME} {
+	handle /auth/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle /rest/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle /storage/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}

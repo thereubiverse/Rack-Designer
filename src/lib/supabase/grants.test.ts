@@ -16,8 +16,13 @@ import { execFileSync } from "node:child_process";
  *
  *  It shells out to psql through Docker, the same way every other database interaction in this repo
  *  does. If the container is not running this FAILS rather than skipping: a security guard that
- *  quietly stops guarding is worse than no guard at all. */
-const CONTAINER = "supabase_db_network-doc-platform";
+ *  quietly stops guarding is worse than no guard at all.
+ *
+ *  The container name is overridable with GRANTS_TEST_CONTAINER, defaulting to the local dev stack
+ *  below so this run is unchanged when the variable is unset. That lets the same guard be pointed at
+ *  a deployed stack after its first migration run — see supabase/migrations/README.md — which is the
+ *  only way to know the anon surface is closed THERE, not just here. */
+const CONTAINER = process.env.GRANTS_TEST_CONTAINER || "supabase_db_network-doc-platform";
 
 function sql(query: string): string[] {
   const out = execFileSync(
@@ -129,8 +134,82 @@ describe("the publishable key's reach into schema public", () => {
     }
   });
 
-  it("owns every public table as postgres, which is what makes the default-ACL check sufficient", () => {
-    const owners = sql(`select distinct tableowner from pg_tables where schemaname = 'public' order by 1`);
-    expect(owners).toEqual(["postgres"]);
+  it("gives a function or sequence created by postgres nothing either", () => {
+    // 0027 closed the default privileges for TABLES and stopped there, and the gap was invisible
+    // here: the local Supabase CLI stack and a fresh supabase/postgres image ship DIFFERENT defaults.
+    // The image grants anon and authenticated EXECUTE on every function created in this schema, so on
+    // a real deployment both device functions were born reachable by the publishable key — while this
+    // file, pointed only at the CLI stack, stayed green. Pointing it at an installed stack via
+    // GRANTS_TEST_CONTAINER is what found it, and a POST to /rest/v1/rpc/consume_device_attempt
+    // carrying nothing but the publishable key returned the device-approval code in plaintext.
+    //
+    // The per-function `revoke ... from public` that 0029-0031 each carry does not cover this: it
+    // removes the implicit world grant, not an explicit grant held by the roles themselves. 0032
+    // closes the defaults; this pins them so the next `create function` cannot quietly reopen it.
+    //
+    // Deliberately asserts only that anon and authenticated are absent — unlike the table check
+    // above, which also pins service_role. The two stacks legitimately differ on service_role here
+    // (the image grants it EXECUTE by default, the CLI does not) and every function this app defines
+    // grants service_role explicitly, so requiring it would fail on one stack for no benefit.
+    for (const objtype of ["f", "S"]) {
+      const acl = sql(`
+        select coalesce(array_to_string(d.defaclacl, ','), '')
+        from pg_default_acl d
+        join pg_namespace n on n.oid = d.defaclnamespace
+        where n.nspname = 'public' and d.defaclobjtype = '${objtype}'
+          and pg_get_userbyid(d.defaclrole) = 'postgres'
+      `);
+      // A missing row is a failure, not a pass. For functions the built-in default is
+      // PUBLIC = EXECUTE, so "no row" is the wide-open state this exists to prevent.
+      expect(acl.length, `no postgres-owned default ACL for objtype ${objtype}`).toBeGreaterThan(0);
+      for (const line of acl) {
+        expect(line, `objtype ${objtype}`).not.toMatch(/(^|,)anon=/);
+        expect(line, `objtype ${objtype}`).not.toMatch(/(^|,)authenticated=/);
+      }
+    }
+  });
+
+  it("owns every public table, sequence and function as postgres, which is what makes the default-ACL checks sufficient", () => {
+    // Both default-ACL assertions above are scoped to the ACL owned by `postgres`, and a default ACL
+    // only applies to objects created BY the role that owns it. So they are sufficient exactly to the
+    // extent that everything in `public` is postgres-owned — an object created by any other role
+    // inherits that role's defaults instead, and the image's supabase_admin set still grants anon a
+    // full arwdDxtm.
+    //
+    // This used to query pg_tables only, which pinned tables and nothing else, while 0032 and the
+    // function/sequence default-ACL assertion above both rest on FUNCTIONS and SEQUENCES being
+    // postgres-owned too. A supabase_admin-owned function in `public` would have been born executable
+    // by the publishable key with every assertion in this file still green — the same shape of hole
+    // 0032 was written to close.
+    const strays = sql(`
+      select 'table ' || c.relname || ' owned by ' || pg_get_userbyid(c.relowner)
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind in ('r', 'p')
+         and pg_get_userbyid(c.relowner) <> 'postgres'
+      union all
+      select 'sequence ' || c.relname || ' owned by ' || pg_get_userbyid(c.relowner)
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind = 'S'
+         and pg_get_userbyid(c.relowner) <> 'postgres'
+      union all
+      select 'function ' || p.proname || ' owned by ' || pg_get_userbyid(p.proowner)
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and pg_get_userbyid(p.proowner) <> 'postgres'
+      order by 1
+    `);
+    expect(strays).toEqual([]);
+
+    // An empty schema would satisfy the check above vacuously, so prove there is something in it.
+    // Sequences are deliberately not required to exist: every primary key in this schema is a uuid,
+    // so `public` legitimately holds none — the union above still covers one the day it appears.
+    const counts = sql(`
+      select 'tables=' || (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname = 'public' and c.relkind in ('r', 'p'))
+      union all
+      select 'functions=' || (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                               where n.nspname = 'public')
+    `);
+    expect(counts.every((c) => !c.endsWith("=0"))).toBe(true);
   });
 });
