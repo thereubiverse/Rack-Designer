@@ -45,6 +45,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 ENV_FILE="$SCRIPT_DIR/.env"
+# Derived from this script's own location, not from the caller's working directory, so it resolves
+# the same whether restore.sh is invoked as ./deploy/restore.sh, from inside deploy/, or by absolute
+# path. See the "DEFAULT PRIVILEGES" step below for what it is for.
+DEFAULT_PRIVILEGES_SQL="$SCRIPT_DIR/../supabase/migrations/0033_default_privileges.sql"
 INPUT_DIR=""
 YES_OVERWRITE="false"
 ALPINE_IMAGE="alpine:3.20"
@@ -103,6 +107,12 @@ fi
 command -v docker >/dev/null 2>&1 || die "docker is required"
 docker compose version >/dev/null 2>&1 || die "docker compose (the v2 plugin) is required"
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
+# Checked HERE, before a single destructive statement runs, rather than at the point of use. If this
+# file is missing the restore must not start at all: it would otherwise drop the schema, refill it,
+# and only then discover it cannot close the default privileges — leaving a database whose next
+# `create table` is unreadable by every server action. Failing before the DROP leaves the stack
+# serving exactly what it was serving a second ago.
+[[ -f "$DEFAULT_PRIVILEGES_SQL" ]] || die "missing $DEFAULT_PRIVILEGES_SQL — restore.sh re-applies that migration after the public replay, because replaying the dump destroys the schema's default privileges and pg_dump only re-emits two of them. Without it the restored database silently gives service_role no access to any table created afterwards. Run restore.sh from a full checkout of this repository, not from a copy of deploy/ on its own."
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 [[ -f "$ENV_FILE" ]] && COMPOSE+=(--env-file "$ENV_FILE")
@@ -152,7 +162,27 @@ log "Restoring the public schema from $INPUT_DIR/db-public.sql.gz"
 # shellcheck disable=SC2016 # intentional: $POSTGRES_DB must expand inside the container, not here.
 gunzip -c "$INPUT_DIR/db-public.sql.gz" \
   | "${COMPOSE[@]}" exec -T db sh -c 'psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 --single-transaction'
-restore_failed_note=" — the public schema was restored; auth, storage and the files were not"
+restore_failed_note=" — the public schema was restored; its default privileges, auth, storage and the files were not"
+
+log "Re-applying the schema's default privileges from $DEFAULT_PRIVILEGES_SQL"
+# The replay above began with `DROP SCHEMA IF EXISTS public;`, and a dropped schema takes every
+# pg_default_acl row attached to it with it. pg_dump re-emits only the two SEQUENCES grants; the
+# TABLES and FUNCTIONS defaults that migrations 0027, 0028 and 0032 established are simply gone.
+# Measured on a restored stack before this step existed:
+#
+#   anon select on a new table         = false
+#   service_role select on a new table = false   <- the whole application, locked out
+#
+# so the next migration to add a table would produce one none of the 61 server actions could read or
+# write. That is exactly the failure 0028 exists to prevent.
+#
+# 0033 holds that state as one idempotent block and is the ONLY copy of it. Deliberately not inlined
+# here: a second copy in this script would be edited by whoever changes a migration exactly never,
+# and the two would drift apart with only a restore able to show it.
+# shellcheck disable=SC2016 # intentional: $POSTGRES_DB must expand inside the container, not here.
+"${COMPOSE[@]}" exec -T db sh -c 'psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 --single-transaction' \
+  < "$DEFAULT_PRIVILEGES_SQL"
+restore_failed_note=" — the public schema and its default privileges were restored; auth, storage and the files were not"
 
 log "Restoring auth and storage rows from $INPUT_DIR/db-auth-storage.sql.gz"
 # Data-only, so the tables have to be emptied first — `postgres` may TRUNCATE them even though it
