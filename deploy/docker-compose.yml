@@ -24,6 +24,14 @@ services:
       JWT_EXP: ${JWT_EXPIRY:-3600}
     volumes:
       - db-data:/var/lib/postgresql/data
+      # The supabase/postgres image creates the Supabase service roles (authenticator,
+      # supabase_auth_admin, supabase_storage_admin, ...) but only ever sets a password for
+      # `postgres`, so PostgREST and Storage cannot log in at all on a fresh volume. This script
+      # gives them all POSTGRES_PASSWORD. Mounted as a single FILE, not a directory: the image ships
+      # its own migrate.sh + migrations/ in /docker-entrypoint-initdb.d, and mounting a directory
+      # over it would hide them and produce a database with no Supabase schema whatsoever. The `zz-`
+      # prefix makes it sort after migrate.sh, so the roles exist by the time it runs.
+      - ./db-init/zz-service-role-passwords.sh:/docker-entrypoint-initdb.d/zz-service-role-passwords.sh:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
       interval: 5s
@@ -48,18 +56,29 @@ services:
       KONG_PLUGINS: request-transformer,cors,key-auth,acl
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
-      # kong.yml is a template, not a final config: it references these by name, and the entrypoint
-      # below substitutes them into the real file at container start. This is the same mechanism
-      # Supabase's own self-hosting compose file uses, because Kong's declarative config loader does
-      # not do environment substitution itself.
+      # kong.yml is a template, not a final config: it carries __ANON_KEY__ / __SERVICE_ROLE_KEY__
+      # placeholders, and the entrypoint below substitutes these values in at container start. Kong's
+      # declarative config loader does no environment substitution itself.
       ANON_KEY: ${ANON_KEY:?ANON_KEY is required}
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}
     volumes:
       - ./kong.yml:/home/kong/temp.yml:ro
+    # `sed`, deliberately, and never `eval "echo \"$(cat ...)\""` (which is what Supabase's own
+    # compose file uses, and what this file used to). That eval runs the ENTIRE config file through
+    # the shell: every backtick and $(...) anywhere in it — including inside comments — is executed
+    # as a command and replaced by its output. It silently mangled a comment here once, and it means
+    # anything that can write kong.yml gets code execution in this container. sed substitutes text
+    # and can execute nothing.
+    #
+    # The `|` delimiter is safe because both values are JWTs: base64url plus dots, i.e. only
+    # [A-Za-z0-9-_.], so they can contain no `|`, no `&` and no `/`, and cannot break out of either
+    # the s/// or the replacement text. Do not casually switch the delimiter to `/`.
+    # `$$` is compose's escape for a literal `$`, so the container's shell — not compose — expands
+    # $ANON_KEY from the environment above.
     entrypoint:
       - bash
       - -c
-      - 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+      - 'sed -e "s|__ANON_KEY__|$$ANON_KEY|g" -e "s|__SERVICE_ROLE_KEY__|$$SERVICE_ROLE_KEY|g" ~/temp.yml > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
     # No `ports:` entry — only Caddy is reachable from outside the compose network. The browser
     # reaches kong through Caddy's /auth/v1, /rest/v1 and /storage/v1 routes (see ../Caddyfile).
     networks: [internal]
@@ -89,7 +108,15 @@ services:
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_MAILER_AUTOCONFIRM: "false"
       GOTRUE_SMTP_HOST: ${SMTP_HOST}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      # `:-587` is load-bearing, not tidiness. A fresh deploy/.env has SMTP_PORT= (empty) by design —
+      # SMTP is listed as "still to configure" — and GoTrue parses this one as an int at startup, so
+      # an empty string is a fatal config error and the auth service crashloops forever:
+      #   "assigning GOTRUE_SMTP_PORT to Port: converting '' to type int"
+      # i.e. the DEFAULT install would have no authentication at all. An unused 587 is harmless;
+      # GoTrue only dials SMTP once SMTP_HOST is also set. Every other numeric GoTrue variable in
+      # this service is either a literal (GOTRUE_API_PORT) or already defaulted (GOTRUE_JWT_EXP);
+      # do not add a bare ${...} numeric here without a default.
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
       GOTRUE_SMTP_USER: ${SMTP_USER}
       GOTRUE_SMTP_PASS: ${SMTP_PASSWORD}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM}

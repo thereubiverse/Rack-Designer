@@ -6,10 +6,18 @@
 # The realtime/meta/studio routes present in the upstream file are deliberately not reproduced here
 # — see spec §3 for why those services are absent entirely.
 #
-# ${ANON_KEY} / ${SERVICE_ROLE_KEY} below are NOT resolved by Kong's declarative-config loader (it
-# does not do environment substitution). The `kong` service's entrypoint in ../docker-compose.yml
-# shells out to `eval "echo \"$(cat temp.yml)\""` before Kong starts, which is what turns this file
-# into a concrete config with the real JWTs from deploy/.env spliced in.
+# The two __UPPER_SNAKE__ tokens under `consumers` below are placeholders: Kong's declarative-config
+# loader does no environment substitution. The `kong` service's entrypoint in ../docker-compose.yml
+# runs a `sed` over this file before Kong starts, replacing each with the real JWT from deploy/.env.
+# (This paragraph avoids spelling the tokens out so that the rendered file does not end up with the
+# keys pasted into a comment.)
+#
+# It is a `sed`, not the `eval "echo \"$(cat temp.yml)\""` that Supabase's own compose file uses,
+# because that eval feeds this entire file to the shell — so a backtick or $(...) ANYWHERE in it,
+# comments included, is run as a command and replaced by its output. The word `public` in a comment
+# below was executed exactly that way and replaced with "No such file or directory". Keep the
+# substitution non-executing. Placeholders are __UPPER_SNAKE__ so they cannot be confused with shell
+# or YAML syntax by whoever edits this next.
 
 _format_version: "2.1"
 _transform: true
@@ -17,10 +25,10 @@ _transform: true
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: ${ANON_KEY}
+      - key: __ANON_KEY__
   - username: service_role
     keyauth_credentials:
-      - key: ${SERVICE_ROLE_KEY}
+      - key: __SERVICE_ROLE_KEY__
 
 acls:
   - consumer: anon
