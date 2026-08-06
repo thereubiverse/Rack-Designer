@@ -16,8 +16,13 @@ import { execFileSync } from "node:child_process";
  *
  *  It shells out to psql through Docker, the same way every other database interaction in this repo
  *  does. If the container is not running this FAILS rather than skipping: a security guard that
- *  quietly stops guarding is worse than no guard at all. */
-const CONTAINER = "supabase_db_network-doc-platform";
+ *  quietly stops guarding is worse than no guard at all.
+ *
+ *  The container name is overridable with GRANTS_TEST_CONTAINER, defaulting to the local dev stack
+ *  below so this run is unchanged when the variable is unset. That lets the same guard be pointed at
+ *  a deployed stack after its first migration run — see supabase/migrations/README.md — which is the
+ *  only way to know the anon surface is closed THERE, not just here. */
+const CONTAINER = process.env.GRANTS_TEST_CONTAINER ?? "supabase_db_network-doc-platform";
 
 function sql(query: string): string[] {
   const out = execFileSync(

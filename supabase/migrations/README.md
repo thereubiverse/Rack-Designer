@@ -72,6 +72,17 @@ the database and are excluded from every run.
 
 If it fails after you write a migration, you almost certainly copied an old tail.
 
+It shells out to `docker exec` against a container named by the `CONTAINER` constant, which defaults
+to the local dev stack (`supabase_db_network-doc-platform`) so a plain test run is unchanged. Set
+`GRANTS_TEST_CONTAINER` to point it at a different Postgres container instead — for example, at a
+self-hosted deployment's `db` container after running its first migrations (`deploy/install.sh`
+Step 4, or `docker compose -f deploy/docker-compose.yml ps -q db`). That is the only way to confirm
+the anon/authenticated surface is actually closed on that stack, rather than only on this machine:
+
+```bash
+GRANTS_TEST_CONTAINER=<container name or id> ./node_modules/.bin/vitest run src/lib/supabase/grants.test.ts
+```
+
 ## One known limit
 
 `0027` also revoked the schema's *default* privileges, so a newly created table inherits nothing.
