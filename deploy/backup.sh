@@ -57,7 +57,7 @@ done
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-[[ "$RETENTION" =~ ^[0-9]+$ ]] || die "--retention must be a non-negative integer, got: $RETENTION"
+[[ "$RETENTION" =~ ^[1-9][0-9]*$ ]] || die "--retention must be a positive integer (>= 1), got: $RETENTION"
 
 command -v docker >/dev/null 2>&1 || die "docker is required"
 docker compose version >/dev/null 2>&1 || die "docker compose (the v2 plugin) is required"
@@ -65,6 +65,14 @@ docker compose version >/dev/null 2>&1 || die "docker compose (the v2 plugin) is
 
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 [[ -f "$ENV_FILE" ]] && COMPOSE+=(--env-file "$ENV_FILE")
+
+# Canonicalise before it ever reaches `docker run -v`: a relative path there (e.g. the
+# `backups/20260805T...` shape the usage text above shows) is parsed by Docker as a NAMED VOLUME,
+# not a bind mount. The archive would then land in a phantom volume instead of on disk here, while
+# db.sql.gz (written directly by this script, not through `docker run -v`) still landed correctly —
+# a storage-less backup that still prints "Backup complete".
+mkdir -p "$BACKUP_ROOT"
+BACKUP_ROOT="$(cd -- "$BACKUP_ROOT" && pwd)"
 
 DB_CID="$("${COMPOSE[@]}" ps -q db)"
 [[ -n "$DB_CID" ]] || die "the 'db' service is not running — start the stack before backing up"
@@ -97,8 +105,18 @@ docker run --rm \
 log "Backup complete: $DEST"
 
 log "Enforcing retention (keeping the $RETENTION most recent backups)"
-mkdir -p "$BACKUP_ROOT"
-mapfile -t existing < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*T*Z' | sort)
+# Portable read loop, not `mapfile` (bash 4+; macOS ships bash 3.2 and would die here). The listing
+# is captured via command substitution rather than `< <(...)` process substitution specifically so
+# that `set -o pipefail` (from `set -euo pipefail` above) can see a failing `find`: a pipeline inside
+# process substitution reports the exit status of the thing consuming it (`read`), not of `find`, so
+# a failed `find` would otherwise silently yield an empty list and the sweep below would be skipped
+# without complaint.
+existing_raw="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*T*Z' | sort)" ||
+  die "failed to list existing backups under $BACKUP_ROOT"
+existing=()
+while IFS= read -r dir; do
+  [[ -n "$dir" ]] && existing+=("$dir")
+done <<< "$existing_raw"
 count=${#existing[@]}
 if (( count > RETENTION )); then
   to_delete=$(( count - RETENTION ))

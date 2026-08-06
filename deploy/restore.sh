@@ -60,6 +60,12 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [[ -n "$INPUT_DIR" ]] || { usage >&2; die "--input-dir is required"; }
 [[ -d "$INPUT_DIR" ]] || die "backup directory not found: $INPUT_DIR"
+# Canonicalise before it ever reaches `docker run -v`: a relative path there (e.g. the
+# `backups/20260805T...` shape the usage text above shows) is parsed by Docker as a NAMED VOLUME,
+# not a bind mount. The host-side file checks below would still pass — they read the real directory —
+# but the container would see an empty /backup, so storage gets wiped and the tar extract then fails
+# against a volume that was never actually mounted here.
+INPUT_DIR="$(cd -- "$INPUT_DIR" && pwd)"
 [[ -f "$INPUT_DIR/db.sql.gz" ]] || die "missing $INPUT_DIR/db.sql.gz — is this a backup.sh output directory?"
 [[ -f "$INPUT_DIR/storage.tar.gz" ]] || die "missing $INPUT_DIR/storage.tar.gz — is this a backup.sh output directory?"
 
@@ -79,22 +85,51 @@ DB_CID="$("${COMPOSE[@]}" ps -q db)"
 STORAGE_CID="$("${COMPOSE[@]}" ps -q storage)"
 [[ -n "$STORAGE_CID" ]] || die "the 'storage' service is not running — start the stack before restoring"
 
+log "Stopping app, auth, rest and storage — db stays up so the replay below can reach it"
+# app/auth/rest/storage all hold connections open and keep writing straight through a live replay
+# otherwise, and PostgREST caches the schema at startup — a stale cache would survive an in-place
+# restore even though the underlying tables changed. Stopping them (not just leaving them up) and
+# restarting them at the end forces both problems closed. $DB_CID and $STORAGE_CID above were
+# captured while these were still running, and remain valid identifiers for stopped containers.
+"${COMPOSE[@]}" stop app auth rest storage
+
 log "Restoring database from $INPUT_DIR/db.sql.gz"
 # The dump was produced with --clean --if-exists, so it already carries its own DROP-then-CREATE
 # statements — this is a straight replay, not a separate teardown step. $POSTGRES_DB is read inside
 # the container, same as backup.sh, so this script never needs to parse the env file itself.
+#
+# Known open question, not an oversight: restoring `auth` and `storage`'s own schemas is not covered
+# by --if-exists alone. Those schemas are owned by roles (supabase_auth_admin, supabase_storage_admin)
+# that `postgres` cannot drop, so a DROP-then-CREATE replay of them may behave differently than it
+# does for `public`. This is being proven empirically against a throwaway stack next (see
+# docs/reference/deployment.md, Task 5) and will be fixed from that real output rather than guessed
+# at here.
 # shellcheck disable=SC2016 # intentional: $POSTGRES_DB must expand inside the container, not here.
 gunzip -c "$INPUT_DIR/db.sql.gz" \
   | "${COMPOSE[@]}" exec -T db sh -c 'psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1'
 
 log "Restoring storage volume from $INPUT_DIR/storage.tar.gz"
 # Mirrors backup.sh's approach: a throwaway container mounts the storage container's volumes with
-# --volumes-from, clears them, and unpacks the archive over them. This never needs to know the
-# volume's name, only the running container.
+# --volumes-from and unpacks the archive over them. This never needs to know the volume's name, only
+# the running container.
+#
+# The archive is verified with `tar tzf` BEFORE anything on the live volume is touched. Without this,
+# a truncated or corrupt storage.tar.gz would only be discovered after `find -delete` had already
+# removed every floor plan and avatar — at which point there is nothing left to fall back to. If
+# verification fails, this exits without deleting anything.
 docker run --rm \
   --volumes-from "$STORAGE_CID" \
   -v "$INPUT_DIR:/backup:ro" \
   "$ALPINE_IMAGE" \
-  sh -c 'find /var/lib/storage -mindepth 1 -delete && tar xzf /backup/storage.tar.gz -C /var/lib/storage'
+  sh -c '
+    tar tzf /backup/storage.tar.gz >/dev/null || {
+      echo "storage.tar.gz failed to verify — refusing to touch /var/lib/storage" >&2
+      exit 1
+    }
+    find /var/lib/storage -mindepth 1 -delete && tar xzf /backup/storage.tar.gz -C /var/lib/storage
+  '
+
+log "Restarting app, auth, rest and storage"
+"${COMPOSE[@]}" start app auth rest storage
 
 log "Restore complete from $INPUT_DIR"

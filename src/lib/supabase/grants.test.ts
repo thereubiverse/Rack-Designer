@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process";
  *  below so this run is unchanged when the variable is unset. That lets the same guard be pointed at
  *  a deployed stack after its first migration run — see supabase/migrations/README.md — which is the
  *  only way to know the anon surface is closed THERE, not just here. */
-const CONTAINER = process.env.GRANTS_TEST_CONTAINER ?? "supabase_db_network-doc-platform";
+const CONTAINER = process.env.GRANTS_TEST_CONTAINER || "supabase_db_network-doc-platform";
 
 function sql(query: string): string[] {
   const out = execFileSync(

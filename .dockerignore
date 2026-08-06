@@ -13,6 +13,13 @@ out
 .github
 .superpowers
 .claude
+
+# deploy/backups/ holds real client floor plans and avatars; deploy/.env holds the real JWT_SECRET
+# and anon/service-role keys; deploy/caddy_data/ holds the live TLS state. `COPY . .` in the
+# Dockerfile would otherwise drag all three into the build context and a builder layer.
+deploy/backups/
+deploy/.env
+deploy/caddy_data/
 coverage
 playwright-report
 test-results

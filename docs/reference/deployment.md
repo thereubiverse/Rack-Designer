@@ -152,3 +152,11 @@ backup — run `backup.sh` and then `restore.sh` against a throwaway stack (a se
 never the production one) and confirm the data actually comes back, before relying on either script
 during a real incident. Task 5 of the self-hosted implementation plan does exactly this
 (`docs/superpowers/plans/2026-08-05-self-hosted-stack.md`).
+
+**`deploy/.env` is not in the backup.** `backup.sh` only captures the database and the storage
+volume — it never touches `deploy/.env`, which holds the only copy of `JWT_SECRET` and the
+`ANON_KEY`/`SERVICE_ROLE_KEY` pair this stack was generated with. Restoring a database backup onto a
+rebuilt server without also having `deploy/.env` produces a database nobody can authenticate against:
+every existing session token and API key was signed with a secret that no longer exists anywhere.
+Keep a copy of `deploy/.env` somewhere safe and separate from these backups — a password manager or
+secrets store, not the `deploy/backups/` directory itself.
