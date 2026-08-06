@@ -3,7 +3,8 @@
 #
 # See docs/superpowers/specs/2026-08-05-self-hosted-design.md and .superpowers/sdd/task-2-brief.md
 # for the design this implements. Safe to re-run: it does not regenerate secrets once deploy/.env
-# exists, and every write below is `on conflict do nothing` or guarded by an existence check.
+# exists, every write below either converges on the same end state (`on conflict`) or is guarded by a
+# check against the DATABASE — never against a file on disk, which the operator is told to delete.
 #
 # This script never touches the local development Supabase stack (supabase_*_network-doc-platform,
 # ports 54321-54326) — it only ever talks to the compose project defined by
@@ -148,6 +149,15 @@ EOF
   log "Wrote deploy/.env (mode 600). Nothing above was printed to the terminal."
 fi
 
+# Read ONCE, here, and use $POSTGRES_DB for every psql/pg_isready invocation below. deploy/.env.example
+# invites the operator to set POSTGRES_DB, and docker-compose.yml, backup.sh and restore.sh all honour
+# it — this script used to hardcode `-d postgres` in eight places, so setting it to anything else made
+# the schema-readiness wait poll a database that does not exist, time out after 180s, and blame the
+# auth service. The `:-postgres` mirrors the `${POSTGRES_DB:-postgres}` default in docker-compose.yml:
+# an empty value in the env file means "the image's default", not "connect to the empty-named database".
+POSTGRES_DB="$(env_get POSTGRES_DB)"
+POSTGRES_DB="${POSTGRES_DB:-postgres}"
+
 # ---------------------------------------------------------------------------
 # Step 2: hostname, first admin, password
 # ---------------------------------------------------------------------------
@@ -191,7 +201,7 @@ log "Step 3: starting the stack (this builds the app image on first run — can 
 log "Waiting for postgres to accept connections"
 pg_ready_timeout_s=90
 pg_ready_elapsed_s=0
-until "${COMPOSE[@]}" exec -T db pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do
+until "${COMPOSE[@]}" exec -T db pg_isready -U postgres -d "$POSTGRES_DB" -h 127.0.0.1 >/dev/null 2>&1; do
   if (( pg_ready_elapsed_s >= pg_ready_timeout_s )); then
     die "postgres did not become ready within ${pg_ready_timeout_s}s — check '${COMPOSE[*]} logs db'"
   fi
@@ -218,7 +228,7 @@ while :; do
   # casts it to text as "true"/"false", not the t/f psql displays, and the comparison below then
   # never matches and the wait always times out. (Asked and answered: it did exactly that.)
   regclass_pair="$(
-    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -tAc \
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -tAc \
       "select to_regclass('auth.users') is not null, to_regclass('storage.buckets') is not null" \
       2>/dev/null | tr -d '[:space:]'
   )"
@@ -256,7 +266,7 @@ log "auth.users and storage.buckets both exist"
 #
 # Run as supabase_admin (the superuser; postgres is deliberately demoted and cannot grant privileges
 # it does not hold) over the container's local socket. GRANT is idempotent, so re-runs are free.
-"${COMPOSE[@]}" exec -T db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -c \
+"${COMPOSE[@]}" exec -T db psql -U supabase_admin -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -q -c \
   "grant all on storage.buckets to postgres with grant option;
    grant all on storage.objects to postgres with grant option;"
 
@@ -286,28 +296,36 @@ done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
 # src/lib/supabase/grants.test.ts enumerates every table in `public` to police the anon surface —
 # an installer bookkeeping table has no business in either. `installer` is not in PGRST_DB_SCHEMAS,
 # so this is unreachable through /rest/v1 by construction.
-"${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q -c \
+"${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -q -c \
   "create schema if not exists installer;
    create table if not exists installer.schema_migrations (
      filename text primary key,
      applied_at timestamptz not null default now()
    );"
 
-applied_count="$(
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc \
-    "select count(*) from installer.schema_migrations" | tr -d '[:space:]'
+# The applied SET, never the applied COUNT. A count comparison passes whenever the two numbers agree
+# for any reason at all: delete one migration file and add another and the totals still match, so the
+# new file is recorded as "already applied" and never runs — a schema change that silently does not
+# happen, which is the worst failure this step has. Comparing the sorted filenames answers the actual
+# question ("is every file on disk in the ledger?") and costs the same one query.
+applied_list="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -tAc \
+    "select filename from installer.schema_migrations order by filename" | tr -d '\r'
 )"
 
-if [[ "$applied_count" == "${#migrations[@]}" ]]; then
+expected_names="$(
+  for migration in "${migrations[@]}"; do basename "$migration"; done | sort
+)"
+# `sort` both sides rather than trusting psql's collation to match the shell's: psql orders by the
+# database's collation, sort by the locale's, and 0001_a.sql vs 0001-a.sql order differently under
+# some of them. Filenames here are ASCII, so a plain sort makes the two comparable with certainty.
+applied_sorted="$(printf '%s\n' "$applied_list" | command grep -v '^$' | sort || true)"
+
+if [[ "$applied_sorted" == "$expected_names" ]]; then
   # Fast path for the overwhelmingly common re-run against a complete install: one query, and none
-  # of the 31 files is opened or shipped into the container.
+  # of the migration files is opened or shipped into the container.
   log "all ${#migrations[@]} migrations already recorded as applied — skipping"
 else
-  applied_list="$(
-    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc \
-      "select filename from installer.schema_migrations" | tr -d '\r'
-  )"
-
   for migration in "${migrations[@]}"; do
     migration_name="$(basename "$migration")"
     if printf '%s\n' "$applied_list" | command grep -qxF "$migration_name"; then
@@ -323,84 +341,173 @@ else
       cat "$migration"
       printf "\ninsert into installer.schema_migrations (filename) values (%s);\n" \
         "$(printf "'%s'" "${migration_name//\'/\'\'}")"
-    } | "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -1
+    } | "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -1
   done
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: the first admin — members row + GoTrue auth user
+# Step 5: the first admin — a GoTrue auth user AND a members row, resolved INDEPENDENTLY
+#
+# These are two records in two different places and a run can die between them, so neither may be
+# used as a proxy for the other. The previous version keyed the whole step off `count(*) from
+# members`, which broke in both directions:
+#
+#   * GoTrue user created, members insert never reached -> a re-run saw no member, POSTed to
+#     /admin/users again, GoTrue answered 422 for the duplicate email, and the script died with no
+#     way forward short of hand-deleting the user.
+#   * members row present, GoTrue user absent (deleted by hand, or a restore of a public-only dump)
+#     -> the whole step was skipped and the installer reported success on an account that can never
+#     sign in, because there is nothing to authenticate against.
+#
+# So: look the user up in GoTrue by email and create it only if it is genuinely absent, then upsert
+# the members row against whichever id we now hold. Both halves converge on the correct end state no
+# matter which one already existed.
 # ---------------------------------------------------------------------------
-log "Step 5: creating the first admin"
+log "Step 5: the first admin"
 
 SERVICE_ROLE_KEY="$(env_get SERVICE_ROLE_KEY)"
 [[ -n "$SERVICE_ROLE_KEY" ]] || die "SERVICE_ROLE_KEY missing from deploy/.env"
+
+# GoTrue's admin API is not published outside the compose network (no ports: entry, spec §5), so this
+# calls it from inside the already-running `app` container, which sits on the same internal network
+# and ships Node 22 with a global fetch.
+#
+# The service-role key, the admin's email and the admin's PASSWORD travel on STDIN as one JSON blob.
+# They used to be passed as `docker compose exec -e VAR=value`, with a comment claiming they were
+# therefore invisible to `ps` — that was false. `-e` arguments are argv of the HOST `docker compose`
+# process, so any local user running `ps auxww` during an install saw the admin password and the
+# service-role key in full. Stdin is a pipe: it appears in no process listing at all. (sign_jwt above
+# always did this correctly, with an env-var prefix; this is the same idea for a value that has to
+# cross into a container, where an env-var prefix cannot reach.)
+#
+# The blob itself is built by a local node process reading env vars — not from a shell here-string
+# with the values interpolated — so nothing has to be escaped by hand and no value reaches an argv.
+admin_payload="$(
+  KEY_FOR_PAYLOAD="$SERVICE_ROLE_KEY" \
+  EMAIL_FOR_PAYLOAD="$ADMIN_EMAIL" \
+  PASSWORD_FOR_PAYLOAD="$ADMIN_PASSWORD" \
+  NAME_FOR_PAYLOAD="$ADMIN_NAME" \
+  node -e 'process.stdout.write(JSON.stringify({
+    key: process.env.KEY_FOR_PAYLOAD,
+    email: process.env.EMAIL_FOR_PAYLOAD,
+    password: process.env.PASSWORD_FOR_PAYLOAD,
+    name: process.env.NAME_FOR_PAYLOAD,
+  }))'
+)"
+
+# shellcheck disable=SC2016 # intentional: the JS below is read by node in the container, not the shell.
+gotrue_result="$(
+  printf '%s' "$admin_payload" | "${COMPOSE[@]}" exec -T app node -e '
+    (async () => {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      const { key, email, password, name } = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + key,
+        "apikey": key,
+      };
+
+      // LOOK UP FIRST. GoTrue has no "get user by email" endpoint, only a paged list with an
+      // optional `filter`. The filter is applied server-side when supported and ignored when it is
+      // not, so the pages are walked and matched here as well rather than trusting it — an ignored
+      // filter must not be read as "no such user", which is exactly the mistake that turns a
+      // half-finished run into an unresumable one.
+      let existing = null;
+      for (let page = 1; page <= 50 && !existing; page++) {
+        const url = "http://auth:9999/admin/users?page=" + page + "&per_page=200&filter=" +
+          encodeURIComponent(email);
+        const res = await fetch(url, { headers });
+        if (!res.ok) {
+          process.stderr.write("GoTrue list users failed: " + res.status + " " + (await res.text()));
+          process.exit(1);
+        }
+        const data = await res.json();
+        const users = Array.isArray(data.users) ? data.users : [];
+        if (users.length === 0) break;
+        existing = users.find((u) => String(u.email || "").toLowerCase() === email) || null;
+      }
+      if (existing) {
+        process.stdout.write(JSON.stringify({ id: existing.id, created: false }));
+        return;
+      }
+
+      const res = await fetch("http://auth:9999/admin/users", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { name },
+        }),
+      });
+      const body = await res.text();
+      if (!res.ok) { process.stderr.write(body); process.exit(1); }
+      const data = JSON.parse(body);
+      if (!data.id) { process.stderr.write("no id in GoTrue response: " + body); process.exit(1); }
+      process.stdout.write(JSON.stringify({ id: data.id, created: true }));
+    })().catch((err) => { process.stderr.write(String((err && err.stack) || err)); process.exit(1); });
+  '
+)" || die "resolving the auth user via GoTrue's admin API failed (see output above)"
+
+unset admin_payload
+
+auth_user_id="$(
+  RESPONSE_FOR_PARSE="$gotrue_result" node -e '
+    const data = JSON.parse(process.env.RESPONSE_FOR_PARSE);
+    if (!data.id) { console.error("no id in GoTrue response"); process.exit(1); }
+    process.stdout.write(data.id);
+  '
+)"
+auth_user_created="$(
+  RESPONSE_FOR_PARSE="$gotrue_result" node -e '
+    process.stdout.write(JSON.parse(process.env.RESPONSE_FOR_PARSE).created ? "yes" : "no");
+  '
+)"
+
+if [[ "$auth_user_created" == "yes" ]]; then
+  log "created the GoTrue auth user for $ADMIN_EMAIL"
+else
+  log "a GoTrue auth user for $ADMIN_EMAIL already exists — reusing it, and leaving its password unchanged"
+fi
 
 # SQL on STDIN, not in -c. psql's -c takes "a command string that is completely parsable by the
 # server", which means it does NOT expand :'var' — a -c query containing one dies with
 #   ERROR: syntax error at or near ":"
 # Every query below that interpolates a -v variable is therefore fed on stdin, which does expand it.
 # :'...' still quotes the value as a literal, so the email is never pasted into SQL text raw.
-member_exists="$(
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tA <<'SQL'
-select count(*) from members where email = :'email';
-SQL
-)"
-member_exists="$(printf '%s' "$member_exists" | tr -d '[:space:]')"
-
-if [[ "$member_exists" != "0" ]]; then
-  log "a member row for $ADMIN_EMAIL already exists — skipping admin creation"
-else
-  # GoTrue's admin API is not published outside the compose network (no ports: entry, spec §5), so
-  # this calls it from inside the already-running `app` container, which sits on the same internal
-  # network and ships Node 22 with a global fetch. Secrets travel as `docker compose exec -e`
-  # environment variables rather than argv, so they never show up in `ps` output.
-  create_user_response="$(
-    "${COMPOSE[@]}" exec -T \
-      -e SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
-      -e ADMIN_EMAIL="$ADMIN_EMAIL" \
-      -e ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-      -e ADMIN_NAME="$ADMIN_NAME" \
-      app node -e '
-        (async () => {
-          const { SERVICE_ROLE_KEY, ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = process.env;
-          const res = await fetch("http://auth:9999/admin/users", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": "Bearer " + SERVICE_ROLE_KEY,
-              "apikey": SERVICE_ROLE_KEY,
-            },
-            body: JSON.stringify({
-              email: ADMIN_EMAIL,
-              password: ADMIN_PASSWORD,
-              email_confirm: true,
-              user_metadata: { name: ADMIN_NAME },
-            }),
-          });
-          const body = await res.text();
-          if (!res.ok) { process.stderr.write(body); process.exit(1); }
-          process.stdout.write(body);
-        })();
-      '
-  )" || die "creating the auth user via GoTrue's admin API failed (see output above)"
-
-  new_auth_user_id="$(
-    RESPONSE_FOR_PARSE="$create_user_response" node -e '
-      const data = JSON.parse(process.env.RESPONSE_FOR_PARSE);
-      if (!data.id) { console.error("no id in GoTrue response"); process.exit(1); }
-      process.stdout.write(data.id);
-    '
-  )"
-
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$new_auth_user_id" <<'SQL'
+#
+# The upsert repairs the link rather than skipping: `do nothing` was what let a members row survive
+# pointing at an auth user that no longer exists. name and role are deliberately NOT overwritten —
+# an operator who renamed themselves or an admin who was demoted on purpose should stay that way;
+# the auth_user_id is the only field this step owns. `returning` reports which branch ran.
+member_state="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -qtA <<'SQL'
 insert into members (email, name, role, auth_user_id)
 values (:'email', :'name', 'admin', :'authid'::uuid)
-on conflict (email) do nothing;
+on conflict (email) do update
+   set auth_user_id = excluded.auth_user_id
+returning case when xmax = 0 then 'inserted' else 'relinked' end;
 SQL
+)"
+member_state="$(printf '%s' "$member_state" | tr -d '[:space:]')"
+[[ -n "$member_state" ]] || die "the members upsert for $ADMIN_EMAIL returned nothing — refusing to continue"
+log "members row for $ADMIN_EMAIL: $member_state, linked to auth user $auth_user_id"
 
-  log "created admin member and auth user for $ADMIN_EMAIL"
-fi
+# Belt and braces: assert the end state both halves were supposed to produce, so a future change that
+# breaks the link fails here rather than at the operator's first sign-in attempt.
+linked="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+    -v email="$ADMIN_EMAIL" -tA <<'SQL'
+select count(*) from members m
+  join auth.users u on u.id = m.auth_user_id
+ where m.email = :'email';
+SQL
+)"
+linked="$(printf '%s' "$linked" | tr -d '[:space:]')"
+[[ "$linked" == "1" ]] || die "the admin's members row is not linked to a live auth.users row (found $linked) — sign-in would fail"
 
 unset ADMIN_PASSWORD
 
@@ -410,11 +517,43 @@ unset ADMIN_PASSWORD
 # Trusted devices gate every route, approving one needs an emailed code, and /users (where an admin
 # could approve one by hand) sits behind the same gate. On a fresh server SMTP is not proven yet, so
 # without this step nobody — not even the admin just created above — can sign in at all.
+#
+# THE DECISION IS KEYED OFF THE DATABASE, NOT OFF THE TOKEN FILE. It used to be keyed off
+# deploy/first-device-token.txt existing — while that same file, and docs/reference/deployment.md,
+# both tell the operator to DELETE it once a normal device is approved. Following that instruction
+# and then re-running the installer (which the header advertises as safe) silently minted a SECOND
+# permanent approved device and a fresh break-glass token: the emailed-code factor restored as a
+# standing bypass, with nothing on screen saying so.
+#
+# An approved trusted_devices row is the thing that actually decides whether anyone can get in, so
+# that is what is checked. The bootstrap device exists for exactly one situation — the admin has no
+# approved device at all — and it is minted only in that situation.
 # ---------------------------------------------------------------------------
-log "Step 6: approving a bootstrap device (break-glass)"
+log "Step 6: a bootstrap device (break-glass)"
 
-if [[ -f "$DEVICE_TOKEN_FILE" ]]; then
-  log "deploy/first-device-token.txt already exists — leaving the existing bootstrap device as-is"
+member_id="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tA <<'SQL'
+select id from members where email = :'email';
+SQL
+)"
+member_id="$(printf '%s' "$member_id" | tr -d '[:space:]')"
+[[ -n "$member_id" ]] || die "could not find the admin member row to attach a bootstrap device to"
+
+approved_devices="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -v mid="$member_id" -tA <<'SQL'
+select count(*) from trusted_devices
+ where member_id = :'mid'::uuid and approved_at is not null;
+SQL
+)"
+approved_devices="$(printf '%s' "$approved_devices" | tr -d '[:space:]')"
+[[ "$approved_devices" =~ ^[0-9]+$ ]] || die "could not count the admin's approved devices (got: $approved_devices)"
+
+if (( approved_devices > 0 )); then
+  log "the admin already has $approved_devices approved trusted device(s) — NOT minting a break-glass device"
+  if [[ -f "$DEVICE_TOKEN_FILE" ]]; then
+    echo "Note: deploy/first-device-token.txt is still on disk. Once you have a normal approved device,"
+    echo "revoke the bootstrap device from /profile and delete that file."
+  fi
 else
   DEVICE_TOKEN="$(node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))')"
   # Must match hashDeviceToken() in src/features/devices/deviceRules.ts exactly: plain SHA-256 of
@@ -422,15 +561,7 @@ else
   TOKEN_HASH="$(DEVICE_TOKEN_FOR_HASH="$DEVICE_TOKEN" node -e \
     'process.stdout.write(require("crypto").createHash("sha256").update(process.env.DEVICE_TOKEN_FOR_HASH).digest("hex"))')"
 
-  member_id="$(
-    "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -v email="$ADMIN_EMAIL" -tA <<'SQL'
-select id from members where email = :'email';
-SQL
-  )"
-  member_id="$(printf '%s' "$member_id" | tr -d '[:space:]')"
-  [[ -n "$member_id" ]] || die "could not find the admin member row to attach a bootstrap device to"
-
-  "${COMPOSE[@]}" exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
     -v mid="$member_id" -v hash="$TOKEN_HASH" <<'SQL'
 insert into trusted_devices (member_id, token_hash, label, approved_at)
 values (:'mid'::uuid, :'hash', 'install.sh bootstrap device', now())
@@ -485,6 +616,10 @@ Still to configure, all optional (edit deploy/.env, then 'docker compose -f depl
   - OAuth   — Google / Microsoft sign-in buttons say "not configured" until SUPABASE_AUTH_* is set.
   - Twilio  — phone-number verification stays off until TWILIO_* is set.
 
-See deploy/first-device-token.txt for how to complete your first sign-in. No secrets were printed
-by this script.
 EOF
+if (( approved_devices > 0 )); then
+  echo "This admin already had an approved device, so no break-glass token was minted. Sign in as usual."
+else
+  echo "See deploy/first-device-token.txt for how to complete your first sign-in."
+fi
+echo "No secrets were printed by this script."
