@@ -1,9 +1,16 @@
 -- The default privileges for schema `public`, as one idempotent block.
 --
--- THIS IS NOT A NEW POLICY. Every statement below already exists in 0027, 0028 or 0032, and those
--- files remain the record of WHY each one was written — read them, not this one, to understand the
--- reasoning. What was missing was a single authoritative place to RE-APPLY the resulting state,
--- because a restore destroys all of it.
+-- THIS IS NOT A NEW POLICY. All but one of the statements below already exist in 0027, 0028 or 0032,
+-- and those files remain the record of WHY each one was written — read them, not this one, to
+-- understand the reasoning. What was missing was a single authoritative place to RE-APPLY the
+-- resulting state, because a restore destroys all of it.
+--
+-- THE ONE EXCEPTION is the last statement, `alter default privileges ... grant execute on functions
+-- to service_role`, which appears in none of those three files (its own paragraph below says as much
+-- — "It anchors the row"). It changes no real install's state: it is what the supabase/postgres
+-- image already ships as the stock default for this schema, so on a live stack it is a no-op, and on
+-- a restored one it puts back what DROP SCHEMA removed. It is written down here because after a
+-- restore nothing else would.
 --
 -- WHAT DESTROYS IT. deploy/restore.sh replays db-public.sql.gz, which pg_dump produced with
 -- --clean --if-exists, so it opens with

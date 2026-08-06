@@ -169,8 +169,47 @@ describe("the publishable key's reach into schema public", () => {
     }
   });
 
-  it("owns every public table as postgres, which is what makes the default-ACL check sufficient", () => {
-    const owners = sql(`select distinct tableowner from pg_tables where schemaname = 'public' order by 1`);
-    expect(owners).toEqual(["postgres"]);
+  it("owns every public table, sequence and function as postgres, which is what makes the default-ACL checks sufficient", () => {
+    // Both default-ACL assertions above are scoped to the ACL owned by `postgres`, and a default ACL
+    // only applies to objects created BY the role that owns it. So they are sufficient exactly to the
+    // extent that everything in `public` is postgres-owned — an object created by any other role
+    // inherits that role's defaults instead, and the image's supabase_admin set still grants anon a
+    // full arwdDxtm.
+    //
+    // This used to query pg_tables only, which pinned tables and nothing else, while 0032 and the
+    // function/sequence default-ACL assertion above both rest on FUNCTIONS and SEQUENCES being
+    // postgres-owned too. A supabase_admin-owned function in `public` would have been born executable
+    // by the publishable key with every assertion in this file still green — the same shape of hole
+    // 0032 was written to close.
+    const strays = sql(`
+      select 'table ' || c.relname || ' owned by ' || pg_get_userbyid(c.relowner)
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind in ('r', 'p')
+         and pg_get_userbyid(c.relowner) <> 'postgres'
+      union all
+      select 'sequence ' || c.relname || ' owned by ' || pg_get_userbyid(c.relowner)
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind = 'S'
+         and pg_get_userbyid(c.relowner) <> 'postgres'
+      union all
+      select 'function ' || p.proname || ' owned by ' || pg_get_userbyid(p.proowner)
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and pg_get_userbyid(p.proowner) <> 'postgres'
+      order by 1
+    `);
+    expect(strays).toEqual([]);
+
+    // An empty schema would satisfy the check above vacuously, so prove there is something in it.
+    // Sequences are deliberately not required to exist: every primary key in this schema is a uuid,
+    // so `public` legitimately holds none — the union above still covers one the day it appears.
+    const counts = sql(`
+      select 'tables=' || (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname = 'public' and c.relkind in ('r', 'p'))
+      union all
+      select 'functions=' || (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                               where n.nspname = 'public')
+    `);
+    expect(counts.every((c) => !c.endsWith("=0"))).toBe(true);
   });
 });

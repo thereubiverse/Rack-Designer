@@ -15,11 +15,17 @@ out
 .claude
 
 # deploy/backups/ holds real client floor plans and avatars; deploy/.env holds the real JWT_SECRET
-# and anon/service-role keys; deploy/caddy_data/ holds the live TLS state. `COPY . .` in the
-# Dockerfile would otherwise drag all three into the build context and a builder layer.
+# and anon/service-role keys; deploy/caddy_data/ and deploy/caddy_config/ hold the live TLS state
+# including the account private key; deploy/first-device-token.txt holds a RAW break-glass device
+# token that signs its holder in as the admin with no emailed code. `COPY . .` in the Dockerfile
+# would otherwise drag all of them into the build context and a builder layer — and install.sh runs
+# `up -d --build` on every re-run, so a re-run after step 6 would bake the live token into the
+# server's image cache.
 deploy/backups/
 deploy/.env
 deploy/caddy_data/
+deploy/caddy_config/
+deploy/first-device-token.txt
 coverage
 playwright-report
 test-results
