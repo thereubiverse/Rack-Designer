@@ -18,8 +18,13 @@ const USER = () => process.env.SMTP_USER;
 const PASSWORD = () => process.env.SMTP_PASSWORD;
 const FROM = () => process.env.SMTP_FROM;
 
+// Requires user and password too, not just host/port/from: Resend (and every real SMTP provider
+// this stack targets) requires authentication, so a deploy/.env missing the API key would otherwise
+// report itself "configured" and then fail on every single send. sendEmail() below builds its
+// nodemailer `auth` option from the same two variables, so this check and the actual send path can
+// never disagree about what "configured" means.
 export function emailConfigured(): boolean {
-  return Boolean(HOST() && PORT() && FROM());
+  return Boolean(HOST() && PORT() && USER() && PASSWORD() && FROM());
 }
 
 /** Sends a plain-text email. This NEVER throws or rejects — the caller always gets a result it can

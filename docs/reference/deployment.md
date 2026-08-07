@@ -50,12 +50,8 @@ them are plain keys in `deploy/.env`; edit that file and run
 `docker compose -f deploy/docker-compose.yml up -d` to pick the change up.
 
 - **SMTP, via Resend.** This is the one worth doing first after the install. Member invites, password
-  recovery, and the one-time device-approval codes all go through it. Create a Resend account and
-  **verify a domain you own** — sending from an unverified domain is what puts invites in spam. The
-  API key it gives you is the SMTP *password*; the username is the literal string `resend`. Fill in
-  `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_FROM`. `src/lib/email.ts` treats
-  mail as unconfigured until host, port and from-address are all set, and in production it logs only
-  that sending failed — never the body, because that body may be a device-approval code.
+  recovery, and the one-time device-approval codes all go through it — see "SMTP via Resend" below
+  for the exact settings and how to prove they work before trusting them.
 - **Google / Microsoft sign-in.** Create the credentials in Google Cloud Console and an Azure app
   registration. `SUPABASE_AUTH_GOOGLE_CLIENT_ID` / `_SECRET` and `SUPABASE_AUTH_AZURE_CLIENT_ID` /
   `_SECRET` are read by the app to decide whether to *offer* each button. Note what the compose file
@@ -70,6 +66,47 @@ them are plain keys in `deploy/.env`; edit that file and run
 `deploy/.env.example` lists every variable the stack reads, with empty placeholders and a note on
 each. It is the committed reference; `deploy/.env` — the real one — is gitignored and must stay that
 way. This repository is public.
+
+## SMTP via Resend
+
+Two independent paths send email, and both read the same five `SMTP_*` variables out of
+`deploy/.env`: GoTrue (`GOTRUE_SMTP_*` in `deploy/docker-compose.yml`) sends invites and password
+recovery; the app (`src/lib/email.ts`) sends the one-time device-approval codes over nodemailer.
+Neither fails loudly on a bad credential — GoTrue logs and moves on, and `sendEmail()` is
+deliberately written to never throw, and in production it logs only that sending failed, never the
+body, so a misconfiguration cannot leak a one-time code into a log. Correct, but it means a wrong
+password looks identical to "invites just don't arrive" until someone checks.
+
+Create a Resend account and **verify a domain you own** before filling in anything below — sending
+from an unverified domain is the failure that looks like "nothing arrives" (no bounce, no error
+anywhere obvious), because the rejection happens at the SMTP layer on the sender address, not on
+delivery. `SMTP_FROM` must be an address at that verified domain.
+
+Settings, verified against a running Resend account:
+
+| Variable | Value |
+| --- | --- |
+| `SMTP_HOST` | `smtp.resend.com` |
+| `SMTP_PORT` | `587` — **not** Resend's recommended `465`. `465` is implicit TLS; GoTrue expects STARTTLS, and both GoTrue and the app read this one variable, so `587` is the port that works for both. `src/lib/email.ts` already picks `secure: port === 465`, so nodemailer speaks whichever of the two the port implies — this is the one setting on this page that deliberately departs from the provider's own docs. |
+| `SMTP_USER` | the literal string `resend` |
+| `SMTP_PASSWORD` | the Resend API key. This is the *SMTP password*, not the account password. |
+| `SMTP_FROM` | an address at the domain verified above, e.g. `notifications@yourdomain.com` |
+
+`SMTP_PASSWORD` is a real secret. `deploy/.env` — gitignored, mode 600 — is the only place it
+belongs; never write it into `deploy/.env.example` or any other tracked file. This repository is
+public.
+
+**Prove it before trusting it.** Fill in `deploy/.env`, then from the repository root:
+
+```bash
+deploy/test-smtp.sh you@example.com
+```
+
+It sends one real email through those settings and reports whether it was delivered, could not
+connect, was rejected on authentication, or was rejected because of the sender address/domain —
+printing what to check for whichever one happened. It never prints `SMTP_PASSWORD`, not even
+partially. Run it after every change to the SMTP variables, not just the first time: a rotated API
+key or a re-verified domain can silently break what used to work.
 
 ## Running the installer
 
