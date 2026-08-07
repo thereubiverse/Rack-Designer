@@ -13,16 +13,20 @@ vi.mock("./planStorage", () => ({
   removePlanObject: vi.fn(),
   uploadPlanPdf: vi.fn(),
   removePlanPdf: vi.fn(),
+  // Real (pure) implementation, not a vi.fn(): actions.ts calls this to build the storage path, and
+  // the assertions below check the path it produces, so a fake here would just be re-testing itself.
+  planPathFor: (orgId: string, siteId: string, floorId: string, ext: "png" | "pdf") =>
+    `${orgId}/${siteId}/${floorId}.${ext}`,
 }));
 vi.mock("@/features/auth/withMember", () => ({
   // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
   // action test would be re-testing the guard instead of the action.
   withMember: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
   withEditor: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
   withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
 }));
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -194,13 +198,13 @@ describe("uploadFloorPlanAction", () => {
     expect(uploadPlanObject).toHaveBeenCalledTimes(1);
     const [calledDb, calledPath, calledBytes] = vi.mocked(uploadPlanObject).mock.calls[0];
     expect(calledDb).toBe(db);
-    expect(calledPath).toBe("SITE-A/f1.png");
+    expect(calledPath).toBe("org-1/SITE-A/f1.png");
     expect(calledBytes).toEqual(hexToBytes(PNG_640x480_HEX));
 
     const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
     expect(planUpsert?.values).toMatchObject({
       floor_id: "f1",
-      storage_path: "SITE-A/f1.png",
+      storage_path: "org-1/SITE-A/f1.png",
       width_px: 640,
       height_px: 480,
       source: "image",
@@ -265,12 +269,12 @@ describe("uploadFloorPlanAction", () => {
     expect(uploadPlanPdf).toHaveBeenCalledTimes(1);
     const [calledDb, calledPath, calledBytes] = vi.mocked(uploadPlanPdf).mock.calls[0];
     expect(calledDb).toBe(db);
-    expect(calledPath).toBe("SITE-A/f1.pdf");
+    expect(calledPath).toBe("org-1/SITE-A/f1.pdf");
     expect(calledBytes).toEqual(pdfBytes);
 
     const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
     expect(planUpsert?.values).toMatchObject({
-      pdf_storage_path: "SITE-A/f1.pdf",
+      pdf_storage_path: "org-1/SITE-A/f1.pdf",
       pdf_page: 2,
     });
   });

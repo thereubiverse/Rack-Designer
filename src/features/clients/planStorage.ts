@@ -27,6 +27,14 @@ export async function removePlanObject(db: SupabaseClient, path: string): Promis
   if (error) throw new Error(`removePlanObject: ${error.message}`);
 }
 
+/** The stored object for a floor's plan. Organisation first, for the same reason as avatarPathFor:
+ *  slice 2's storage policies match on the leading path segment. */
+export function planPathFor(
+  orgId: string, siteId: string, floorId: string, ext: "png" | "pdf"
+): string {
+  return `${orgId}/${siteId}/${floorId}.${ext}`;
+}
+
 /** Server-side fetch of a stored plan's bytes (for the AI discovery pass). */
 export async function downloadPlanObject(db: SupabaseClient, path: string): Promise<Uint8Array> {
   const { data, error } = await db.storage.from(BUCKET).download(path);

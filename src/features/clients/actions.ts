@@ -45,7 +45,7 @@ import {
 } from "@/features/locations/repository";
 import type { NormPoint } from "./floorPlanOps";
 import { readPngDimensions } from "./pngHeader";
-import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf } from "./planStorage";
+import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf, planPathFor } from "./planStorage";
 import type { FloorPlanRow } from "@/lib/supabase/types";
 
 const FLOOR_DEVICE_STATUSES = ["planned", "installed"] as const;
@@ -527,7 +527,7 @@ export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_
  *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
  *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
  *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
-export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
@@ -561,7 +561,7 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
   const dims = readPngDimensions(bytes);
   if (!dims) return { ok: false, error: "File is not a valid PNG" };
 
-  const path = `${siteId}/${floorId}.png`;
+  const path = planPathFor(member.orgId, siteId, floorId, "png");
 
   // `Number()` on a missing/blank/non-numeric field yields NaN (or a non-integer), which is
   // rejected — treated as absent, never as an error. This codebase's standing rule: `0` is a real,
@@ -578,7 +578,7 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
     await uploadPlanObject(db, path, bytes);
 
     if (isBlobLike(pdfFile)) {
-      const pdfPath = `${siteId}/${floorId}.pdf`;
+      const pdfPath = planPathFor(member.orgId, siteId, floorId, "pdf");
       try {
         const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
         await uploadPlanPdf(db, pdfPath, pdfBytes);

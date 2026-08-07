@@ -57,7 +57,7 @@ export const uploadAvatarAction = withMember("profile.avatar.upload", async (mem
   if (problem) return { ok: false, error: problem };
 
   const db = createServiceClient();
-  const path = avatarPathFor(member.id);
+  const path = avatarPathFor(member.orgId, member.id);
   const bytes = new Uint8Array(await file.arrayBuffer());
   // Object first, then the row. The reverse order can leave a row pointing at a file that was
   // never written, which renders as a broken picture with no way to retry except re-uploading.
