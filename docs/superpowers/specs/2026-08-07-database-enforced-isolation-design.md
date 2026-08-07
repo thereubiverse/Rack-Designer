@@ -40,7 +40,10 @@ Instead:
 ```sql
 create function current_org_id() returns uuid
 language sql stable as $$
-  select nullif(current_setting('request.jwt.claims', true)::json ->> 'org_id', '')::uuid
+  select nullif(
+    nullif(current_setting('request.jwt.claims', true), '')::json ->> 'org_id',
+    ''
+  )::uuid
 $$;
 ```
 
@@ -48,6 +51,12 @@ $$;
 request with no claim, or a token carrying no `org_id`, yields NULL — and `org_id = NULL` is never
 true. **The failure mode is no rows, not all rows.** That is the property this whole slice rests on
 and it must be tested directly, not assumed.
+
+The two `nullif`s guard different things and the inner one must run before the cast to json:
+`current_setting(..., true)` returns the empty string, not NULL, when the GUC is *defined but empty*,
+and `''::json` raises rather than yielding NULL. The inner `nullif` catches that case; the outer one
+catches a well-formed claims object carrying `"org_id": ""`. (`0045_current_org_id_empty_guc.sql`
+fixed a version of this function that had the inner guard missing.)
 
 ### Why this is better here than the conventional pattern
 
