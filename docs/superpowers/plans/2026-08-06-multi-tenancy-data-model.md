@@ -663,21 +663,9 @@ Expected: a long run of `ALTER TABLE` with no `ERROR`.
 
 - [ ] **Step 4: Prove a cross-organisation attachment is refused**
 
-```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres <<'SQL'
-begin;
-insert into organisations (name) values ('Rival MSP');
-insert into clients (code, name, org_id)
-  values ('RIVAL', 'Rival Client', (select id from organisations where name='Rival MSP'));
--- QTSI's trigger will stamp this site with QTSI's org, which cannot match Rival's client:
-insert into sites (code, name, client_id)
-  values ('X1', 'Cross Site', (select id from clients where code='RIVAL'));
-select 'this should not print' ;
-rollback;
-SQL
-```
-
-Expected: the insert succeeds *within Rival MSP* (the trigger stamps it Rival, matching its client) — which is correct. Then run the genuinely cross-org case:
+The trigger cannot be used to demonstrate this — it stamps the child with the parent's org, so an
+insert always agrees with itself. The composite key has to be tested where the trigger is *not* in
+the path, which is an UPDATE:
 
 ```bash
 docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres <<'SQL'
