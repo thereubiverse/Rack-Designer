@@ -160,9 +160,15 @@ needs all five of the following, or it is silently unscoped:
    `brands`, `device_templates`, `device_types` — are the deliberate exception: `NULL` there means
    "standard, shared by every organisation," a distinct and intentional meaning, not an omission.)
 
-2. **`unique (org_id, id)`.** This is what makes the table usable as the parent in a composite
-   foreign key from a child table — see point 3. Without it, nothing downstream can reference this
-   table's rows scoped to their organisation.
+2. **`unique (org_id, id)`, only if something will reference this table.** This is what makes the
+   table usable as the parent in a composite foreign key from a child table — see point 3. Without
+   it, nothing downstream can reference this table's rows scoped to their organisation. If nothing
+   ever will — a leaf table with no children — it needs no `unique (org_id, id)` of its own; adding
+   one anyway is an index to maintain for no reason. `sites`, `racks`, `members`, `floors`, `rooms`,
+   `rack_devices`, `trusted_devices` and `clients` have it because something references them
+   compositely. `activity_log`, `app_settings`, `brands`, `connections`, `device_challenges`,
+   `device_templates`, `device_types`, `floor_devices`, `floor_plans`, `phone_verifications` and
+   `port_endpoints` correctly don't.
 
 3. **An inheritance trigger, if the table has an org-scoped parent.** A child row's `org_id` must
    come from its parent, not from whatever the caller happens to pass — copy the pattern from
@@ -208,7 +214,9 @@ needs all five of the following, or it is silently unscoped:
    library tables are not yet org-editable at all.
 
 `src/lib/supabase/tenancy.test.ts` checks all of this against the live schema — every table has
-`org_id`, every table has `unique (org_id, id)`, every foreign key to an org-scoped table is
-composite, every unique constraint (bare index or named constraint) is either org-scoped or on the
-short, explicit exception list, and every table that can be updated after insert carries
+`org_id`, every table that is referenced by another has `unique (org_id, id)`, every foreign key to
+an org-scoped table is composite (and the full set of composite foreign keys is pinned by name and
+definition, so a dropped or redefined one fails too), every unique constraint and primary key in
+`public` — bare index or named constraint — is pinned by name and definition as either org-scoped or
+on the short, explicit exception list, and every table that can be updated after insert carries
 `freeze_org_id`. Skip any of the five steps above and that test fails.

@@ -83,52 +83,138 @@ describe("every row has an owning organisation", () => {
     expect(singleColumn).toEqual([]);
   });
 
-  it("scopes to the organisation every unique constraint that is not already scoped by a parent", () => {
+  it("still has each composite foreign key that keeps a child pointed at its own organisation's parent, not just correctly-shaped survivors", () => {
+    // The assertion above only inspects foreign keys that currently EXIST: a dropped one leaves no
+    // row for it to see, so it matches nothing and the suite stays green. Proved by actually
+    // dropping one: `alter table sites drop constraint sites_client_fk` let a site point at another
+    // organisation's client while every other assertion in this file kept passing. This pins the
+    // full set of composite foreign keys by name and definition, so a deletion, a renaming, or a
+    // silent change of ON DELETE behaviour are all caught, not just a missing org_id column.
+    //
+    // The list is deliberately exhaustive — built by reading every composite foreign key live in
+    // the schema today — so a new cross-table relationship must be added to it consciously.
     const rows = sql(`
-      select conrelid::regclass::text || ' ' || conname
-      from pg_constraint
-      where contype in ('u','p') and connamespace = 'public'::regnamespace
-        and conrelid::regclass::text in
-            ('clients','brands','device_templates','device_types','app_settings')
-        and not exists (
-          select 1 from unnest(conkey) k
-          join pg_attribute a on a.attrelid = conrelid and a.attnum = k
-          where a.attname = 'org_id'
-        )
+      select fk.conrelid::regclass::text || '.' || fk.conname || ' :: ' || pg_get_constraintdef(fk.oid)
+      from pg_constraint fk
+      join pg_class child on child.oid = fk.conrelid
+      join pg_namespace n on n.oid = child.relnamespace
+      where fk.contype = 'f' and n.nspname = 'public'
+        and array_length(fk.conkey, 1) > 1
       order by 1
     `);
-    // Primary keys on `id` alone are fine — a uuid is globally unique by construction. Anything
-    // else listed here is a constraint that would reject a second organisation's ordinary data.
     expect(rows).toEqual([
-      "brands brands_pkey",
-      "clients clients_pkey",
-      "device_templates device_templates_pkey",
-      "device_types device_types_pkey",
+      "activity_log.activity_log_member_fk :: FOREIGN KEY (org_id, member_id) REFERENCES members(org_id, id) ON DELETE SET NULL (member_id)",
+      "connections.connections_a_rack_device_fk :: FOREIGN KEY (org_id, a_rack_device_id) REFERENCES rack_devices(org_id, id) ON DELETE CASCADE",
+      "connections.connections_b_rack_device_fk :: FOREIGN KEY (org_id, b_rack_device_id) REFERENCES rack_devices(org_id, id) ON DELETE CASCADE",
+      "connections.connections_rack_fk :: FOREIGN KEY (org_id, rack_id) REFERENCES racks(org_id, id) ON DELETE CASCADE",
+      "device_challenges.device_challenges_device_fk :: FOREIGN KEY (org_id, device_id) REFERENCES trusted_devices(org_id, id) ON DELETE CASCADE",
+      "floor_devices.floor_devices_floor_fk :: FOREIGN KEY (org_id, floor_id) REFERENCES floors(org_id, id) ON DELETE CASCADE",
+      "floor_devices.floor_devices_room_fk :: FOREIGN KEY (org_id, room_id) REFERENCES rooms(org_id, id) ON DELETE SET NULL (room_id)",
+      "floor_devices.floor_devices_site_fk :: FOREIGN KEY (org_id, site_id) REFERENCES sites(org_id, id) ON DELETE CASCADE",
+      "floor_plans.floor_plans_floor_fk :: FOREIGN KEY (org_id, floor_id) REFERENCES floors(org_id, id) ON DELETE CASCADE",
+      "floors.floors_site_fk :: FOREIGN KEY (org_id, site_id) REFERENCES sites(org_id, id) ON DELETE CASCADE",
+      "phone_verifications.phone_verifications_member_fk :: FOREIGN KEY (org_id, member_id) REFERENCES members(org_id, id) ON DELETE CASCADE",
+      "port_endpoints.port_endpoints_rack_device_fk :: FOREIGN KEY (org_id, rack_device_id) REFERENCES rack_devices(org_id, id) ON DELETE CASCADE",
+      "port_endpoints.port_endpoints_rack_fk :: FOREIGN KEY (org_id, rack_id) REFERENCES racks(org_id, id) ON DELETE CASCADE",
+      "port_endpoints.port_endpoints_target_rack_device_fk :: FOREIGN KEY (org_id, target_rack_device_id) REFERENCES rack_devices(org_id, id) ON DELETE CASCADE",
+      "port_endpoints.port_endpoints_target_rack_fk :: FOREIGN KEY (org_id, target_rack_id) REFERENCES racks(org_id, id) ON DELETE CASCADE",
+      "rack_devices.rack_devices_rack_fk :: FOREIGN KEY (org_id, rack_id) REFERENCES racks(org_id, id) ON DELETE CASCADE",
+      "racks.racks_room_fk :: FOREIGN KEY (org_id, room_id) REFERENCES rooms(org_id, id) ON DELETE CASCADE",
+      "rooms.rooms_floor_fk :: FOREIGN KEY (org_id, floor_id) REFERENCES floors(org_id, id) ON DELETE CASCADE",
+      "sites.sites_client_fk :: FOREIGN KEY (org_id, client_id) REFERENCES clients(org_id, id) ON DELETE CASCADE",
+      "trusted_devices.trusted_devices_member_fk :: FOREIGN KEY (org_id, member_id) REFERENCES members(org_id, id) ON DELETE CASCADE",
     ]);
   });
 
-  it("still has each tenant-scoped unique constraint that 0037/0041 put there, not just correctly-shaped survivors", () => {
-    // The assertion above only inspects constraints that currently EXIST: it flags one that is
-    // present but missing org_id, but a constraint that was dropped outright leaves no row for it
-    // to see, so a deleted clients_org_code_key is invisible to it and the suite stays green while
-    // two organisations' clients can collide on `code` again. Proved by actually dropping it:
-    // `alter table clients drop constraint clients_org_code_key` left every other assertion in this
-    // file passing. This pins the full set by name and definition so deletion, not just
-    // mis-scoping, is caught too.
+  it("keeps every unique constraint and primary key in public either org-scoped or deliberately excepted, pinned by name and definition", () => {
+    // An earlier version of this check only inspected five hardcoded tables, so a `unique (code)`
+    // on any other table was invisible to it. Live proof the gap was real:
+    // `members_auth_user_id_key UNIQUE (auth_user_id)` sat outside every list and was checked by
+    // nothing. Scanning every unique constraint and primary key in `public` and requiring each to
+    // appear on this explicit list means a constraint added anywhere — org-scoped or not — fails
+    // the guard until someone adds it here consciously. Pinning the full definition, not just the
+    // name, also catches a dropped or redefined constraint the same way the foreign-key check above
+    // does (Finding 1's proof applies here too: re-creating `members_email_key` as
+    // `unique (org_id, email)` would pass a name-only check but fails this one).
+    //
+    // This subsumes the narrower "keeps the two deliberate global uniques global" check that used
+    // to live here as its own test — `members_email_key` and `trusted_devices_token_hash_key` are
+    // pinned by full definition below, so a second assertion of just their names would be
+    // redundant.
+    //
+    // The list is deliberately exhaustive — built by reading every unique/primary-key constraint
+    // live in the schema today — so a new one must be added to it consciously, with a reason.
     const rows = sql(`
-      select conrelid::regclass::text || '.' || conname || ' :: ' || pg_get_constraintdef(oid)
-      from pg_constraint
-      where contype = 'u' and connamespace = 'public'::regnamespace
-        and conrelid::regclass::text in ('clients','brands','device_templates','device_types')
+      select con.conrelid::regclass::text || '.' || con.conname || ' :: ' || pg_get_constraintdef(con.oid)
+      from pg_constraint con
+      join pg_namespace n on n.oid = con.connamespace
+      where con.contype in ('u','p') and n.nspname = 'public'
       order by 1
     `);
     expect(rows).toEqual([
+      // Primary keys on `id` alone — a uuid is globally unique by construction.
+      "activity_log.activity_log_pkey :: PRIMARY KEY (id)",
+      // app_settings' key is (org_id, key) directly — org-scoped by construction.
+      "app_settings.app_settings_pkey :: PRIMARY KEY (org_id, key)",
+      // Org-scoped: org_id sits directly in the constraint's own key.
       "brands.brands_org_name_key :: UNIQUE NULLS NOT DISTINCT (org_id, name)",
+      "brands.brands_pkey :: PRIMARY KEY (id)",
       "clients.clients_org_code_key :: UNIQUE (org_id, code)",
       "clients.clients_org_id_unique :: UNIQUE (org_id, id)",
+      "clients.clients_pkey :: PRIMARY KEY (id)",
+      "connections.connections_pkey :: PRIMARY KEY (id)",
+      // A single foreign-key column, one row per device: device_id is itself a uuid that already
+      // belongs to exactly one organisation (via trusted_devices), so it is globally unique by the
+      // same construction as `id` above.
+      "device_challenges.device_challenges_pkey :: PRIMARY KEY (device_id)",
       "device_templates.device_templates_org_name_key :: UNIQUE NULLS NOT DISTINCT (org_id, name)",
+      "device_templates.device_templates_pkey :: PRIMARY KEY (id)",
       "device_types.device_types_org_category_name_key :: UNIQUE NULLS NOT DISTINCT (org_id, category, name)",
       "device_types.device_types_org_code_key :: UNIQUE NULLS NOT DISTINCT (org_id, code)",
+      "device_types.device_types_pkey :: PRIMARY KEY (id)",
+      "floor_devices.floor_devices_pkey :: PRIMARY KEY (id)",
+      // Already scoped by an org-scoped parent column: site_id already ties the row to exactly one
+      // organisation, so the child needs no org_id of its own — same exemption as sites(client_id,
+      // code) and racks(room_id, code) in README.md.
+      "floor_devices.floor_devices_site_id_code_key :: UNIQUE (site_id, code)",
+      // A single foreign-key column, one row per floor: floor_id is already globally unique via
+      // floors, same reasoning as device_challenges_pkey above.
+      "floor_plans.floor_plans_floor_id_key :: UNIQUE (floor_id)",
+      "floor_plans.floor_plans_pkey :: PRIMARY KEY (id)",
+      "floors.floors_org_id_unique :: UNIQUE (org_id, id)",
+      "floors.floors_pkey :: PRIMARY KEY (id)",
+      "floors.floors_site_id_code_key :: UNIQUE (site_id, code)",
+      // Supabase's auth.users permits one account per address, and members link one-to-one, so a
+      // per-org variant would allow two member rows where only one could ever sign in.
+      "members.members_auth_user_id_key :: UNIQUE (auth_user_id)",
+      "members.members_email_key :: UNIQUE (email)",
+      "members.members_org_id_unique :: UNIQUE (org_id, id)",
+      "members.members_pkey :: PRIMARY KEY (id)",
+      "organisations.organisations_pkey :: PRIMARY KEY (id)",
+      // A single foreign-key column, one row per member: member_id is already globally unique via
+      // members, same reasoning as device_challenges_pkey above.
+      "phone_verifications.phone_verifications_pkey :: PRIMARY KEY (member_id)",
+      "port_endpoints.port_endpoints_pkey :: PRIMARY KEY (id)",
+      // Already scoped by an org-scoped parent column: rack_device_id already ties the row to
+      // exactly one organisation.
+      "port_endpoints.port_endpoints_port_uniq :: UNIQUE (rack_device_id, side, group_id, port_index) DEFERRABLE INITIALLY DEFERRED",
+      "rack_devices.rack_devices_org_id_unique :: UNIQUE (org_id, id)",
+      "rack_devices.rack_devices_pkey :: PRIMARY KEY (id)",
+      "rack_devices.rack_devices_rack_id_code_key :: UNIQUE (rack_id, code) DEFERRABLE INITIALLY DEFERRED",
+      "racks.racks_org_id_unique :: UNIQUE (org_id, id)",
+      "racks.racks_pkey :: PRIMARY KEY (id)",
+      "racks.racks_room_id_code_key :: UNIQUE (room_id, code)",
+      "rooms.rooms_floor_id_code_key :: UNIQUE (floor_id, code)",
+      "rooms.rooms_org_id_unique :: UNIQUE (org_id, id)",
+      "rooms.rooms_pkey :: PRIMARY KEY (id)",
+      "sites.sites_client_id_code_key :: UNIQUE (client_id, code)",
+      "sites.sites_org_id_unique :: UNIQUE (org_id, id)",
+      "sites.sites_pkey :: PRIMARY KEY (id)",
+      "trusted_devices.trusted_devices_org_id_unique :: UNIQUE (org_id, id)",
+      "trusted_devices.trusted_devices_pkey :: PRIMARY KEY (id)",
+      // It is a secret; a cross-organisation collision would be a real collision, not an ordinary
+      // naming clash.
+      "trusted_devices.trusted_devices_token_hash_key :: UNIQUE (token_hash)",
     ]);
   });
 
@@ -173,18 +259,11 @@ describe("every row has an owning organisation", () => {
     expect(distinct).toEqual([]);
   });
 
-  it("keeps the two deliberate global uniques global", () => {
-    // Pinned so they are decisions rather than oversights. members.email: auth.users permits one
-    // account per address. trusted_devices.token_hash: it is a secret, so a cross-org collision
-    // would be a real one.
-    const rows = sql(`
-      select conname from pg_constraint
-      where connamespace = 'public'::regnamespace and contype = 'u'
-        and conname in ('members_email_key','trusted_devices_token_hash_key')
-      order by 1
-    `);
-    expect(rows).toEqual(["members_email_key", "trusted_devices_token_hash_key"]);
-  });
+  // The two deliberate global uniques (members_email_key, trusted_devices_token_hash_key) used to
+  // be pinned by name in a standalone test here. They are now pinned by full definition inside
+  // "keeps every unique constraint and primary key in public either org-scoped or deliberately
+  // excepted, pinned by name and definition" above, which subsumes this check — see that test's
+  // comment. A second, name-only assertion here would be redundant with a weaker guarantee.
 
   it("stops org_id moving after insert on every org-scoped table that can be updated", () => {
     // inherit_org_id (0035) gets org_id right on INSERT. Nothing stops a plain UPDATE from moving
@@ -212,7 +291,7 @@ describe("every row has an owning organisation", () => {
           select 1 from pg_attribute a
           where a.attrelid = c.oid and a.attname = 'org_id' and a.attnum > 0 and not a.attisdropped
         )
-        and c.relname not in ('activity_log','brands','device_templates','device_types')
+        and c.relname not in (${NULLABLE_ORG_TABLES.map((t) => `'${t}'`).join(",")})
         and not exists (
           select 1 from pg_trigger t
           where t.tgrelid = c.oid and t.tgfoid = 'freeze_org_id'::regproc and not t.tgisinternal
