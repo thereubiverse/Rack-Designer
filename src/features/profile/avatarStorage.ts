@@ -7,9 +7,11 @@ const SIGNED_URL_TTL_SECONDS = 3600;
 /** Thin wrappers around the `avatars` bucket, mirroring planStorage.ts — kept deliberately dumb so
  *  the action tests can fake this whole module with plain vi.fn()s and never touch real storage. */
 
-/** One object per member, overwritten on replace, so pictures never accumulate. */
-export function avatarPathFor(memberId: string): string {
-  return `${memberId}/avatar`;
+/** One object per member, overwritten on replace, so pictures never accumulate. Prefixed with the
+ *  organisation because slice 2's storage policies key on the first path segment — without it there
+ *  is no way to express "this organisation's files". */
+export function avatarPathFor(orgId: string, memberId: string): string {
+  return `${orgId}/${memberId}/avatar`;
 }
 
 export async function uploadAvatarObject(

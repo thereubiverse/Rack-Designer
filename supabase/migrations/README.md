@@ -147,3 +147,98 @@ application uses — so policies would govern only the direct-REST path, which `
 RLS becomes the right tool if the browser ever queries Supabase directly, or if a role must be
 genuinely unable to read something independently of application code. Neither is true today, and
 nothing here makes it harder later.
+
+## One organisation, until slice 2
+
+The schema now permits a second organisation. **The application is not yet safe to have one.** Every
+server action still queries without an organisation filter and with full service-role privileges —
+enforcement is slice 2. **Do not create a second organisation, or open registration, until slice 2
+lands.**
+
+Concretely: the last-admin invariant is computed over every `members` row in the database, the member
+role and disable writes key on member id alone, and the device-library writers insert `org_id NULL`,
+which means "shared with every organisation". Full reasoning, including why the library writers and
+the single-column foreign keys into the library are one slice-4 decision rather than three, is in
+`docs/superpowers/specs/2026-08-06-multi-tenancy-data-model-design.md`.
+
+## Every table is scoped to an organisation
+
+This is not optional decoration on top of the schema; it is the mechanism that keeps one
+organisation's data from being visible to, or colliding with, another's. If you add table 21, it
+needs all five of the following, or it is silently unscoped:
+
+1. **`org_id uuid not null references organisations(id)`.** Every row belongs to exactly one
+   organisation. `not null` matters — a nullable `org_id` on an application table means some rows
+   answer to no organisation at all, which is a hole, not an edge case. (The three library tables —
+   `brands`, `device_templates`, `device_types` — are the deliberate exception: `NULL` there means
+   "standard, shared by every organisation," a distinct and intentional meaning, not an omission.)
+
+2. **`unique (org_id, id)`, only if something will reference this table.** This is what makes the
+   table usable as the parent in a composite foreign key from a child table — see point 3. Without
+   it, nothing downstream can reference this table's rows scoped to their organisation. If nothing
+   ever will — a leaf table with no children — it needs no `unique (org_id, id)` of its own; adding
+   one anyway is an index to maintain for no reason. `sites`, `racks`, `members`, `floors`, `rooms`,
+   `rack_devices`, `trusted_devices` and `clients` have it because something references them
+   compositely. `activity_log`, `app_settings`, `brands`, `connections`, `device_challenges`,
+   `device_templates`, `device_types`, `floor_devices`, `floor_plans`, `phone_verifications` and
+   `port_endpoints` correctly don't.
+
+3. **An inheritance trigger, if the table has an org-scoped parent.** A child row's `org_id` must
+   come from its parent, not from whatever the caller happens to pass — copy the pattern from
+   `0035_org_id_triggers.sql`. And the foreign key to that parent must be a **composite** key,
+   `(org_id, parent_id) references parent(org_id, id)`, not a single-column `parent_id` reference —
+   a single-column FK lets a row point at a parent in a *different* organisation, which is exactly
+   the cross-tenant link this whole design exists to prevent.
+
+4. **`org_id` in every unique constraint that isn't already covered by an org-scoped parent.** A
+   plain `unique (code)` rejects a second organisation's perfectly ordinary data — two organisations
+   both having a client coded `ACME` is normal, not a conflict. Scope it: `unique (org_id, code)`.
+   If the column's meaning allows a row to be shared across every organisation (as with the three
+   library tables above), use `unique nulls not distinct (org_id, code)` instead of plain `unique` —
+   plain `unique` treats every `NULL org_id` as distinct from every other, so two shared rows with
+   the same name would both be silently accepted and the constraint would stop protecting the exact
+   rows it exists for. This requires Postgres 15+ (this stack runs 17.6).
+
+   Not every unique constraint needs this. If the table already hangs off an org-scoped parent —
+   e.g. `sites(client_id, code)`, `racks(room_id, code)` — the parent's own `org_id` scoping already
+   makes the row unreachable across organisations, so the child's constraint needs no `org_id` of
+   its own. And two constraints are deliberately left global: `members.email` (one auth account,
+   one member row) and `trusted_devices.token_hash` (a secret, where cross-org collision would be a
+   real collision). See `0041_org_scoped_unique_constraints.sql` for the reasoning on both.
+
+   Uniqueness declared as a bare `create unique index` counts too, and is easy to forget precisely
+   *because* it counts: `pg_constraint` does not list it, so a check that only reads that catalogue
+   will call the table clean while an unscoped index sits right next to it. `connections_edge_uniq`
+   is the one example today, and it needs no `org_id` of its own for the same reason as point 4's
+   parent-scoped constraints — it is already keyed by `rack_id`, an org-scoped parent.
+
+5. **The `freeze_org_id` trigger, on every table from point 1 that carries an `id` column.**
+   Point 1's `not null` and the inheritance trigger from point 3 only govern INSERT. Nothing stops a
+   plain `UPDATE ... SET org_id = <another org>` afterwards, and if it succeeds the row moves to a
+   new owner while every composite foreign key from point 3 still points at the old one — the wall
+   point 3 builds has a door in it. `freeze_org_id` (`0035_org_id_triggers.sql`) is a `BEFORE UPDATE`
+   trigger that raises when `new.org_id is distinct from old.org_id`; wire it up the same way the
+   twelve existing `*_freeze_org` triggers do. Skip it and `org_id` is stamped correctly on the way
+   in and free to move on the way out.
+
+   The three library tables and `activity_log` are the deliberate exception, for the same reason
+   they are nullable at point 1: a freeze trigger on `activity_log` would block the
+   `ON DELETE SET NULL` that demotes a deleted member's log rows to platform-level events, and the
+   library tables are not yet org-editable at all.
+
+`src/lib/supabase/tenancy.test.ts` checks all of this against the live schema — every table has
+`org_id`, every table that is referenced by another has `unique (org_id, id)`, every foreign key to
+an org-scoped table is composite (and the full set of composite foreign keys is pinned by name and
+definition, so a dropped or redefined one fails too), every child of an org-scoped parent carries an
+enabled `inherit_org_id` trigger (with the parent table and foreign-key column it reads pinned as
+trigger arguments, so one aimed at the wrong parent fails as well), every unique constraint and
+primary key in `public` — bare index or named constraint — is pinned by name and definition as either
+org-scoped or on the short, explicit exception list, and every table that can be updated after insert
+carries `freeze_org_id`. Skip any of the five steps above and that test fails.
+
+That last sentence was false until review caught it. Step 3 is two things — an inheritance trigger
+*and* a composite foreign key — and only the foreign-key half was asserted; `inherit_org_id` appeared
+in the guard as a word in a comment and in no query. Every trigger `0035` creates could have been
+dropped with the suite still green. Both halves are checked now, and both checks ignore a trigger
+left `DISABLE`d, because `alter table … disable trigger` keeps the `pg_trigger` row and a mere
+existence check would call it present.

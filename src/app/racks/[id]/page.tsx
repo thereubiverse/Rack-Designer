@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/features/auth/members";
 import { getRack, listRackDevices } from "@/features/racks/repository";
 import { listConnections } from "@/features/racks/connectionsRepository";
 import { listPortEndpoints } from "@/features/racks/endpointsRepository";
@@ -12,10 +14,13 @@ export const dynamic = "force-dynamic";
 
 export default async function RackBuilderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const member = await getCurrentMember();
+  if (!member) redirect("/login");
+
   const db = createServiceClient();
   const [rack, devices, types, connections, endpoints, siteScope, brands, wizard, breadcrumb] = await Promise.all([
     getRack(db, id), listRackDevices(db, id), listDeviceTypes(db), listConnections(db, id),
-    listPortEndpoints(db, id), listSiteScope(db, id), listBrands(db), getDeviceWizardSettings(),
+    listPortEndpoints(db, id), listSiteScope(db, id), listBrands(db), getDeviceWizardSettings(member.orgId),
     getRackBreadcrumb(db, id),
   ]);
   const rackTypes = types.filter((t) => t.category === "rack");

@@ -6,8 +6,10 @@ export const KEY_GEMINI = "device_wizard.gemini_api_key";
 
 export interface DeviceWizardSettings { enabled: boolean; hasKey: boolean }
 
-export async function readDeviceWizardSettings(store: SettingsStore): Promise<DeviceWizardSettings> {
-  const [enabled, key] = await Promise.all([store.get(KEY_ENABLED), store.get(KEY_GEMINI)]);
+export async function readDeviceWizardSettings(
+  store: SettingsStore, orgId: string
+): Promise<DeviceWizardSettings> {
+  const [enabled, key] = await Promise.all([store.get(orgId, KEY_ENABLED), store.get(orgId, KEY_GEMINI)]);
   // hasKey reflects the DB key only (what the settings UI manages). A GEMINI_API_KEY env var is a
   // server-side detection fallback (see resolveGeminiKey) but is intentionally NOT surfaced here, so
   // the in-app "key is set" state and Remove action stay honest about the DB value.
@@ -17,17 +19,18 @@ export async function readDeviceWizardSettings(store: SettingsStore): Promise<De
 export async function writeDeviceWizardSettings(
   store: SettingsStore,
   patch: { enabled?: boolean; apiKey?: string },
+  orgId: string,
 ): Promise<void> {
-  if (patch.enabled !== undefined) await store.set(KEY_ENABLED, patch.enabled ? "true" : "false");
+  if (patch.enabled !== undefined) await store.set(orgId, KEY_ENABLED, patch.enabled ? "true" : "false");
   if (patch.apiKey !== undefined) {
     const k = patch.apiKey.trim();
-    if (k) await store.set(KEY_GEMINI, k);
-    else await store.del(KEY_GEMINI);
+    if (k) await store.set(orgId, KEY_GEMINI, k);
+    else await store.del(orgId, KEY_GEMINI);
   }
 }
 
-export async function resolveGeminiKey(store: SettingsStore): Promise<string | null> {
-  const dbKey = (await store.get(KEY_GEMINI))?.trim();
+export async function resolveGeminiKey(store: SettingsStore, orgId: string): Promise<string | null> {
+  const dbKey = (await store.get(orgId, KEY_GEMINI))?.trim();
   if (dbKey) return dbKey;
   const env = process.env.GEMINI_API_KEY?.trim();
   return env ? env : null;

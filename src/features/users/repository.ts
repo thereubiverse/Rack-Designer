@@ -86,9 +86,9 @@ export async function listRolesForInvariant(
  *  enforcing that, so an un-normalised address fails the insert rather than being silently fixed
  *  up here. `invited_at` and `disabled_at` are left to their column defaults (now(), null). */
 export async function insertMember(
-  db: SupabaseClient, email: string, name: string, role: Role
+  db: SupabaseClient, email: string, name: string, role: Role, orgId: string
 ): Promise<void> {
-  const { error } = await db.from("members").insert({ email, name, role });
+  const { error } = await db.from("members").insert({ email, name, role, org_id: orgId });
   if (error) throw new Error(`insertMember: ${error.message}`);
 }
 

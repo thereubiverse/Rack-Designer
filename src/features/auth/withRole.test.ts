@@ -13,6 +13,7 @@ import { NEEDS_EDITOR, NEEDS_ADMIN } from "./roles";
 const member = (role: Role): Member => ({
   id: "m1", email: "bob@example.com", name: "Bob",
   authUserId: "au1", disabledAt: null, avatarPath: null, role,
+  orgId: "00000000-0000-0000-0000-000000000001",
 });
 
 beforeEach(() => { vi.clearAllMocks(); });

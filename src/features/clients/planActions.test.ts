@@ -13,16 +13,20 @@ vi.mock("./planStorage", () => ({
   removePlanObject: vi.fn(),
   uploadPlanPdf: vi.fn(),
   removePlanPdf: vi.fn(),
+  // Real (pure) implementation, not a vi.fn(): actions.ts calls this to build the storage path, and
+  // the assertions below check the path it produces, so a fake here would just be re-testing itself.
+  planPathFor: (orgId: string, siteId: string, floorId: string, ext: "png" | "pdf") =>
+    `${orgId}/${siteId}/${floorId}.${ext}`,
 }));
 vi.mock("@/features/auth/withMember", () => ({
   // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
   // action test would be re-testing the guard instead of the action.
   withMember: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
   withEditor: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
   withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
-    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
+    fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
 }));
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -179,7 +183,7 @@ beforeEach(() => {
 describe("uploadFloorPlanAction", () => {
   it("uploads decoded dimensions to a site-derived path, ignoring misleading client-supplied width/height", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -194,22 +198,52 @@ describe("uploadFloorPlanAction", () => {
     expect(uploadPlanObject).toHaveBeenCalledTimes(1);
     const [calledDb, calledPath, calledBytes] = vi.mocked(uploadPlanObject).mock.calls[0];
     expect(calledDb).toBe(db);
-    expect(calledPath).toBe("SITE-A/f1.png");
+    expect(calledPath).toBe("org-1/SITE-A/f1.png");
     expect(calledBytes).toEqual(hexToBytes(PNG_640x480_HEX));
 
     const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
     expect(planUpsert?.values).toMatchObject({
       floor_id: "f1",
-      storage_path: "SITE-A/f1.png",
+      storage_path: "org-1/SITE-A/f1.png",
       width_px: 640,
       height_px: 480,
       source: "image",
     });
   });
 
+  it("takes the storage prefix from the FLOOR's organisation, not the acting member's", async () => {
+    // The mismatch this pins: the row's org_id is stamped by 0035's inherit_org_id trigger from the
+    // floor, so if the path prefix came from `member.orgId` instead, the two sources could disagree
+    // for any floorId the caller posts. The acting member is org-1 (see the withEditor mock at the
+    // top of this file); the floor belongs to org-2. Every path this action produces — PNG, PDF, and
+    // the columns written to the row — must say org-2, the same owner the trigger will stamp.
+    //
+    // Before the fix this test produced `org-1/SITE-B/f2.png`: org-2's plan overwritten at a prefix
+    // org-2 cannot read once slice 2's first-path-segment storage policies land.
+    const { db, upsertCalls } = makeFakeDb({
+      floors: { selectResult: () => ({ data: { id: "f2", site_id: "SITE-B", org_id: "org-2" }, error: null }) },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(db);
+
+    const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
+    const res = await uploadFloorPlanAction(uploadForm({ floorId: "f2", extra: { pdf: pdfBlob } }));
+
+    expect(res).toEqual({ ok: true });
+    expect(vi.mocked(uploadPlanObject).mock.calls[0][1]).toBe("org-2/SITE-B/f2.png");
+    expect(vi.mocked(uploadPlanPdf).mock.calls[0][1]).toBe("org-2/SITE-B/f2.pdf");
+
+    const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
+    expect(planUpsert?.values).toMatchObject({
+      storage_path: "org-2/SITE-B/f2.png",
+      pdf_storage_path: "org-2/SITE-B/f2.pdf",
+    });
+    // The member's organisation must appear nowhere in any path this action built.
+    expect(JSON.stringify(planUpsert?.values)).not.toContain("org-1");
+  });
+
   it("rejects non-PNG bytes before any storage write", async () => {
     const { db } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -223,7 +257,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("rejects a file over 15MB before any storage write", async () => {
     const { db } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -249,7 +283,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("uploads a pdf blob alongside the PNG, storing its path and page in the same upsert", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -265,19 +299,19 @@ describe("uploadFloorPlanAction", () => {
     expect(uploadPlanPdf).toHaveBeenCalledTimes(1);
     const [calledDb, calledPath, calledBytes] = vi.mocked(uploadPlanPdf).mock.calls[0];
     expect(calledDb).toBe(db);
-    expect(calledPath).toBe("SITE-A/f1.pdf");
+    expect(calledPath).toBe("org-1/SITE-A/f1.pdf");
     expect(calledBytes).toEqual(pdfBytes);
 
     const planUpsert = upsertCalls.find((c) => c.table === "floor_plans");
     expect(planUpsert?.values).toMatchObject({
-      pdf_storage_path: "SITE-A/f1.pdf",
+      pdf_storage_path: "org-1/SITE-A/f1.pdf",
       pdf_page: 2,
     });
   });
 
   it("accepts pdfPage 0 as a real page index, not as falsy/absent", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -291,7 +325,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("uploads with no pdf blob: uploadPlanPdf is never called and the row gets pdf_storage_path null", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -306,7 +340,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("still returns ok and keeps the PNG when the PDF upload fails, falling back to no stored PDF", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
     vi.mocked(uploadPlanPdf).mockRejectedValue(new Error("Storage down"));
@@ -324,7 +358,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("treats a non-numeric pdfPage as absent rather than throwing", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 
@@ -337,7 +371,7 @@ describe("uploadFloorPlanAction", () => {
 
   it("treats a negative or non-integer pdfPage as absent rather than throwing", async () => {
     const { db, upsertCalls } = makeFakeDb({
-      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A" }, error: null }) },
+      floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
     vi.mocked(createServiceClient).mockReturnValue(db);
 

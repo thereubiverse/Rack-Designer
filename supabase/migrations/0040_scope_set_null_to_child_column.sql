@@ -1,0 +1,43 @@
+-- Multi-tenancy slice 1, task 4 follow-up: fix a second instance of the composite-FK SET NULL bug
+-- that 0039 itself introduced (and mislabeled as "preserved as-is").
+--
+-- 0039 redefined floor_devices_room_fk as a composite foreign key with a plain
+-- `on delete set null`. On a composite key that nulls every column in the key, not just the
+-- child reference — so deleting a room tries to null floor_devices.org_id as well as
+-- floor_devices.room_id. Every org-scoped table carries a freeze_org_id BEFORE UPDATE trigger
+-- that rejects any change to org_id, so the delete fails outright:
+--
+--   ERROR:  freeze_org_id: floor_devices row ... cannot change organisation (<uuid> -> <NULL>)
+--
+-- Reproduced live (inside begin; ... rollback;) by assigning a real floor_devices row to a real
+-- room and deleting that room. It was dormant only because no live floor_devices row had room_id
+-- set at the time 0039 was written; it fires the first time a device is assigned to a room and
+-- that room is later deleted.
+--
+-- Fix: name the child column so only room_id is nulled, org_id is left untouched — the same
+-- pattern 0039 already used correctly for activity_log_member_fk. Postgres 15+ supports naming
+-- the columns; this database runs 17.6.
+alter table floor_devices drop constraint floor_devices_room_fk;
+alter table floor_devices add constraint floor_devices_room_fk
+  foreign key (org_id, room_id) references rooms (org_id, id) on delete set null (room_id);
+
+-- The full-catalogue check for other multi-column SET NULL foreign keys in public (querying
+-- pg_constraint where contype='f' and confdeltype='n') turned up only two other SET NULL foreign
+-- keys: activity_log_member_fk (already column-scoped, correct) and
+-- device_templates_brand_id_fkey (single-column, not affected by this bug). No other constraint
+-- shares this defect.
+--
+-- 0039's inline comment above floor_devices_room_fk (lines 48-50) claims "this constraint carried
+-- ON DELETE SET NULL live, so a room delete un-assigns the device instead of removing it.
+-- Preserved as-is." That was wrong: the composite rewrite changed the behaviour from
+-- single-column SET NULL to whole-key SET NULL, which is not preserving it — it silently broke
+-- room deletion for any room with an assigned device. Correcting the comment text in an applied
+-- migration changes no schema and is safe (0039 is not re-run); the corrected text now reads:
+--
+--   room_id is nullable (a device can be placed on a floor without an assigned room). The
+--   single-column form previously let a room delete un-assign the device. Making the key
+--   composite (org_id, room_id) with a plain `on delete set null` changed that: on a
+--   multi-column key, SET NULL without a named column list nulls every column in the key,
+--   including org_id, which the freeze_org_id trigger then rejects, turning every room
+--   delete with an assigned device into a hard failure. Fixed in 0040 by naming the child
+--   column: `on delete set null (room_id)`.

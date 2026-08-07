@@ -20,6 +20,10 @@ export interface Member {
    *  without it here the layout has to select the same row a second time on every navigation. */
   avatarPath: string | null;
   role: Role;
+  /** The organisation this member belongs to. Every action reaches it through the Member that
+   *  withMember already hands them, which is why adding tenancy here changes no wrapper signature
+   *  and no call site. */
+  orgId: string;
 }
 
 export type MemberDecision = { allowed: true; member: Member } | { allowed: false };
@@ -58,7 +62,7 @@ export async function getCurrentMember(): Promise<Member | null> {
   const db = createServiceClient();
   const { data, error } = await db
     .from("members")
-    .select("id, email, name, auth_user_id, disabled_at, avatar_path, role")
+    .select("id, email, name, auth_user_id, disabled_at, avatar_path, role, org_id")
     .eq("email", normaliseEmail(email))
     .maybeSingle();
   // A query failure (outage, bad credentials, misconfiguration) also leaves `data` null, which is
@@ -68,7 +72,15 @@ export async function getCurrentMember(): Promise<Member | null> {
   if (error) {
     console.error("getCurrentMember: members query failed", { error });
   }
-  const row = data
+  // A null org_id means a members row that predates the backfill (the column is nullable until the
+  // next task adds NOT NULL) — not a member with no organisation. Building a Member with
+  // orgId: String(null) === "null" would let that string reach a later `.eq("org_id", ...)` and fail
+  // as a uuid parse error (22P02) far from this cause, so it gets the same uniform refusal as a
+  // failed lookup instead of becoming a poisoned Member.
+  if (data && data.org_id === null) {
+    console.error("getCurrentMember: member row has a null org_id (never backfilled)", { memberId: data.id });
+  }
+  const row = data && data.org_id !== null
     ? {
         id: String(data.id),
         email: String(data.email),
@@ -77,6 +89,7 @@ export async function getCurrentMember(): Promise<Member | null> {
         disabledAt: data.disabled_at === null ? null : String(data.disabled_at),
         avatarPath: data.avatar_path == null ? null : String(data.avatar_path),
         role: isRole(data.role) ? data.role : "viewer",
+        orgId: String(data.org_id),
       }
     : null;
   const decision = memberDecision(row);

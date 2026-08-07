@@ -100,6 +100,40 @@ device at all. That last one matters: keying it off `deploy/first-device-token.t
 tells you to delete, meant a later re-run silently minted a **second** permanent approved device and a
 fresh break-glass token. Deleting the file, as instructed, is safe.
 
+## Upgrading an existing deployment
+
+Pull the new code and re-run `deploy/install.sh`. It is safe to re-run (see above): secrets are not
+regenerated, and only migrations absent from `installer.schema_migrations` are applied.
+
+**One upgrade needs a step the installer does not do for you.** The multi-tenancy migrations
+(`0034`–`0041`) gave every row an owning organisation, and stored objects are namespaced by it —
+floor plans and avatars now live under `{orgId}/…`. Objects uploaded *before* that upgrade sit at
+the old, unprefixed paths, and nothing moves them automatically. Run the one-off script once, after
+the installer has finished:
+
+```bash
+cd /path/to/network-doc-platform
+set -a; . deploy/.env; set +a
+NEXT_PUBLIC_SUPABASE_URL="https://$APP_HOSTNAME" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+  npx tsx scripts/migrate-storage-to-org-paths.ts --dry-run
+# read the output, then run it for real by dropping --dry-run
+```
+
+Skip it and the deployment ends up with a mixed layout: rows written after the upgrade under an org
+prefix, everything older beside it without one. Nothing breaks *today* — the app reads each path
+from its row — but slice 2's storage policies key on the first path segment, and an object that has
+no organisation segment cannot be granted to anyone once they land.
+
+It verifies rather than trusts: source bytes are hashed before each move and the object is read back
+and re-hashed at its destination before the row is updated, so a row is never pointed at an object
+the script has not itself read at the new path. Nothing is deleted, one failed object is reported
+instead of ending the run, and re-running resumes. It also **reports** any object no row points at —
+those are left exactly where they are; deciding whether an orphan is rubbish or something you want
+back is yours, not the script's.
+
+Take a backup first (`deploy/backup.sh`, below). The storage move is the one part of that upgrade
+that reverting a migration does not undo.
+
 ## The break-glass first device
 
 The installer writes `deploy/first-device-token.txt`, mode 600 and gitignored. It exists because of a

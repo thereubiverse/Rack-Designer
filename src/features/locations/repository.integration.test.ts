@@ -32,7 +32,7 @@ describe("location repository (integration)", () => {
   });
 
   it("creates a full hierarchy under a client's site", async () => {
-    const client = await createClientRecord(db, { code: CLIENT_CODE, name: "location repo test" });
+    const client = await createClientRecord(db, { code: CLIENT_CODE, name: "location repo test", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSite(db, { clientId: client.id, code: "HQ", name: "Headquarters" });
     expect(site.client_id).toBe(client.id);
     const floor = await createFloor(db, { siteId: site.id, code: "28" });

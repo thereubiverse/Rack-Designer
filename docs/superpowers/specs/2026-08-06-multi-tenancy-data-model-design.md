@@ -9,6 +9,45 @@ security posture is **unchanged** — still service-role access, still applicati
 changes is that the schema can express "whose data is this", which is the part that gets more
 expensive with every feature added and cannot be retrofitted cheaply later.
 
+## The gate this slice leaves behind
+
+> The schema now permits a second organisation. **The application is not yet safe to have one.**
+> Every server action still queries without an organisation filter and with full service-role
+> privileges — enforcement is slice 2. **Do not create a second organisation, or open registration,
+> until slice 2 lands.**
+
+This is not caution about an abstract risk. The consequences are already readable in the code, and
+they are the reason the gate is written here rather than assumed:
+
+- `src/features/users/repository.ts:77` (`listRolesForInvariant`) computes the last-admin invariant
+  over **every** `members` row regardless of organisation, so org 2's admins decide whether org 1 may
+  demote its own last one.
+- `updateMemberRole` and `setMemberDisabled` (`:95-108`) key on member id alone, and
+  `listMembers` (`:43`) reads every member row in the database — so org 1's admin screen would hand
+  org 1's admin org 2's member uuids, and both writes would accept them.
+
+None of that is a defect *in this slice*. It is what "row-level security and scoping the 141 server
+actions are deliberately out of scope" means in practice, spelled out so that the one operational
+rule it implies — one organisation until slice 2 — is stated rather than inferred.
+
+### The library tables are the same decision, and belong to slice 4
+
+`createBrand` (`src/features/device-library/repository.ts:85`), `createDeviceType` (`:35`),
+`createDeviceTemplate` (`:121`) and `duplicateDeviceTemplate` (`:141`) all write `org_id NULL` —
+which in this schema means "shared with every organisation". A second organisation would therefore
+see, and be able to edit, everything the first one created in its device library.
+
+Those NULLs are also exactly why the single-column foreign keys **into** the library
+(`device_templates.brand_id`, `rack_devices.template_id`, and the rest) are currently safe, and why
+`tenancy.test.ts` exempts library parents from its composite-foreign-key assertion: while every
+library row is shared, no cross-organisation link is representable, because there is no other
+organisation's row to point at.
+
+That makes it one decision, not three. Scoping the writers without also making those foreign keys
+composite would create precisely the hole their present safety assumes away: an org-1 template
+pointing at an org-2 brand, with nothing in the schema to refuse it. Both halves belong to slice 4,
+together, when the shared-library split is designed.
+
 ## Why this is separated from the enforcement work
 
 Slice 2 makes the database refuse cross-company rows. That is the decision already taken, and it is
@@ -52,10 +91,17 @@ The alternative is deriving ownership by joining up the chain — `connections` 
 policy tomorrow: a policy containing a five-table join is both slow on every row and easy to get
 subtly wrong. Slice 2's policies must be one-liners, and that requires the column to be present.
 
-- **`org_id uuid not null`** on the 16 tenant tables: `clients`, `sites`, `floors`, `rooms`,
+- **`org_id uuid not null`** on 15 tenant tables: `clients`, `sites`, `floors`, `rooms`,
   `racks`, `rack_devices`, `connections`, `port_endpoints`, `floor_devices`, `floor_plans`,
-  `members`, `activity_log`, `trusted_devices`, `phone_verifications`, `device_challenges`,
-  `app_settings`.
+  `members`, `trusted_devices`, `phone_verifications`, `device_challenges`, `app_settings`.
+- **`org_id uuid null` on `activity_log`**, which was originally in the list above and should not
+  have been. `activity_log.member_id` is nullable and `src/features/activity/authLog.ts` passes
+  `memberId ?? null`, because **a refused sign-in from an address belonging to nobody has no
+  member — and therefore no organisation.** Forcing not null would make that insert fail and
+  silently destroy the sign-in-refusal audit trail, which is one of the reasons this table exists.
+  NULL here means "a platform-level event belonging to no organisation"; slice 2's policies leave
+  those rows invisible to every tenant, which is correct — they are the operator's business, not a
+  customer's. Found by review, after the first draft of this spec asserted otherwise.
 - **`org_id uuid null`** on the 3 library tables: `brands`, `device_types`, `device_templates`.
   **NULL means "standard, shared by every organisation"**; a value means "created by, and private
   to, that organisation". All 24 existing `device_types` (`is_standard = true`), 4 brands and 6
@@ -179,7 +225,10 @@ stopping over rather than working around.
 the normal suite, and fails when someone adds a table without thinking about tenancy. It asserts:
 
 - every table in `public` has an `org_id` column;
-- the 16 tenant tables have it `not null`, and the 3 library tables permit NULL;
+- the 15 tenant tables have it `not null`, and the 4 tables that permit NULL — the 3 library tables
+  plus `activity_log` — still do. (16 tables gain the *column* in `0034`; only 15 gain `not null`,
+  because `activity_log` is deliberately nullable. See the second bullet under "Every table carries
+  `org_id`" above, and migration `0037`.)
 - every parent-child foreign key includes `org_id` (no single-column FK to an org-scoped parent
   survives);
 - the six org-scoped unique constraints exist, and the library ones are `nulls not distinct`;

@@ -39,7 +39,7 @@
 | `port_endpoints` | not null | trigger ← `racks` via `rack_id` |
 | `floor_devices` | not null | trigger ← `sites` via `site_id` |
 | `floor_plans` | not null | trigger ← `floors` via `floor_id` |
-| `activity_log` | not null | trigger ← `members` via `member_id` |
+| `activity_log` | **nullable** | trigger ← `members` via `member_id`; NULL = platform event with no org (a refused sign-in from an unknown address) |
 | `trusted_devices` | not null | trigger ← `members` via `member_id` |
 | `phone_verifications` | not null | trigger ← `members` via `member_id` |
 | `device_challenges` | not null | trigger ← `trusted_devices` via `device_id` |
@@ -52,8 +52,16 @@
 **Create:**
 - `supabase/migrations/0034_organisations_and_org_id.sql` — the table, the columns, the backfill
 - `supabase/migrations/0035_org_id_triggers.sql` — inheritance triggers and the update guard
-- `supabase/migrations/0036_org_id_not_null_and_composite_fks.sql` — the enforcement
-- `supabase/migrations/0037_org_scoped_unique_constraints.sql` — uniques that were global
+- `supabase/migrations/0036_app_settings_org_key.sql` — the settings key, needed by Task 3's upsert
+- `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql` — the enforcement
+- `supabase/migrations/0039_complete_composite_fks.sql` — the composite foreign keys `0037` missed,
+  and the `activity_log` fallout of its own `not null`. Added during implementation, not planned:
+  review found seven single-column foreign keys still reaching an org-scoped parent after `0037`,
+  which is exactly the cross-organisation link this slice exists to make unrepresentable.
+- `supabase/migrations/0040_scope_set_null_to_child_column.sql` — scopes `ON DELETE SET NULL` to the
+  child column on `floor_devices_room_fk`, so deleting a room nulls `room_id` rather than nulling the
+  row's `org_id` along with it. Also added during implementation, as the tail of `0039`'s work.
+- `supabase/migrations/0041_org_scoped_unique_constraints.sql` — uniques that were global
 - `src/lib/supabase/tenancy.test.ts` — the live schema guard
 - `scripts/migrate-storage-to-org-paths.ts` — the one-off object move
 
@@ -494,18 +502,27 @@ admin's details (Step 2 of the script already prompts for hostname, email and na
 ```sql
 with org as (
   insert into organisations (name) values (:'orgname')
-  on conflict do nothing
   returning id
 )
 insert into members (email, name, role, auth_user_id, org_id)
-values (:'email', :'name', 'admin', :'authid'::uuid,
-        coalesce((select id from org), (select id from organisations order by created_at limit 1)))
-on conflict (email) do nothing;
+values (:'email', :'name', 'admin', :'authid'::uuid, (select id from org))
+on conflict (email) do update set auth_user_id = excluded.auth_user_id
+returning id;
 ```
 
-The `coalesce` keeps the installer's re-run promise intact: a second run finds the organisation
-already there and reuses it rather than failing. Add an `ORG_NAME` prompt next to the admin name,
-defaulting to the admin's email domain if left blank.
+**Keep the existing `on conflict (email) do update … returning` — do NOT change it to `do nothing`.**
+An earlier draft of this plan said `do nothing`; that is wrong, and review proved it twice over. The
+comment block above that statement documents the relink as a fix for a real bug (a `members` row
+surviving a GoTrue user recreation and left pointing at a dead `auth_user_id`), naming `do nothing`
+as the cause. And the script's next line refuses to continue on an empty `RETURNING` — under
+`do nothing` a conflicting re-run returns no rows, so the installer would die on the exact
+safe-to-re-run path its own header advertises. The outer `do update` never touches `org_id`, so a
+re-run cannot reassign an existing member's organisation.
+
+Look the organisation up by name BEFORE inserting, rather than relying on `on conflict do nothing` —
+`organisations` has no unique constraint on `name`, so that clause never fires and every re-run would
+leave an orphan organisation behind. Add an `ORG_NAME` prompt next to the admin name, defaulting to
+the admin's email domain if left blank.
 
 - [ ] **Step 7: Fix every caller the compiler names**
 
@@ -536,11 +553,11 @@ git commit -m "Carry the organisation on Member and supply it at the three roots
 ### Task 4: `not null`, and composite foreign keys
 
 **Files:**
-- Create: `supabase/migrations/0036_org_id_not_null_and_composite_fks.sql`
+- Create: `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql`
 
 **Interfaces:**
 - Consumes: populated `org_id` everywhere (Task 1), triggers (Task 2), application writes (Task 3).
-- Produces: `unique (org_id, id)` on every org-scoped parent, composite FKs on every org-scoped child, `not null` on the 16 tenant tables.
+- Produces: `unique (org_id, id)` on every org-scoped parent, composite FKs on every org-scoped child, `not null` on the 15 tenant tables. (16 tables gained the column in `0034`; `activity_log` stays nullable — a refused sign-in from an unknown address has no member and so no organisation.)
 
 - [ ] **Step 1: Write the migration**
 
@@ -575,7 +592,13 @@ alter table connections         alter column org_id set not null;
 alter table port_endpoints      alter column org_id set not null;
 alter table floor_devices       alter column org_id set not null;
 alter table floor_plans         alter column org_id set not null;
-alter table activity_log        alter column org_id set not null;
+-- activity_log is DELIBERATELY ABSENT from this list. `member_id` is nullable and
+-- src/features/activity/authLog.ts passes `memberId ?? null`, because a REFUSED SIGN-IN FROM AN
+-- UNKNOWN ADDRESS has no member — and therefore no organisation. Making this not null would make
+-- that insert fail and silently destroy the sign-in-refusal audit trail, which is one of the
+-- reasons the activity log exists. NULL here means "a platform-level event belonging to no
+-- organisation", and slice 2's policies leave those rows invisible to every tenant, which is
+-- correct: they are the platform operator's business, not a customer's.
 alter table trusted_devices     alter column org_id set not null;
 alter table phone_verifications alter column org_id set not null;
 alter table device_challenges   alter column org_id set not null;
@@ -656,28 +679,16 @@ Compare against the `drop constraint` names above. If any differs, correct the m
 - [ ] **Step 3: Apply it**
 
 ```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0036_org_id_not_null_and_composite_fks.sql
+docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0037_org_id_not_null_and_composite_fks.sql
 ```
 
 Expected: a long run of `ALTER TABLE` with no `ERROR`.
 
 - [ ] **Step 4: Prove a cross-organisation attachment is refused**
 
-```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres <<'SQL'
-begin;
-insert into organisations (name) values ('Rival MSP');
-insert into clients (code, name, org_id)
-  values ('RIVAL', 'Rival Client', (select id from organisations where name='Rival MSP'));
--- QTSI's trigger will stamp this site with QTSI's org, which cannot match Rival's client:
-insert into sites (code, name, client_id)
-  values ('X1', 'Cross Site', (select id from clients where code='RIVAL'));
-select 'this should not print' ;
-rollback;
-SQL
-```
-
-Expected: the insert succeeds *within Rival MSP* (the trigger stamps it Rival, matching its client) — which is correct. Then run the genuinely cross-org case:
+The trigger cannot be used to demonstrate this — it stamps the child with the parent's org, so an
+insert always agrees with itself. The composite key has to be tested where the trigger is *not* in
+the path, which is an UPDATE:
 
 ```bash
 docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres <<'SQL'
@@ -698,7 +709,7 @@ Expected: `ERROR: insert or update on table "sites" violates foreign key constra
 
 ```bash
 ./node_modules/.bin/tsc --noEmit
-git add supabase/migrations/0036_org_id_not_null_and_composite_fks.sql
+git add supabase/migrations/0037_org_id_not_null_and_composite_fks.sql
 git commit -m "Make a cross-organisation row impossible in the database"
 ```
 
@@ -707,7 +718,7 @@ git commit -m "Make a cross-organisation row impossible in the database"
 ### Task 5: Unique constraints that were global
 
 **Files:**
-- Create: `supabase/migrations/0037_org_scoped_unique_constraints.sql`
+- Create: `supabase/migrations/0041_org_scoped_unique_constraints.sql`
 - Modify: `supabase/migrations/README.md`
 
 **Interfaces:**
@@ -743,10 +754,10 @@ alter table device_types drop constraint device_types_category_name_key;
 alter table device_types add constraint device_types_org_category_name_key
   unique nulls not distinct (org_id, category, name);
 
--- app_settings is keyed by name alone today, so one organisation storing its Gemini key would
--- overwrite another's.
-alter table app_settings drop constraint app_settings_pkey;
-alter table app_settings add primary key (org_id, key);
+-- app_settings' primary key is NOT here — it moved to Task 3, migration 0036. Task 3's settings
+-- upsert names `onConflict: "org_id,key"`, and Postgres rejects an ON CONFLICT target with no
+-- matching unique index (42P10), so leaving the key change until now meant every settings save
+-- failed for the two tasks in between. Found in review.
 
 -- UNCHANGED, DELIBERATELY:
 --   members.email stays globally unique. auth.users permits one account per address and members
@@ -763,7 +774,7 @@ alter table app_settings add primary key (org_id, key);
 - [ ] **Step 2: Apply it**
 
 ```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0037_org_scoped_unique_constraints.sql
+docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0041_org_scoped_unique_constraints.sql
 ```
 
 Expected: `ALTER TABLE` throughout, no `ERROR`. If a `drop constraint` fails on a name, list the real names with the query in Task 4 Step 2 and correct it.
@@ -804,7 +815,7 @@ Append a section to `supabase/migrations/README.md` stating: every new table get
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/0037_org_scoped_unique_constraints.sql supabase/migrations/README.md
+git add supabase/migrations/0041_org_scoped_unique_constraints.sql supabase/migrations/README.md
 git commit -m "Scope the global unique constraints to the organisation"
 ```
 
@@ -844,8 +855,16 @@ function sql(query: string): string[] {
   return out.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-/** NULL org_id means "standard, shared by every organisation". Only these three may be nullable. */
-const LIBRARY_TABLES = ["brands", "device_types", "device_templates"];
+/** Tables where a NULL org_id is legitimate, and why — sorted, because the assertion compares
+ *  against a sorted list.
+ *
+ *  The three library tables: NULL means "standard, shared by every organisation".
+ *
+ *  activity_log: NULL means "a platform-level event belonging to no organisation". A refused
+ *  sign-in from an address that belongs to nobody has no member and therefore no org, and
+ *  authLog.ts records exactly that. Forcing not null there would make the insert fail and take the
+ *  sign-in-refusal audit trail with it. */
+const NULLABLE_ORG_TABLES = ["activity_log", "brands", "device_templates", "device_types"];
 
 describe("every row has an owning organisation", () => {
   it("gives every table in public an org_id", () => {
@@ -865,7 +884,7 @@ describe("every row has an owning organisation", () => {
     expect(missing).toEqual([]);
   });
 
-  it("makes org_id not null everywhere except the shared library", () => {
+  it("makes org_id not null everywhere a null would be meaningless", () => {
     const nullable = sql(`
       select c.relname
       from pg_class c
@@ -874,7 +893,9 @@ describe("every row has an owning organisation", () => {
       where n.nspname = 'public' and c.relkind = 'r' and not a.attnotnull
       order by 1
     `);
-    expect(nullable).toEqual(LIBRARY_TABLES.slice().sort());
+    // Exact equality both ways: a new nullable table fails here, and so does one of these four
+    // quietly being tightened, which would break the sign-in-refusal log or the shared library.
+    expect(nullable).toEqual(NULLABLE_ORG_TABLES);
   });
 
   it("carries org_id through every foreign key between two org-scoped tables", () => {
@@ -1170,7 +1191,7 @@ git commit -m "Namespace stored objects by organisation"
 ## Final verification, before the branch is finished
 
 - [ ] `./node_modules/.bin/tsc --noEmit` — clean
-- [ ] `./node_modules/.bin/vitest run src/lib/supabase/tenancy.test.ts src/lib/supabase/grants.test.ts` — 6 + 6 passed
+- [ ] `./node_modules/.bin/vitest run src/lib/supabase/tenancy.test.ts src/lib/supabase/grants.test.ts` — 9 + 6 passed (the tenancy guard grew past the 6 planned here: five assertions were added when review found ways it could stay green while the schema was broken, and a sixth for the `inherit_org_id` triggers, which it had never asserted at all)
 - [ ] Replay all migrations from empty on a throwaway stack, proving they work on a fresh install and not only as increments against this developer's database:
 
 ```bash

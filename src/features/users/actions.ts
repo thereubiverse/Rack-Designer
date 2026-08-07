@@ -14,7 +14,7 @@ import { inviteUserByEmail } from "./invite";
 
 export const inviteMemberAction: (
   formData: FormData
-) => Promise<{ ok: boolean; error?: string; warning?: string }> = withAdmin("member.invite", async (_admin, formData: FormData) => {
+) => Promise<{ ok: boolean; error?: string; warning?: string }> = withAdmin("member.invite", async (admin, formData: FormData) => {
   const email = normaliseEmail(String(formData.get("email") ?? ""));
   const name = String(formData.get("name") ?? "").trim();
   const role = String(formData.get("role") ?? "");
@@ -23,7 +23,7 @@ export const inviteMemberAction: (
 
   const db = createServiceClient();
   try {
-    await insertMember(db, email, name, role);
+    await insertMember(db, email, name, role, admin.orgId);
   } catch {
     // The unique constraint on email is the real check; racing two invites for the same address
     // lands here rather than creating a duplicate.

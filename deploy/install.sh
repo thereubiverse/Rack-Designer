@@ -183,6 +183,20 @@ ADMIN_EMAIL="$(EMAIL_TO_NORMALISE="$ADMIN_EMAIL_RAW" node -e 'process.stdout.wri
 read -r -p "First admin's name: " ADMIN_NAME
 [[ -n "$ADMIN_NAME" ]] || die "a name is required"
 
+read -r -p "Organisation name [default: your email domain]: " ORG_NAME
+if [[ -z "$ORG_NAME" ]]; then
+  # `${ADMIN_EMAIL#*@}` strips up to the first '@' — and when the string contains no '@' at all it
+  # returns the WHOLE string unchanged rather than an empty one. So the `[[ -n "$ORG_NAME" ]]` guard
+  # that used to be the only check here could not fail under any input: an address typed as `bob`
+  # would have quietly produced an organisation named `bob`. Check the thing that actually decides
+  # the answer — whether there is a domain to take.
+  [[ "$ADMIN_EMAIL" == *@* ]] \
+    || die "'$ADMIN_EMAIL' has no '@', so there is no domain to name an organisation after — re-run and type an organisation name"
+  ORG_NAME="${ADMIN_EMAIL#*@}"
+  # Now reachable, and for a real input: `bob@` passes the test above and leaves this empty.
+  [[ -n "$ORG_NAME" ]] || die "'$ADMIN_EMAIL' has nothing after the '@' — re-run and type an organisation name"
+fi
+
 # -s: never echoed to the terminal, never lands in shell history.
 read -r -s -p "First admin's password: " ADMIN_PASSWORD
 echo
@@ -478,15 +492,53 @@ fi
 # Every query below that interpolates a -v variable is therefore fed on stdin, which does expand it.
 # :'...' still quotes the value as a literal, so the email is never pasted into SQL text raw.
 #
+# The organisation: look it up by name first and insert only when absent — the same shape as the
+# member and bootstrap-device checks, which decide against the DATABASE rather than a file.
+# `organisations` has no unique constraint on `name` (verified: only `organisations_pkey`), and two
+# different companies may legitimately share a name in a multi-tenant product, so one is
+# deliberately NOT added here. That means an `on conflict do nothing` on the insert can never fire —
+# a data-modifying CTE always executes regardless of a downstream conflict that never happens — so
+# the previous version minted a brand-new organisation on every re-run, and its `coalesce` fallback
+# (`order by created_at limit 1`) was dead code that, had it ever run, would have picked migration
+# 0034's hardcoded QTSI row over this operator's. Looking the name up first makes re-running the
+# installer converge on the same organisation instead.
+org_id="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+    -v orgname="$ORG_NAME" -tA <<'SQL'
+select id from organisations where name = :'orgname' order by created_at limit 1;
+SQL
+)"
+org_id="$(printf '%s' "$org_id" | tr -d '[:space:]')"
+
+if [[ -n "$org_id" ]]; then
+  log "using existing organisation '$ORG_NAME' ($org_id)"
+else
+  # -q here is load-bearing, not cosmetic: psql prints the command tag for a non-SELECT (e.g.
+  # `INSERT 0 1`) to stdout even under `-tA` — `-t`/`-A` only strip column headers and alignment,
+  # not the tag. Without `-q` that tag gets welded onto the id below by `tr -d '[:space:]'`,
+  # producing e.g. "f1be42c7-...-52f28c872445INSERT01", which is not a valid uuid and fails the
+  # members insert further down. `-q` suppresses it so only the returned id reaches org_id.
+  org_id="$(
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+      -v orgname="$ORG_NAME" -qtA <<'SQL'
+insert into organisations (name) values (:'orgname') returning id;
+SQL
+  )"
+  org_id="$(printf '%s' "$org_id" | tr -d '[:space:]')"
+  [[ -n "$org_id" ]] || die "inserting organisation '$ORG_NAME' returned no id — refusing to continue"
+  log "created organisation '$ORG_NAME' ($org_id)"
+fi
+
 # The upsert repairs the link rather than skipping: `do nothing` was what let a members row survive
-# pointing at an auth user that no longer exists. name and role are deliberately NOT overwritten —
-# an operator who renamed themselves or an admin who was demoted on purpose should stay that way;
-# the auth_user_id is the only field this step owns. `returning` reports which branch ran.
+# pointing at an auth user that no longer exists. name, role and org_id are deliberately NOT
+# overwritten on conflict — an operator who renamed themselves or an admin who was demoted on
+# purpose should stay that way; the auth_user_id is the only field this step owns. `returning`
+# reports which branch ran.
 member_state="$(
   "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
-    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -qtA <<'SQL'
-insert into members (email, name, role, auth_user_id)
-values (:'email', :'name', 'admin', :'authid'::uuid)
+    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -v orgid="$org_id" -qtA <<'SQL'
+insert into members (email, name, role, auth_user_id, org_id)
+values (:'email', :'name', 'admin', :'authid'::uuid, :'orgid'::uuid)
 on conflict (email) do update
    set auth_user_id = excluded.auth_user_id
 returning case when xmax = 0 then 'inserted' else 'relinked' end;
