@@ -82,10 +82,12 @@ where it cannot be bypassed, not in a comment.
 not supply a right one. A `before insert` trigger on each child table copies `org_id` from the row it
 hangs off. Consequences worth stating plainly:
 
-- The application only ever supplies `org_id` at the two roots — creating a client, and creating a
-  member. Every other insert is untouched. (For scale: `src/` exports 141 async functions across 15
-  `"use server"` files, and 53 files reach the database through `createServiceClient`. Leaving that
-  surface alone is the entire point of the trigger design.)
+- The application only ever supplies `org_id` in three places: creating a client, creating a member,
+  and writing a setting. The first two are the roots of the hierarchy; `app_settings` is the third
+  because it hangs off no parent row at all, so there is nothing for a trigger to read. Every other
+  insert is untouched. (For scale: `src/` exports 141 async functions across 15 `"use server"` files,
+  and 53 files reach the database through `createServiceClient`. Leaving that surface alone is the
+  entire point of the trigger design.)
 - `org_id` becomes non-updatable on child tables (a `before update` guard raises if it changes),
   because "move this rack to another company" is not an operation this product has.
 
