@@ -142,7 +142,31 @@ exposed table is caught regardless of which set of defaults produced it.
 
 ## Row-level security
 
-There is none, deliberately. The service-role client bypasses RLS, and that is what the whole
+**This section used to say "there is none, deliberately". That was wrong**, and a spike for slice 2
+found out by measurement. RLS is *enabled* on twelve tables — `app_settings`, `brands`, `clients`,
+`connections`, `device_templates`, `device_types`, `floors`, `port_endpoints`, `rack_devices`,
+`racks`, `rooms`, `sites` — each carrying one policy named `single_org_all`, added by migrations
+`0001` through `0008`:
+
+```sql
+create policy single_org_all on clients for all using (true) with check (true);
+```
+
+Granted to PUBLIC, with `using (true)`. It permits everything, which is why nobody noticed: the
+effect is indistinguishable from RLS being off, and the application reaches the database as
+`service_role`, which bypasses RLS anyway.
+
+**It is not harmless.** Postgres ORs permissive policies together, so a restrictive tenant policy
+added beside it does nothing at all. The spike proved it: with `single_org_all` in place, a token
+scoped to one organisation returned *both* organisations' rows, and a token carrying no organisation
+at all returned *everything*. Any migration adding a tenant policy must drop `single_org_all` on the
+same table in the same file, and the guard must assert that no permissive `true`/PUBLIC policy
+survives — a catalogue-shaped check that only looks for the presence of the new policy would stay
+green while enforcing nothing.
+
+The original reasoning below still holds for why none of this mattered until now:
+
+The service-role client bypasses RLS, and that is what the whole
 application uses — so policies would govern only the direct-REST path, which `0027` closed outright.
 RLS becomes the right tool if the browser ever queries Supabase directly, or if a role must be
 genuinely unable to read something independently of application code. Neither is true today, and

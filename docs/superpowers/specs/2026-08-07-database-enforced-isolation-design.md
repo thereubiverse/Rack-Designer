@@ -80,6 +80,44 @@ be proven, and sit in production while the application half is done incrementall
 This is the same shape as slice 1, for the same reason: it separates the part that is mechanical and
 provable from the part that can break the app, so a failure in one is not mistaken for the other.
 
+## What the spike found, and what it changes
+
+The spike ran before any of this was built, against a fresh throwaway install. Both behaviours the
+design depends on hold: PostgREST switches to a role named in a custom claim (`rpc/whoami` returned
+`current_user: app_tenant`, `session_user: authenticator`), and a policy reads a custom `org_id`
+claim out of `request.jwt.claims`. Scoping worked, `with check` refused a cross-organisation insert
+with `42501`, and — the assertion the design rests on — **a token carrying no `org_id` returned zero
+rows, not all rows.**
+
+Four things it found that the design as first written would have got wrong:
+
+**1. Twelve tables already have RLS enabled, with a policy that permits everything.** Migrations
+`0001` through `0008` each added `create policy single_org_all … for all using (true) with check
+(true)`, granted to PUBLIC, on `app_settings`, `brands`, `clients`, `connections`,
+`device_templates`, `device_types`, `floors`, `port_endpoints`, `rack_devices`, `racks`, `rooms` and
+`sites`. Postgres ORs permissive policies together, so **a tenant policy added beside one of these
+does nothing at all.** Measured, not reasoned: with `single_org_all` present, a token scoped to one
+organisation returned both organisations' rows, and a token with no organisation returned every row.
+
+Each tenant policy must therefore `drop policy single_org_all` on the same table in the same
+migration. And the guard must assert that no permissive `true`/PUBLIC policy survives anywhere — a
+check that merely confirms the new policy exists would stay green while enforcing nothing, which is
+the third time this project has met that exact shape of blind spot.
+
+`supabase/migrations/README.md` claimed "there is none, deliberately" about RLS. That has been
+corrected.
+
+**2. `exp: 60` is really a 90-second window.** PostgREST allows 30 seconds of leeway past expiry —
+bisected: expired by 30s is accepted, expired by 31s returns `PGRST303 JWT expired`. The token
+lifetime is still 60 seconds, but the security claim must be stated as 90.
+
+**3. `app_tenant` needs `usage on schema public`**, which the first draft of this spec omitted from
+its setup list. Without it every query fails regardless of table grants.
+
+**4. `grant app_tenant to authenticator` is mandatory** — without it PostgREST returns
+`permission denied to set role "app_tenant"` (403). That error is itself proof it honours the custom
+claim, and it is the failure an operator will hit if the role is created by hand.
+
 ## Policy shapes
 
 Three kinds of table, three shapes:
@@ -87,7 +125,10 @@ Three kinds of table, three shapes:
 **The 15 tenant tables** — `org_id` is `not null`:
 
 ```sql
+-- Already enabled on 12 of these; harmless and explicit to repeat.
 alter table clients enable row level security;
+-- MANDATORY on those 12: a permissive `using (true)` policy ORs with the one below and defeats it.
+drop policy if exists single_org_all on clients;
 create policy clients_tenant on clients for all to app_tenant
   using (org_id = current_org_id())
   with check (org_id = current_org_id());
