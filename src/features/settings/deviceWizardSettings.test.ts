@@ -3,14 +3,20 @@ import { readDeviceWizardSettings, writeDeviceWizardSettings, resolveGeminiKey, 
 import type { SettingsStore } from "./store";
 
 const ORG_ID = "00000000-0000-0000-0000-000000000001";
+const OTHER_ORG_ID = "00000000-0000-0000-0000-000000000002";
 
-function fakeStore(initial: Record<string, string> = {}): SettingsStore & { data: Record<string, string> } {
+// Records the org id every call arrives with, so a test can assert it is the one that was passed
+// in — a store that discards its orgId argument (or a caller that hardcodes/drops it) would leave
+// `orgIdsSeen` wrong even though every read/write still "worked".
+function fakeStore(initial: Record<string, string> = {}): SettingsStore & { data: Record<string, string>; orgIdsSeen: string[] } {
   const data = { ...initial };
+  const orgIdsSeen: string[] = [];
   return {
     data,
-    get: vi.fn(async (_orgId: string, k: string) => (k in data ? data[k] : null)),
-    set: vi.fn(async (_orgId: string, k: string, v: string) => { data[k] = v; }),
-    del: vi.fn(async (_orgId: string, k: string) => { delete data[k]; }),
+    orgIdsSeen,
+    get: vi.fn(async (orgId: string, k: string) => { orgIdsSeen.push(orgId); return k in data ? data[k] : null; }),
+    set: vi.fn(async (orgId: string, k: string, v: string) => { orgIdsSeen.push(orgId); data[k] = v; }),
+    del: vi.fn(async (orgId: string, k: string) => { orgIdsSeen.push(orgId); delete data[k]; }),
   };
 }
 
@@ -18,6 +24,7 @@ describe("readDeviceWizardSettings", () => {
   it("reports enabled + hasKey from stored values", async () => {
     const s = fakeStore({ [KEY_ENABLED]: "true", [KEY_GEMINI]: "sk-abc" });
     expect(await readDeviceWizardSettings(s, ORG_ID)).toEqual({ enabled: true, hasKey: true });
+    expect(s.orgIdsSeen).toEqual([ORG_ID, ORG_ID]);
   });
   it("defaults to disabled + no key when unset", async () => {
     expect(await readDeviceWizardSettings(fakeStore(), ORG_ID)).toEqual({ enabled: false, hasKey: false });
@@ -26,6 +33,12 @@ describe("readDeviceWizardSettings", () => {
     const s = fakeStore({ [KEY_GEMINI]: "   " });
     expect((await readDeviceWizardSettings(s, ORG_ID)).hasKey).toBe(false);
   });
+  it("passes a different org id straight through, not a hardcoded one", async () => {
+    const s = fakeStore({ [KEY_ENABLED]: "true" });
+    await readDeviceWizardSettings(s, OTHER_ORG_ID);
+    expect(s.orgIdsSeen.every((id) => id === OTHER_ORG_ID)).toBe(true);
+    expect(s.orgIdsSeen).not.toContain(ORG_ID);
+  });
 });
 
 describe("writeDeviceWizardSettings", () => {
@@ -33,6 +46,7 @@ describe("writeDeviceWizardSettings", () => {
     const s = fakeStore();
     await writeDeviceWizardSettings(s, { enabled: true }, ORG_ID);
     expect(s.data[KEY_ENABLED]).toBe("true");
+    expect(s.orgIdsSeen).toEqual([ORG_ID]);
   });
   it("stores a trimmed key and deletes on empty", async () => {
     const s = fakeStore();
@@ -45,6 +59,12 @@ describe("writeDeviceWizardSettings", () => {
     const s = fakeStore({ [KEY_ENABLED]: "true" });
     await writeDeviceWizardSettings(s, { apiKey: "sk-1" }, ORG_ID);
     expect(s.data[KEY_ENABLED]).toBe("true");
+  });
+  it("carries a different org id to every store call, not a dropped or hardcoded one", async () => {
+    const s = fakeStore();
+    await writeDeviceWizardSettings(s, { enabled: true, apiKey: "sk-1" }, OTHER_ORG_ID);
+    expect(s.orgIdsSeen.length).toBeGreaterThan(0);
+    expect(s.orgIdsSeen.every((id) => id === OTHER_ORG_ID)).toBe(true);
   });
 });
 
@@ -61,5 +81,10 @@ describe("resolveGeminiKey", () => {
   });
   it("returns null when neither is set", async () => {
     expect(await resolveGeminiKey(fakeStore(), ORG_ID)).toBeNull();
+  });
+  it("looks the key up under whichever org id is passed in", async () => {
+    const s = fakeStore({ [KEY_GEMINI]: "db-key" });
+    expect(await resolveGeminiKey(s, OTHER_ORG_ID)).toBe("db-key");
+    expect(s.orgIdsSeen).toEqual([OTHER_ORG_ID]);
   });
 });

@@ -72,7 +72,15 @@ export async function getCurrentMember(): Promise<Member | null> {
   if (error) {
     console.error("getCurrentMember: members query failed", { error });
   }
-  const row = data
+  // A null org_id means a members row that predates the backfill (the column is nullable until the
+  // next task adds NOT NULL) — not a member with no organisation. Building a Member with
+  // orgId: String(null) === "null" would let that string reach a later `.eq("org_id", ...)` and fail
+  // as a uuid parse error (22P02) far from this cause, so it gets the same uniform refusal as a
+  // failed lookup instead of becoming a poisoned Member.
+  if (data && data.org_id === null) {
+    console.error("getCurrentMember: member row has a null org_id (never backfilled)", { memberId: data.id });
+  }
+  const row = data && data.org_id !== null
     ? {
         id: String(data.id),
         email: String(data.email),

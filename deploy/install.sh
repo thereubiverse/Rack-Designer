@@ -484,21 +484,48 @@ fi
 # Every query below that interpolates a -v variable is therefore fed on stdin, which does expand it.
 # :'...' still quotes the value as a literal, so the email is never pasted into SQL text raw.
 #
+# The organisation: look it up by name first and insert only when absent — the same shape as the
+# member and bootstrap-device checks, which decide against the DATABASE rather than a file.
+# `organisations` has no unique constraint on `name` (verified: only `organisations_pkey`), and two
+# different companies may legitimately share a name in a multi-tenant product, so one is
+# deliberately NOT added here. That means an `on conflict do nothing` on the insert can never fire —
+# a data-modifying CTE always executes regardless of a downstream conflict that never happens — so
+# the previous version minted a brand-new organisation on every re-run, and its `coalesce` fallback
+# (`order by created_at limit 1`) was dead code that, had it ever run, would have picked migration
+# 0034's hardcoded QTSI row over this operator's. Looking the name up first makes re-running the
+# installer converge on the same organisation instead.
+org_id="$(
+  "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+    -v orgname="$ORG_NAME" -tA <<'SQL'
+select id from organisations where name = :'orgname' order by created_at limit 1;
+SQL
+)"
+org_id="$(printf '%s' "$org_id" | tr -d '[:space:]')"
+
+if [[ -n "$org_id" ]]; then
+  log "using existing organisation '$ORG_NAME' ($org_id)"
+else
+  org_id="$(
+    "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+      -v orgname="$ORG_NAME" -tA <<'SQL'
+insert into organisations (name) values (:'orgname') returning id;
+SQL
+  )"
+  org_id="$(printf '%s' "$org_id" | tr -d '[:space:]')"
+  [[ -n "$org_id" ]] || die "inserting organisation '$ORG_NAME' returned no id — refusing to continue"
+  log "created organisation '$ORG_NAME' ($org_id)"
+fi
+
 # The upsert repairs the link rather than skipping: `do nothing` was what let a members row survive
-# pointing at an auth user that no longer exists. name and role are deliberately NOT overwritten —
-# an operator who renamed themselves or an admin who was demoted on purpose should stay that way;
-# the auth_user_id is the only field this step owns. `returning` reports which branch ran.
+# pointing at an auth user that no longer exists. name, role and org_id are deliberately NOT
+# overwritten on conflict — an operator who renamed themselves or an admin who was demoted on
+# purpose should stay that way; the auth_user_id is the only field this step owns. `returning`
+# reports which branch ran.
 member_state="$(
   "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
-    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -v orgname="$ORG_NAME" -qtA <<'SQL'
-with org as (
-  insert into organisations (name) values (:'orgname')
-  on conflict do nothing
-  returning id
-)
+    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -v orgid="$org_id" -qtA <<'SQL'
 insert into members (email, name, role, auth_user_id, org_id)
-values (:'email', :'name', 'admin', :'authid'::uuid,
-        coalesce((select id from org), (select id from organisations order by created_at limit 1)))
+values (:'email', :'name', 'admin', :'authid'::uuid, :'orgid'::uuid)
 on conflict (email) do update
    set auth_user_id = excluded.auth_user_id
 returning case when xmax = 0 then 'inserted' else 'relinked' end;
