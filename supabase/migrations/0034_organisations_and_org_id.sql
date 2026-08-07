@@ -34,23 +34,52 @@ alter table brands           add column org_id uuid references organisations(id)
 alter table device_types     add column org_id uuid references organisations(id);
 alter table device_templates add column org_id uuid references organisations(id);
 
--- The first organisation. Everything currently in this database belongs to it.
-insert into organisations (name) values ('QTSI');
-
--- Backfill. Every existing row belongs to the one organisation that exists, so this does not need
--- to walk the hierarchy — it will once there is more than one, which is exactly why 0035's triggers
+-- The first organisation, and the backfill that gives it every row already here.
+--
+-- Conditional on there BEING rows already here, which is the whole point. On a fresh install this
+-- migration runs against an empty schema: the backfill below would attach nothing, and the 'QTSI'
+-- row would be pure vestige — a second, empty organisation sitting next to the one
+-- `deploy/install.sh` creates from the operator's own answer, named after a company that has
+-- nothing to do with their deployment. Two organisations on every fresh install, one of which the
+-- product is not yet safe to have (see README.md, "One organisation, until slice 2").
+--
+-- Amending this file after it has been applied is safe: the installer records applied migrations by
+-- filename in `installer.schema_migrations`, so it does not re-run, and on the database this was
+-- first written for the outcome is identical — the row exists already, with data attached.
+--
+-- Every existing row belongs to the one organisation that exists, so the backfill does not need to
+-- walk the hierarchy — it will once there is more than one, which is exactly why 0035's triggers
 -- exist for every row written from now on.
 do $$
 declare
-  qtsi uuid;
-  t text;
-begin
-  select id into strict qtsi from organisations where name = 'QTSI';
-  foreach t in array array[
+  tenant_tables constant text[] := array[
     'clients','members','app_settings','sites','floors','rooms','racks','rack_devices',
     'connections','port_endpoints','floor_devices','floor_plans','activity_log',
     'trusted_devices','phone_verifications','device_challenges'
-  ] loop
+  ];
+  qtsi uuid;
+  t text;
+  occupied boolean := false;
+begin
+  foreach t in array tenant_tables loop
+    execute format('select exists (select 1 from %I)', t) into occupied;
+    exit when occupied;
+  end loop;
+
+  if not occupied then
+    raise notice 'no existing rows to attach — skipping the QTSI organisation; install.sh creates the first one';
+    return;
+  end if;
+
+  -- Looked up before inserting, so re-applying this file by hand converges rather than minting a
+  -- second QTSI. `organisations` deliberately has no unique constraint on `name` (two real companies
+  -- may share one), so `on conflict` is not available here.
+  select id into qtsi from organisations where name = 'QTSI' order by created_at limit 1;
+  if qtsi is null then
+    insert into organisations (name) values ('QTSI') returning id into qtsi;
+  end if;
+
+  foreach t in array tenant_tables loop
     execute format('update %I set org_id = $1 where org_id is null', t) using qtsi;
   end loop;
 end $$;

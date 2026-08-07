@@ -54,6 +54,13 @@
 - `supabase/migrations/0035_org_id_triggers.sql` — inheritance triggers and the update guard
 - `supabase/migrations/0036_app_settings_org_key.sql` — the settings key, needed by Task 3's upsert
 - `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql` — the enforcement
+- `supabase/migrations/0039_complete_composite_fks.sql` — the composite foreign keys `0037` missed,
+  and the `activity_log` fallout of its own `not null`. Added during implementation, not planned:
+  review found seven single-column foreign keys still reaching an org-scoped parent after `0037`,
+  which is exactly the cross-organisation link this slice exists to make unrepresentable.
+- `supabase/migrations/0040_scope_set_null_to_child_column.sql` — scopes `ON DELETE SET NULL` to the
+  child column on `floor_devices_room_fk`, so deleting a room nulls `room_id` rather than nulling the
+  row's `org_id` along with it. Also added during implementation, as the tail of `0039`'s work.
 - `supabase/migrations/0041_org_scoped_unique_constraints.sql` — uniques that were global
 - `src/lib/supabase/tenancy.test.ts` — the live schema guard
 - `scripts/migrate-storage-to-org-paths.ts` — the one-off object move
@@ -550,7 +557,7 @@ git commit -m "Carry the organisation on Member and supply it at the three roots
 
 **Interfaces:**
 - Consumes: populated `org_id` everywhere (Task 1), triggers (Task 2), application writes (Task 3).
-- Produces: `unique (org_id, id)` on every org-scoped parent, composite FKs on every org-scoped child, `not null` on the 16 tenant tables.
+- Produces: `unique (org_id, id)` on every org-scoped parent, composite FKs on every org-scoped child, `not null` on the 15 tenant tables. (16 tables gained the column in `0034`; `activity_log` stays nullable — a refused sign-in from an unknown address has no member and so no organisation.)
 
 - [ ] **Step 1: Write the migration**
 
@@ -1184,7 +1191,7 @@ git commit -m "Namespace stored objects by organisation"
 ## Final verification, before the branch is finished
 
 - [ ] `./node_modules/.bin/tsc --noEmit` — clean
-- [ ] `./node_modules/.bin/vitest run src/lib/supabase/tenancy.test.ts src/lib/supabase/grants.test.ts` — 6 + 6 passed
+- [ ] `./node_modules/.bin/vitest run src/lib/supabase/tenancy.test.ts src/lib/supabase/grants.test.ts` — 9 + 6 passed (the tenancy guard grew past the 6 planned here: five assertions were added when review found ways it could stay green while the schema was broken, and a sixth for the `inherit_org_id` triggers, which it had never asserted at all)
 - [ ] Replay all migrations from empty on a throwaway stack, proving they work on a fresh install and not only as increments against this developer's database:
 
 ```bash

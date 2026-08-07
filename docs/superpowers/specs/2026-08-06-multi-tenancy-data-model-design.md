@@ -9,6 +9,45 @@ security posture is **unchanged** — still service-role access, still applicati
 changes is that the schema can express "whose data is this", which is the part that gets more
 expensive with every feature added and cannot be retrofitted cheaply later.
 
+## The gate this slice leaves behind
+
+> The schema now permits a second organisation. **The application is not yet safe to have one.**
+> Every server action still queries without an organisation filter and with full service-role
+> privileges — enforcement is slice 2. **Do not create a second organisation, or open registration,
+> until slice 2 lands.**
+
+This is not caution about an abstract risk. The consequences are already readable in the code, and
+they are the reason the gate is written here rather than assumed:
+
+- `src/features/users/repository.ts:77` (`listRolesForInvariant`) computes the last-admin invariant
+  over **every** `members` row regardless of organisation, so org 2's admins decide whether org 1 may
+  demote its own last one.
+- `updateMemberRole` and `setMemberDisabled` (`:95-108`) key on member id alone, and
+  `listMembers` (`:43`) reads every member row in the database — so org 1's admin screen would hand
+  org 1's admin org 2's member uuids, and both writes would accept them.
+
+None of that is a defect *in this slice*. It is what "row-level security and scoping the 141 server
+actions are deliberately out of scope" means in practice, spelled out so that the one operational
+rule it implies — one organisation until slice 2 — is stated rather than inferred.
+
+### The library tables are the same decision, and belong to slice 4
+
+`createBrand` (`src/features/device-library/repository.ts:85`), `createDeviceType` (`:35`),
+`createDeviceTemplate` (`:121`) and `duplicateDeviceTemplate` (`:141`) all write `org_id NULL` —
+which in this schema means "shared with every organisation". A second organisation would therefore
+see, and be able to edit, everything the first one created in its device library.
+
+Those NULLs are also exactly why the single-column foreign keys **into** the library
+(`device_templates.brand_id`, `rack_devices.template_id`, and the rest) are currently safe, and why
+`tenancy.test.ts` exempts library parents from its composite-foreign-key assertion: while every
+library row is shared, no cross-organisation link is representable, because there is no other
+organisation's row to point at.
+
+That makes it one decision, not three. Scoping the writers without also making those foreign keys
+composite would create precisely the hole their present safety assumes away: an org-1 template
+pointing at an org-2 brand, with nothing in the schema to refuse it. Both halves belong to slice 4,
+together, when the shared-library split is designed.
+
 ## Why this is separated from the enforcement work
 
 Slice 2 makes the database refuse cross-company rows. That is the decision already taken, and it is
@@ -186,7 +225,10 @@ stopping over rather than working around.
 the normal suite, and fails when someone adds a table without thinking about tenancy. It asserts:
 
 - every table in `public` has an `org_id` column;
-- the 16 tenant tables have it `not null`, and the 3 library tables permit NULL;
+- the 15 tenant tables have it `not null`, and the 4 tables that permit NULL — the 3 library tables
+  plus `activity_log` — still do. (16 tables gain the *column* in `0034`; only 15 gain `not null`,
+  because `activity_log` is deliberately nullable. See the second bullet under "Every table carries
+  `org_id`" above, and migration `0037`.)
 - every parent-child foreign key includes `org_id` (no single-column FK to an org-scoped parent
   survives);
 - the six org-scoped unique constraints exist, and the library ones are `nulls not distinct`;

@@ -148,6 +148,19 @@ RLS becomes the right tool if the browser ever queries Supabase directly, or if 
 genuinely unable to read something independently of application code. Neither is true today, and
 nothing here makes it harder later.
 
+## One organisation, until slice 2
+
+The schema now permits a second organisation. **The application is not yet safe to have one.** Every
+server action still queries without an organisation filter and with full service-role privileges —
+enforcement is slice 2. **Do not create a second organisation, or open registration, until slice 2
+lands.**
+
+Concretely: the last-admin invariant is computed over every `members` row in the database, the member
+role and disable writes key on member id alone, and the device-library writers insert `org_id NULL`,
+which means "shared with every organisation". Full reasoning, including why the library writers and
+the single-column foreign keys into the library are one slice-4 decision rather than three, is in
+`docs/superpowers/specs/2026-08-06-multi-tenancy-data-model-design.md`.
+
 ## Every table is scoped to an organisation
 
 This is not optional decoration on top of the schema; it is the mechanism that keeps one

@@ -185,8 +185,16 @@ read -r -p "First admin's name: " ADMIN_NAME
 
 read -r -p "Organisation name [default: your email domain]: " ORG_NAME
 if [[ -z "$ORG_NAME" ]]; then
+  # `${ADMIN_EMAIL#*@}` strips up to the first '@' — and when the string contains no '@' at all it
+  # returns the WHOLE string unchanged rather than an empty one. So the `[[ -n "$ORG_NAME" ]]` guard
+  # that used to be the only check here could not fail under any input: an address typed as `bob`
+  # would have quietly produced an organisation named `bob`. Check the thing that actually decides
+  # the answer — whether there is a domain to take.
+  [[ "$ADMIN_EMAIL" == *@* ]] \
+    || die "'$ADMIN_EMAIL' has no '@', so there is no domain to name an organisation after — re-run and type an organisation name"
   ORG_NAME="${ADMIN_EMAIL#*@}"
-  [[ -n "$ORG_NAME" ]] || die "could not derive an organisation name from the admin email"
+  # Now reachable, and for a real input: `bob@` passes the test above and leaves this empty.
+  [[ -n "$ORG_NAME" ]] || die "'$ADMIN_EMAIL' has nothing after the '@' — re-run and type an organisation name"
 fi
 
 # -s: never echoed to the terminal, never lands in shell history.
