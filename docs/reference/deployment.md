@@ -190,6 +190,26 @@ that will bite", and tunnel mode is where the escape hatch mentioned there is ac
 Public TLS therefore stays entirely Cloudflare's, with a real publicly-trusted certificate, while the
 origin hop uses a certificate that never leaves the machine.
 
+### Plain HTTP is refused in tunnel mode too
+
+In direct mode Caddy owns the public certificate, so its automatic HTTPS answers `http://` with a 308
+to `https://` and there is nothing to decide. In tunnel mode the public TLS is Cloudflare's, and the
+only evidence of which scheme the browser actually used is the `X-Forwarded-Proto` header
+`cloudflared` sends. `deploy/Caddyfile.tunnel` therefore does two things in its `:80` block:
+
+- **Trusts `cloudflared` as a proxy** (`servers { trusted_proxies static private_ranges }`). Without
+  it Caddy rewrites that header to `http` — the scheme of the hop it can see — and the origin loses
+  the only fact it needed.
+- **Redirects anything that did not arrive over HTTPS**, with a 308, and sets
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains` so the browser stops trying plain
+  HTTP after its first visit.
+
+Cloudflare's **Always Use HTTPS** setting would close the same hole, but it is **off by default**, so
+it is not what this depends on. Without the redirect, `http://APP_HOSTNAME/login` served the login
+page in the clear — including the Supabase session cookie, which `@supabase/ssr` sets with neither
+`Secure` nor `httpOnly`. Turning **Always Use HTTPS** on as well is still worth doing: it stops the
+cleartext request at Cloudflare's edge instead of at your origin.
+
 ### The ordering trap the installer handles for you
 
 Caddy generates its internal root CA **on first boot**. The app container mounts that file. If the app
@@ -210,6 +230,12 @@ at least check:
 ```bash
 ls -l deploy/caddy_data/caddy/pki/authorities/local/root.crt   # must be a file, not a directory
 ```
+
+Note that the installer asks the **caddy container** whether that file is there, not the host. Caddy
+writes `/data/caddy/pki` and its two child directories `drwx------ root root`, and on Linux a bind
+mount keeps that `uid 0` on the host — so an operator in the `docker` group cannot traverse them, and
+`ls` above will say `Permission denied` even though the certificate is perfectly present. Use
+`docker compose … exec caddy ls -l /data/caddy/pki/authorities/local/root.crt` instead, or `sudo`.
 
 ## Upgrading an existing deployment
 
