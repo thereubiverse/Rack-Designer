@@ -33,23 +33,28 @@ const PERMANENT = [
  *  Every other query in these five files already moved to createTenantClient — see task-7-report.md
  *  for the file-by-file split. Fully removing them needs either a storage RLS policy for app_tenant
  *  (the design doc defers this explicitly) or a trusted_devices grant, neither of which is a page
- *  change. */
+ *  change.
+ *
+ *  src/features/clients/actions.ts, discoverActions.ts, planExtractActions.ts and symbolActions.ts
+ *  (Task 8) stay for the same storage.objects reason — every DB call in those four already moved,
+ *  only the storage.upload/download/remove calls keep a narrow service client.
+ *
+ *  src/features/profile/actions.ts (Task 9) stays for BOTH reasons at once: avatar upload/remove
+ *  is storage.objects, and phone verification is phone_verifications — also deliberately ungranted
+ *  (same 0042/0043 comment as trusted_devices, proven live: "permission denied for table
+ *  phone_verifications"). Every members-table query in that file already moved to
+ *  createTenantClient; only those two narrow, commented calls remain on the service client. */
 const REMAINING: string[] = [
   "src/app/clients/[clientCode]/[siteCode]/page.tsx",
   "src/app/layout.tsx",
   "src/app/profile/page.tsx",
   "src/app/users/page.tsx",
   "src/app/verify-device/page.tsx",
-  "src/features/auth/withMember.ts",
   "src/features/clients/actions.ts",
   "src/features/clients/discoverActions.ts",
   "src/features/clients/planExtractActions.ts",
   "src/features/clients/symbolActions.ts",
-  "src/features/device-library/actions.ts",
-  "src/features/device-library/typeActions.ts",
   "src/features/profile/actions.ts",
-  "src/features/settings/store.ts",
-  "src/features/users/actions.ts",
 ];
 
 describe("who may use the service role", () => {

@@ -3,7 +3,7 @@ import { getCurrentMember, NOT_A_MEMBER, type Member } from "./members";
 import { satisfies, NEEDS_EDITOR, NEEDS_ADMIN, isRefusal, type Role } from "./roles";
 import { redact } from "@/features/activity/redact";
 import { writeEntry } from "@/features/activity/repository";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 
 type ActionFn<A extends unknown[], R> = (member: Member, ...args: A) => Promise<R>;
 type Guarded<A extends unknown[], R> = (...args: A) => Promise<R | { ok: false; error: string }>;
@@ -47,7 +47,9 @@ async function logResult<A extends unknown[]>(
   // An outage in the audit trail must not stop a foreman saving their work — this write's failure
   // must never propagate to the caller of the wrapped action.
   try {
-    const db = createServiceClient();
+    // member is already resolved by the caller (withMember's wrapper) — reuse it rather than
+    // resolving the membership a second time just to mint a token.
+    const db = createTenantClient(member);
     await writeEntry(db, {
       actorEmail: member.email,
       actorName: member.name,

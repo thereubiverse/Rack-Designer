@@ -37,8 +37,13 @@ export function mintTenantToken(orgId: string, nowSeconds?: number): string {
  *
  *  Use this everywhere `createServiceClient()` was used, except the four paths that genuinely run
  *  before an organisation is known — see src/lib/supabase/serviceRoleAllowlist.test.ts, which fails
- *  if anything else imports the service client. */
-export function createTenantClient(member: Member): SupabaseClient {
+ *  if anything else imports the service client.
+ *
+ *  Takes only `orgId` (via `Pick`, not the full `Member`) so a caller that has an organisation but
+ *  no resolved Member — settings/store.ts receives `orgId` as an explicit parameter from its own
+ *  callers, not a Member — can build a token without fabricating one. Every real Member already
+ *  satisfies this. */
+export function createTenantClient(member: Pick<Member, "orgId">): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");

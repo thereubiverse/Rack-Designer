@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createDeviceType, updateDeviceType, deleteDeviceType } from "./repository";
 import { validateCode, validateTypeName } from "./deviceTypeRules";
 import { withEditor } from "@/features/auth/withMember";
@@ -18,14 +18,14 @@ function friendly(e: unknown): string {
 }
 
 export const createDeviceTypeAction = withEditor("deviceType.create", async (
-  _member, input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
+  member, input: { name: string; code: string; category: "floor" | "rack"; color?: string | null; icon?: string | null },
 ): Promise<{ ok: boolean; error?: string }> => {
   const err =
     validateTypeName(input.name) ??
     validateCode(input.code) ??
     (typeof input.color === "string" && !HEX_RE.test(input.color) ? "Colour must be a hex value like #2563eb" : null);
   if (err) return { ok: false, error: err };
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await createDeviceType(db, {
       name: input.name.trim(),
@@ -53,7 +53,7 @@ export interface DeviceTypeChange {
 
 /** Batch save from one column's "Save changes" — applied sequentially, first error aborts. */
 export const saveDeviceTypesAction = withEditor("deviceType.save", async (
-  _member, changes: DeviceTypeChange[],
+  member, changes: DeviceTypeChange[],
 ): Promise<{ ok: boolean; error?: string }> => {
   for (const c of changes) {
     const err =
@@ -62,7 +62,7 @@ export const saveDeviceTypesAction = withEditor("deviceType.save", async (
       (typeof c.color === "string" && !HEX_RE.test(c.color) ? "Colour must be a hex value like #2563eb" : null);
     if (err) return { ok: false, error: err };
   }
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     for (const c of changes) {
       await updateDeviceType(db, c.id, {
@@ -79,8 +79,8 @@ export const saveDeviceTypesAction = withEditor("deviceType.save", async (
   return { ok: true };
 });
 
-export const deleteDeviceTypeAction = withEditor("deviceType.delete", async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+export const deleteDeviceTypeAction = withEditor("deviceType.delete", async (member, id: string): Promise<{ ok: boolean; error?: string }> => {
+  const db = createTenantClient(member);
   try {
     await deleteDeviceType(db, id);
   } catch (e) {
