@@ -516,7 +516,8 @@ export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_
 });
 
 /** Trust posture for this slice: dimensions are decoded from the uploaded bytes (never taken from
- *  FormData), and the storage scope (site) is derived from the floor row (never from the caller).
+ *  FormData), and the storage scope (organisation AND site) is derived from the floor row (never
+ *  from the caller, and never from the acting member — see the lookup below).
  *  ORDER MATTERS and is part of the contract: floor lookup -> size check -> PNG decode -> storage
  *  upload -> row upsert. A rejection at any step must leave NO storage write behind.
  *
@@ -527,7 +528,7 @@ export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_
  *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
  *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
  *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
-export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
@@ -544,12 +545,23 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (membe
 
   const db = createServiceClient();
 
-  // Floor lookup: derives the site for the storage path. NEVER trust a client-supplied siteId,
-  // and this also doubles as "does this floor exist" — an unknown floor fails here, before any
-  // byte is read or any storage call is made.
-  const { data: floor, error: floorErr } = await db.from("floors").select("id, site_id").eq("id", floorId).single();
+  // Floor lookup: derives BOTH the organisation and the site for the storage path. NEVER trust a
+  // client-supplied siteId, and this also doubles as "does this floor exist" — an unknown floor
+  // fails here, before any byte is read or any storage call is made.
+  //
+  // `org_id` comes from the floor, NOT from `member.orgId`, and the difference is load-bearing.
+  // `upsertFloorPlan` lets 0035's `inherit_org_id` trigger stamp `floor_plans.org_id` from the
+  // floor, so the floor is the database's own source of truth for who owns this row. Building the
+  // path from the acting member instead gives two sources that can disagree: an editor in org 1
+  // posting an org-2 floorId produced a row whose org_id was org 2 (accepted by the composite
+  // foreign key, unchanged as far as freeze_org_id is concerned) while its storage_path read
+  // `<org1>/<org2 site>/<org2 floor>.png` — overwriting org 2's plan at a prefix org 2 will not be
+  // able to read once slice 2's first-path-segment storage policies land. One source, the same one
+  // the trigger trusts.
+  const { data: floor, error: floorErr } = await db
+    .from("floors").select("id, site_id, org_id").eq("id", floorId).single();
   if (floorErr || !floor) return { ok: false, error: "Floor not found" };
-  const siteId = (floor as { site_id: string }).site_id;
+  const { site_id: siteId, org_id: orgId } = floor as { site_id: string; org_id: string };
 
   // Size check uses the Blob API's `.size` — BEFORE reading any bytes.
   if (file.size > MAX_PLAN_BYTES) return { ok: false, error: "File is too large (max 15MB)" };
@@ -561,7 +573,7 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (membe
   const dims = readPngDimensions(bytes);
   if (!dims) return { ok: false, error: "File is not a valid PNG" };
 
-  const path = planPathFor(member.orgId, siteId, floorId, "png");
+  const path = planPathFor(orgId, siteId, floorId, "png");
 
   // `Number()` on a missing/blank/non-numeric field yields NaN (or a non-integer), which is
   // rejected — treated as absent, never as an error. This codebase's standing rule: `0` is a real,
@@ -578,7 +590,7 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (membe
     await uploadPlanObject(db, path, bytes);
 
     if (isBlobLike(pdfFile)) {
-      const pdfPath = planPathFor(member.orgId, siteId, floorId, "pdf");
+      const pdfPath = planPathFor(orgId, siteId, floorId, "pdf");
       try {
         const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
         await uploadPlanPdf(db, pdfPath, pdfBytes);

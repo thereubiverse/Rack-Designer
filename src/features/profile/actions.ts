@@ -57,6 +57,10 @@ export const uploadAvatarAction = withMember("profile.avatar.upload", async (mem
   if (problem) return { ok: false, error: problem };
 
   const db = createServiceClient();
+  // The only other storage path built in this codebase, and — unlike the floor-plan path, which had
+  // to stop using `member.orgId` — this one has a single source by construction: the row being
+  // written IS `members[member.id]`, and `member.orgId` was read from that same row by
+  // resolveMember (`src/features/auth/members.ts`). There is no second org here to disagree with.
   const path = avatarPathFor(member.orgId, member.id);
   const bytes = new Uint8Array(await file.arrayBuffer());
   // Object first, then the row. The reverse order can leave a row pointing at a file that was
