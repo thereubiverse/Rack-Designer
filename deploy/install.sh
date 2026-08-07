@@ -505,9 +505,14 @@ org_id="$(printf '%s' "$org_id" | tr -d '[:space:]')"
 if [[ -n "$org_id" ]]; then
   log "using existing organisation '$ORG_NAME' ($org_id)"
 else
+  # -q here is load-bearing, not cosmetic: psql prints the command tag for a non-SELECT (e.g.
+  # `INSERT 0 1`) to stdout even under `-tA` — `-t`/`-A` only strip column headers and alignment,
+  # not the tag. Without `-q` that tag gets welded onto the id below by `tr -d '[:space:]'`,
+  # producing e.g. "f1be42c7-...-52f28c872445INSERT01", which is not a valid uuid and fails the
+  # members insert further down. `-q` suppresses it so only the returned id reaches org_id.
   org_id="$(
     "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
-      -v orgname="$ORG_NAME" -tA <<'SQL'
+      -v orgname="$ORG_NAME" -qtA <<'SQL'
 insert into organisations (name) values (:'orgname') returning id;
 SQL
   )"
