@@ -265,6 +265,74 @@ describe("every row has an owning organisation", () => {
   // excepted, pinned by name and definition" above, which subsumes this check — see that test's
   // comment. A second, name-only assertion here would be redundant with a weaker guarantee.
 
+  it("gives every child of an org-scoped parent the inherit_org_id trigger that stamps its owner", () => {
+    // Step 3 of README.md's five is half a trigger and half a foreign key, and only the foreign-key
+    // half was ever asserted here — inherit_org_id appeared in this file exclusively as a mention in
+    // the comment below, and no query touched it. That made README.md's "Skip any of the five steps
+    // above and that test fails" untrue: every inheritance trigger in 0035 could be dropped and this
+    // suite stayed green, while the column they populate is what the composite foreign keys above,
+    // and every storage path built from a row's org_id, actually rely on.
+    //
+    // Generic, so table 21 is covered without anyone remembering to come back here: a composite
+    // foreign key is precisely the marker of "this table has an org-scoped parent", so any table
+    // carrying one must also carry the trigger that reads org_id from that parent.
+    //
+    // `tgenabled <> 'D'` because `alter table … disable trigger` leaves the pg_trigger row in place:
+    // an existence check alone would call a disabled trigger present while it stamps nothing. The
+    // freeze check below carries the same clause for the same reason.
+    const missing = sql(`
+      select distinct child.relname
+      from pg_constraint fk
+      join pg_class child on child.oid = fk.conrelid
+      join pg_namespace n on n.oid = child.relnamespace
+      where fk.contype = 'f' and n.nspname = 'public'
+        and array_length(fk.conkey, 1) > 1
+        and not exists (
+          select 1 from pg_trigger t
+          where t.tgrelid = child.oid and t.tgfoid = 'inherit_org_id'::regproc and not t.tgisinternal
+            and t.tgenabled <> 'D'
+        )
+      order by 1
+    `);
+    // A name here is a table whose org_id is whatever the caller passed rather than whatever its
+    // parent owns — the exact drift 0035 exists to make impossible.
+    expect(missing).toEqual([]);
+
+    // The check above only sees tables that HAVE a composite foreign key, so it cannot notice a
+    // trigger pointed at the wrong parent, or one whose arguments were edited. Pinning the full
+    // definition catches both: the parent table and the local foreign-key column are trigger
+    // arguments, so `floors_inherit_org` reading 'clients','client_id' instead of 'sites','site_id'
+    // fails here even though the trigger still exists on the right table. Same reasoning, and the
+    // same exhaustive-list discipline, as the composite-foreign-key assertion above.
+    const defs = sql(`
+      select c.relname || '.' || t.tgname || ' :: ' || pg_get_triggerdef(t.oid)
+      from pg_trigger t
+      join pg_class c on c.oid = t.tgrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and not t.tgisinternal
+        and t.tgfoid = 'inherit_org_id'::regproc
+      order by 1
+    `);
+    expect(defs).toEqual([
+      "activity_log.activity_log_inherit_org :: CREATE TRIGGER activity_log_inherit_org BEFORE INSERT ON public.activity_log FOR EACH ROW EXECUTE FUNCTION inherit_org_id('members', 'member_id')",
+      "connections.connections_inherit_org :: CREATE TRIGGER connections_inherit_org BEFORE INSERT ON public.connections FOR EACH ROW EXECUTE FUNCTION inherit_org_id('racks', 'rack_id')",
+      // Two hops from its root (device_challenges -> trusted_devices -> members): it reads the org
+      // trusted_devices already carries rather than walking the chain.
+      "device_challenges.device_challenges_inherit_org :: CREATE TRIGGER device_challenges_inherit_org BEFORE INSERT ON public.device_challenges FOR EACH ROW EXECUTE FUNCTION inherit_org_id('trusted_devices', 'device_id')",
+      "floor_devices.floor_devices_inherit_org :: CREATE TRIGGER floor_devices_inherit_org BEFORE INSERT ON public.floor_devices FOR EACH ROW EXECUTE FUNCTION inherit_org_id('sites', 'site_id')",
+      // The one uploadFloorPlanAction's storage prefix is derived from — the floor, not the caller.
+      "floor_plans.floor_plans_inherit_org :: CREATE TRIGGER floor_plans_inherit_org BEFORE INSERT ON public.floor_plans FOR EACH ROW EXECUTE FUNCTION inherit_org_id('floors', 'floor_id')",
+      "floors.floors_inherit_org :: CREATE TRIGGER floors_inherit_org BEFORE INSERT ON public.floors FOR EACH ROW EXECUTE FUNCTION inherit_org_id('sites', 'site_id')",
+      "phone_verifications.phone_verifications_inherit_org :: CREATE TRIGGER phone_verifications_inherit_org BEFORE INSERT ON public.phone_verifications FOR EACH ROW EXECUTE FUNCTION inherit_org_id('members', 'member_id')",
+      "port_endpoints.port_endpoints_inherit_org :: CREATE TRIGGER port_endpoints_inherit_org BEFORE INSERT ON public.port_endpoints FOR EACH ROW EXECUTE FUNCTION inherit_org_id('racks', 'rack_id')",
+      "rack_devices.rack_devices_inherit_org :: CREATE TRIGGER rack_devices_inherit_org BEFORE INSERT ON public.rack_devices FOR EACH ROW EXECUTE FUNCTION inherit_org_id('racks', 'rack_id')",
+      "racks.racks_inherit_org :: CREATE TRIGGER racks_inherit_org BEFORE INSERT ON public.racks FOR EACH ROW EXECUTE FUNCTION inherit_org_id('rooms', 'room_id')",
+      "rooms.rooms_inherit_org :: CREATE TRIGGER rooms_inherit_org BEFORE INSERT ON public.rooms FOR EACH ROW EXECUTE FUNCTION inherit_org_id('floors', 'floor_id')",
+      "sites.sites_inherit_org :: CREATE TRIGGER sites_inherit_org BEFORE INSERT ON public.sites FOR EACH ROW EXECUTE FUNCTION inherit_org_id('clients', 'client_id')",
+      "trusted_devices.trusted_devices_inherit_org :: CREATE TRIGGER trusted_devices_inherit_org BEFORE INSERT ON public.trusted_devices FOR EACH ROW EXECUTE FUNCTION inherit_org_id('members', 'member_id')",
+    ]);
+  });
+
   it("stops org_id moving after insert on every org-scoped table that can be updated", () => {
     // inherit_org_id (0035) gets org_id right on INSERT. Nothing stops a plain UPDATE from moving
     // the row to a different organisation afterwards while every composite foreign key above still
@@ -295,6 +363,7 @@ describe("every row has an owning organisation", () => {
         and not exists (
           select 1 from pg_trigger t
           where t.tgrelid = c.oid and t.tgfoid = 'freeze_org_id'::regproc and not t.tgisinternal
+            and t.tgenabled <> 'D'
         )
       order by 1
     `);

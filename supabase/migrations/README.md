@@ -216,7 +216,16 @@ needs all five of the following, or it is silently unscoped:
 `src/lib/supabase/tenancy.test.ts` checks all of this against the live schema — every table has
 `org_id`, every table that is referenced by another has `unique (org_id, id)`, every foreign key to
 an org-scoped table is composite (and the full set of composite foreign keys is pinned by name and
-definition, so a dropped or redefined one fails too), every unique constraint and primary key in
-`public` — bare index or named constraint — is pinned by name and definition as either org-scoped or
-on the short, explicit exception list, and every table that can be updated after insert carries
-`freeze_org_id`. Skip any of the five steps above and that test fails.
+definition, so a dropped or redefined one fails too), every child of an org-scoped parent carries an
+enabled `inherit_org_id` trigger (with the parent table and foreign-key column it reads pinned as
+trigger arguments, so one aimed at the wrong parent fails as well), every unique constraint and
+primary key in `public` — bare index or named constraint — is pinned by name and definition as either
+org-scoped or on the short, explicit exception list, and every table that can be updated after insert
+carries `freeze_org_id`. Skip any of the five steps above and that test fails.
+
+That last sentence was false until review caught it. Step 3 is two things — an inheritance trigger
+*and* a composite foreign key — and only the foreign-key half was asserted; `inherit_org_id` appeared
+in the guard as a word in a comment and in no query. Every trigger `0035` creates could have been
+dropped with the suite still green. Both halves are checked now, and both checks ignore a trigger
+left `DISABLE`d, because `alter table … disable trigger` keeps the `pg_trigger` row and a mere
+existence check would call it present.
