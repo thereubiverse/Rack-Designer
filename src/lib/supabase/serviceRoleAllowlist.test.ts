@@ -30,6 +30,23 @@ const PERMANENT = [
  *      profile/page.tsx and users/page.tsx (listing a member's devices), and
  *      verify-device/page.tsx (looking up the current device by hash).
  *
+ *  THE STORAGE HALF OF THAT IS NO LONGER TRUE, as of migration 0046. `app_tenant` now holds
+ *  `usage on schema storage`, select/insert/update/delete on `storage.objects`, `select` on
+ *  `storage.buckets`, and two policies keyed on the organisation in the object path — proven live
+ *  through storage-api with a real tenant token: sign and download succeed for the owning
+ *  organisation, a second organisation gets 404 on the same path and 403 "new row violates
+ *  row-level security policy" on a write into it. See src/lib/supabase/policies.test.ts, "the tenant
+ *  wall over stored objects".
+ *
+ *  NOTHING WAS REMOVED FROM THIS LIST FOR IT, deliberately. Moving those callers off the service
+ *  client is a separate change with its own verification; 0046 only makes it possible. The files
+ *  whose ONLY remaining blocker was storage — layout.tsx, clients/[clientCode]/[siteCode]/page.tsx,
+ *  clients/actions.ts, discoverActions.ts, planExtractActions.ts and symbolActions.ts — can now move.
+ *  profile/page.tsx and users/page.tsx and verify-device/page.tsx still cannot: trusted_devices is
+ *  ungranted ON PURPOSE and 0046 did not touch it. profile/actions.ts still cannot either: its
+ *  avatar calls are now reachable, but its phone verification is phone_verifications, ungranted for
+ *  the same deliberate reason.
+ *
  *  Every other query in these five files already moved to createTenantClient — see task-7-report.md
  *  for the file-by-file split. Fully removing them needs either a storage RLS policy for app_tenant
  *  (the design doc defers this explicitly) or a trusted_devices grant, neither of which is a page

@@ -253,3 +253,110 @@ describe("the tenant wall", () => {
     expect(sql(`select rolbypassrls::text from pg_roles where rolname = 'app_tenant'`)).toEqual(["false"]);
   });
 });
+
+/** MIGRATION 0046. Everything above is scoped to schema `public`, which is why none of it noticed
+ *  that stored FILES had no wall at all. This block is the same property for `storage.objects`,
+ *  keyed on the organisation in the object's path — `{orgId}/{siteId}/{floorId}.{png,pdf}` for floor
+ *  plans and `{orgId}/{memberId}/avatar` for pictures, which is the layout slice 1 established for
+ *  exactly this purpose.
+ *
+ *  It is asserted here rather than taken on trust because the migration was expected NOT to apply:
+ *  `storage.objects` is owned by `supabase_storage_admin`, `postgres` is not a superuser on this
+ *  image and is not a member of that role, so `must be owner of table objects` was the predicted
+ *  outcome. It applied anyway — supabase_storage_admin has granted postgres every privilege WITH
+ *  GRANT OPTION on supabase/postgres:17.6.1.156 — but that is a property of the image, not of the
+ *  SQL standard. If a future image withdraws it, these assertions are what will say so. */
+describe("the tenant wall over stored objects", () => {
+  it("scopes storage.objects on the organisation in the leading path segment", () => {
+    const rows = sql(`
+      select c.relname || '.' || p.polname || ' [' || p.polcmd::text || '] :: '
+             || pg_get_expr(p.polqual, p.polrelid) || ' :: ' || pg_get_expr(p.polwithcheck, p.polrelid)
+      from pg_policy p
+      join pg_class c on c.oid = p.polrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'storage'
+      order by 1
+    `);
+    // `[*]` is `for all`, and `using` and `with check` are pinned separately and identically: a
+    // policy that kept its read scope while losing its write scope would let one organisation drop a
+    // file into another's prefix, which is the same subtlety the public-schema test guards against.
+    expect(rows).toEqual([
+      "objects.avatars_tenant [*] :: ((bucket_id = 'avatars'::text) AND ((storage.foldername(name))[1] = (current_org_id())::text)) :: ((bucket_id = 'avatars'::text) AND ((storage.foldername(name))[1] = (current_org_id())::text))",
+      "objects.floor_plans_tenant [*] :: ((bucket_id = 'floor-plans'::text) AND ((storage.foldername(name))[1] = (current_org_id())::text)) :: ((bucket_id = 'floor-plans'::text) AND ((storage.foldername(name))[1] = (current_org_id())::text))",
+    ]);
+    // RLS on, and no policy naming any role but app_tenant. `authenticated` and `anon` reach this
+    // table with RLS enabled and nothing applicable, so the browser sees no object directly.
+    expect(sql(`select relrowsecurity::text from pg_class where oid = 'storage.objects'::regclass`)).toEqual(["true"]);
+    expect(
+      sql(`
+        select polname from pg_policy
+        where polrelid = 'storage.objects'::regclass
+          and polroles <> array[(select oid from pg_roles where rolname = 'app_tenant')]
+        order by 1
+      `)
+    ).toEqual([]);
+  });
+
+  it("gives app_tenant the reach those policies filter", () => {
+    // A policy without a grant denies everything. That is safe, but it leaves the storage callers
+    // exactly where they were, so the grant half is as load-bearing as the policy half.
+    expect(sql(`select has_schema_privilege('app_tenant', 'storage', 'usage')::text`)).toEqual(["true"]);
+    const missing = sql(`
+      select p from unnest(array['select','insert','update','delete']) p
+      where not has_table_privilege('app_tenant', 'storage.objects', p)
+      order by 1
+    `);
+    expect(missing).toEqual([]);
+    // storage-api resolves the bucket on the same role-switched connection before it reaches the
+    // object, so this read is required for the object policies to ever be evaluated.
+    expect(sql(`select has_table_privilege('app_tenant', 'storage.buckets', 'select')::text`)).toEqual(["true"]);
+  });
+
+  it("shows one organisation only its own objects, and refuses a write into another's prefix", () => {
+    // Measured under a real role with real claims, not read off the catalogue — the catalogue cannot
+    // tell a correct policy from one that parses. Two probe objects are created inside a transaction
+    // that is ROLLED BACK, so this leaves nothing behind and never depends on which files happen to
+    // exist in this database.
+    const TAGS = new Set(["BEGIN", "SET", "ROLLBACK", "COMMIT", "INSERT 0 2", "DO", "RESET"]);
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+    const visible = sql(`
+      begin;
+      insert into storage.objects (bucket_id, name)
+        values ('floor-plans', '${A}/site/probe.png'), ('floor-plans', '${B}/site/probe.png');
+      set local role app_tenant;
+      set local request.jwt.claims = '{"role":"app_tenant","org_id":"${A}"}';
+      select coalesce(string_agg(name, ','), '(none)') from storage.objects where name like '%/site/probe.png';
+      rollback;
+    `).filter((line) => !TAGS.has(line));
+    expect(visible).toEqual([`${A}/site/probe.png`]);
+
+    // ...and with no organisation at all it fails CLOSED: no claim means current_org_id() is NULL,
+    // and `= NULL` is never true, so the answer is nothing rather than everything.
+    const noClaim = sql(`
+      begin;
+      set local role app_tenant;
+      select count(*)::text from storage.objects;
+      rollback;
+    `).filter((line) => !TAGS.has(line));
+    expect(noClaim).toEqual(["0"]);
+
+    // The write half. An insert into another organisation's prefix must raise 42501; if it is ever
+    // permitted the DO block raises its own error instead and this test fails loudly.
+    const refused = sql(`
+      begin;
+      set local role app_tenant;
+      set local request.jwt.claims = '{"role":"app_tenant","org_id":"${A}"}';
+      do $$
+      begin
+        insert into storage.objects (bucket_id, name) values ('floor-plans', '${B}/site/intrusion.png');
+        raise exception 'CROSS-ORGANISATION WRITE WAS ALLOWED';
+      exception when insufficient_privilege then null;
+      end $$;
+      select 'refused';
+      rollback;
+    `).filter((line) => !TAGS.has(line));
+    expect(refused).toEqual(["refused"]);
+  });
+});
