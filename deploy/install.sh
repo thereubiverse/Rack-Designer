@@ -20,6 +20,10 @@ TUNNEL_COMPOSE_FILE="$SCRIPT_DIR/docker-compose.tunnel.yml"
 TUNNEL_CADDYFILE="$SCRIPT_DIR/Caddyfile.tunnel"
 # Caddy's `tls internal` root, as seen FROM THE HOST. ./caddy_data is a bind mount, which is the only
 # reason this file can be handed to the app container at all. See Step 3a.
+#
+# Used ONLY to name the path in messages to the operator. Never test it: Caddy's pki directories are
+# 0700 root:root and on Linux a non-root operator cannot even stat through them. Step 3a asks the
+# container instead.
 CADDY_ROOT_CA="$SCRIPT_DIR/caddy_data/caddy/pki/authorities/local/root.crt"
 # Direct mode: the base file alone, exactly as before. Tunnel mode appends a second -f — rebuilt in
 # Step 2 once DEPLOY_MODE is known. Nothing below Step 2 may assume which one it got.
@@ -308,29 +312,60 @@ unset ADMIN_PASSWORD_CONFIRM
 if [[ "$DEPLOY_MODE" == "tunnel" ]]; then
   log "Step 3a: starting Caddy first, so it generates its internal CA before the app mounts it"
 
+  # EVERY test of that path below runs INSIDE a container, as root, and never as `[[ -f ]]` on the
+  # host. Caddy creates /data/caddy/pki, .../authorities and .../local as `drwx------ root root`, and
+  # on Linux a bind mount keeps uid 0 on the host — so the operator running this script (in the
+  # `docker` group, not root) cannot traverse those directories at all. A host-side stat of the
+  # certificate inside them is not "not yet"; it is false FOREVER, however long Caddy has been
+  # running. This passes on macOS only because Docker Desktop remaps bind-mount ownership to the host
+  # user — the same blind spot that hid the readability bug handled further down, and the reason the
+  # host path below appears only in messages, never in a test.
+
   # A leftover from a run that got this wrong: an EMPTY directory where the certificate belongs.
+  #
+  # `run --rm`, not `exec`, because this has to happen BEFORE Caddy boots: with a directory in the way
+  # it cannot write its root certificate at all. Running it in a container also makes the REMOVAL work
+  # — a host-side `rmdir` here fails with EACCES on Linux, because `local/` is root-owned, and then
+  # blames the operator for a non-empty directory that is actually empty and merely unreachable.
+  #
   # rmdir, never rm -rf — if there is anything inside it, this is not the situation described above
   # and guessing would destroy someone's data.
-  if [[ -d "$CADDY_ROOT_CA" ]]; then
-    rmdir "$CADDY_ROOT_CA" 2>/dev/null || die "$CADDY_ROOT_CA is a non-empty directory. It should be Caddy's root certificate. Inspect it, remove it by hand, and re-run."
-    log "removed an empty directory Docker had created at $CADDY_ROOT_CA (a previous run started the app too early)"
-  fi
+  # SC2016: `$ca` below belongs to the container's /bin/sh, not to this shell. Single quotes are the
+  # point — expanding it here would send an empty path into the rmdir.
+  # shellcheck disable=SC2016
+  ca_dir_state="$(
+    "${COMPOSE[@]}" run --rm -T --no-deps --entrypoint /bin/sh caddy -c '
+      ca=/data/caddy/pki/authorities/local/root.crt
+      [ -d "$ca" ] || { echo absent; exit 0; }
+      if rmdir "$ca" 2>/dev/null; then echo removed; else echo nonempty; fi
+    ' | tr -d '[:space:]'
+  )"
+  case "$ca_dir_state" in
+    absent) ;;
+    removed) log "removed an empty directory Docker had created at $CADDY_ROOT_CA (a previous run started the app too early)" ;;
+    nonempty) die "$CADDY_ROOT_CA is a non-empty directory. It should be Caddy's root certificate. Inspect it, remove it by hand, and re-run." ;;
+    *) die "could not check $CADDY_ROOT_CA from inside the caddy container (got '$ca_dir_state') — check '${COMPOSE[*]} config' and that the caddy image is present" ;;
+  esac
 
   "${COMPOSE[@]}" up -d --no-deps caddy
 
-  log "Waiting for Caddy's internal root CA at deploy/caddy_data/caddy/pki/authorities/local/root.crt"
+  log "Waiting for Caddy's internal root CA (/data/caddy/pki/authorities/local/root.crt in the caddy container, deploy/caddy_data/caddy/pki/authorities/local/root.crt on this host)"
   ca_timeout_s=90
   ca_elapsed_s=0
-  until [[ -f "$CADDY_ROOT_CA" && -s "$CADDY_ROOT_CA" ]]; do
+  # `-f` as well as `-s`: `-s` alone is true for a directory too, which is the one thing this wait
+  # must not accept.
+  until "${COMPOSE[@]}" exec -T caddy sh -c 'test -f /data/caddy/pki/authorities/local/root.crt && test -s /data/caddy/pki/authorities/local/root.crt' >/dev/null 2>&1; do
     if (( ca_elapsed_s >= ca_timeout_s )); then
       die "Caddy did not produce its internal root CA within ${ca_timeout_s}s — check '${COMPOSE[*]} logs caddy'. Without it the app cannot verify https://$APP_HOSTNAME on the bridge and nobody will be able to sign in."
     fi
     sleep 2
     ca_elapsed_s=$(( ca_elapsed_s + 2 ))
   done
-  # -f above already excludes the directory case; assert it once more so a future edit that relaxes
-  # the test cannot reintroduce the exact failure this whole block exists to prevent.
-  [[ -f "$CADDY_ROOT_CA" ]] || die "$CADDY_ROOT_CA exists but is not a regular file"
+  # -f above already excludes the directory case; assert it once more — still from inside the
+  # container — so a future edit that relaxes the test cannot reintroduce the exact failure this whole
+  # block exists to prevent.
+  "${COMPOSE[@]}" exec -T caddy test -f /data/caddy/pki/authorities/local/root.crt \
+    || die "$CADDY_ROOT_CA exists but is not a regular file"
 
   # Caddy writes the whole pki directory 0600 root:root. root.crt is a PUBLIC certificate — the
   # secret beside it is root.key, which is deliberately not touched here — and the app container runs
