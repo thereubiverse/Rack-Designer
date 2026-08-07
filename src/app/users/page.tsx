@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/features/auth/members";
 import { listMembers } from "@/features/users/repository";
@@ -17,15 +18,28 @@ export default async function UsersPage() {
   // needs to see — this is a real server-side gate, not a UI nicety that a direct link would bypass.
   if (member.role !== "admin") redirect("/");
 
-  const db = createServiceClient();
-  const members = await listMembers(db);
+  const db = createTenantClient(member);
+  // Every members-table query in here runs on the tenant client. The service client is passed
+  // ALONGSIDE it for one narrow purpose: `last_sign_in_at` lives in `auth.users`, which is not in
+  // the REST schema, so it can only be read through the GoTrue admin API — and GoTrue answers an
+  // `app_tenant` token with 403 `{"error_code":"not_admin"}`. On the tenant client that fails
+  // silently into null, which is why this column rendered blank on every row while costing a
+  // wasted 403 per member per render. See listMembers.
+  const members = await listMembers(db, createServiceClient());
 
   // Grouped by member id here, in the server component, rather than handing the client a flat
   // list to re-group on every render. `tokenHash` is dropped: nobody viewing this screen holds
   // these devices, so there is no reason for the hash to leave this layer at all, same reasoning
   // as ProfileForm's DeviceView.
   const pendingDevicesByMember: Record<string, PendingDeviceView[]> = {};
-  for (const d of await listPendingDevices(db)) {
+  // NOT the tenant client: trusted_devices carries no grant for app_tenant at all, deliberately,
+  // per migration 0042/0043 — confirmed directly ("permission denied for table trusted_devices").
+  // Which is exactly why `member.orgId` is passed EXPLICITLY: the service client bypasses row-level
+  // security, so no policy scopes this read. Unfiltered, it handed every organisation's pending
+  // device ids, member ids and labels to a "use client" component — i.e. into the RSC payload of
+  // any admin's browser, which is where an attacker would read another organisation's device id
+  // before posting it to adminApproveDeviceAction.
+  for (const d of await listPendingDevices(createServiceClient(), member.orgId)) {
     (pendingDevicesByMember[d.memberId] ??= []).push({ id: d.id, label: d.label, createdAt: d.createdAt });
   }
 

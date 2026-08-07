@@ -5,6 +5,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // slice writes to Supabase Storage as well as the DB — no real storage calls either. `./planStorage`
 // is swapped for plain vi.fn()s so the fake db below never has to model storage at all; it only
 // ever sees the `floors` / `floor_plans` / `floor_devices` / `rooms` tables.
+//
+// The action itself uses TWO clients: createTenantClient for every DB read/write, and a narrow
+// createServiceClient for the storage.upload/remove calls (app_tenant has no grant on the storage
+// schema). Both are mocked to return the SAME fake db via useDb() below, so the `expect(calledDb)
+// .toBe(db)` identity assertions further down still hold.
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("./planStorage", () => ({
@@ -29,6 +35,7 @@ vi.mock("@/features/auth/withMember", () => ({
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null, orgId: "org-1" }, ...args),
 }));
 
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPlanObject, removePlanObject, uploadPlanPdf, removePlanPdf } from "./planStorage";
 import { uploadFloorPlanAction, deleteFloorPlanAction } from "./actions";
@@ -122,6 +129,14 @@ function makeFakeDb(cfg: Record<string, TableConfig> = {}) {
   return { db: db as unknown as SupabaseClient, upsertCalls, updateCalls, deleteCalls };
 }
 
+/** Points BOTH createTenantClient (every DB call) and createServiceClient (the narrow
+ *  storage-only calls) at the same fake db, so a test only has to seed one fake and the
+ *  `expect(calledDb).toBe(db)` identity assertions on the storage calls still hold. */
+function useDb(db: SupabaseClient) {
+  vi.mocked(createTenantClient).mockReturnValue(db);
+  vi.mocked(createServiceClient).mockReturnValue(db);
+}
+
 // A real PNG header whose IHDR says 640x480 — used to prove decoded dimensions (not
 // FormData-supplied ones) are what land in the upsert.
 const PNG_640x480_HEX =
@@ -185,7 +200,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     // The client lies about the dimensions — the server must ignore this entirely and decode the
     // real bytes instead.
@@ -223,7 +238,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f2", site_id: "SITE-B", org_id: "org-2" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
     const res = await uploadFloorPlanAction(uploadForm({ floorId: "f2", extra: { pdf: pdfBlob } }));
@@ -245,7 +260,7 @@ describe("uploadFloorPlanAction", () => {
     const { db } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await uploadFloorPlanAction(
       uploadForm({ file: makeBlobLike(hexToBytes(NOT_PNG_HEX)) })
@@ -259,7 +274,7 @@ describe("uploadFloorPlanAction", () => {
     const { db } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     // Stub `.size` at 16MB without allocating a real 16MB buffer.
     const oversized = makeBlobLike(new Uint8Array(0), "plan.png", 16 * 1024 * 1024);
@@ -273,7 +288,7 @@ describe("uploadFloorPlanAction", () => {
     const { db } = makeFakeDb({
       floors: { selectResult: () => ({ data: null, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await uploadFloorPlanAction(uploadForm({ floorId: "no-such-floor" }));
 
@@ -285,7 +300,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const pdfBytes = hexToBytes(NOT_PNG_HEX); // arbitrary bytes — the action never parses the PDF
     const pdfBlob = makeBlobLike(pdfBytes, "plan.pdf");
@@ -313,7 +328,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
     const res = await uploadFloorPlanAction(uploadForm({ extra: { pdf: pdfBlob, pdfPage: "0" } }));
@@ -327,7 +342,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await uploadFloorPlanAction(uploadForm());
 
@@ -342,7 +357,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
     vi.mocked(uploadPlanPdf).mockRejectedValue(new Error("Storage down"));
 
     const pdfBlob = makeBlobLike(hexToBytes(NOT_PNG_HEX), "plan.pdf");
@@ -360,7 +375,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await uploadFloorPlanAction(uploadForm({ extra: { pdfPage: "abc" } }));
 
@@ -373,7 +388,7 @@ describe("uploadFloorPlanAction", () => {
     const { db, upsertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: { id: "f1", site_id: "SITE-A", org_id: "org-1" }, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const resNegative = await uploadFloorPlanAction(uploadForm({ extra: { pdfPage: "-1" } }));
     expect(resNegative).toEqual({ ok: true });
@@ -406,7 +421,7 @@ describe("deleteFloorPlanAction", () => {
         }),
       },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
     vi.mocked(removePlanObject).mockRejectedValue(new Error("Object not found"));
 
     const res = await deleteFloorPlanAction(deleteForm("f1"));
@@ -425,7 +440,7 @@ describe("deleteFloorPlanAction", () => {
     const { db, deleteCalls, updateCalls } = makeFakeDb({
       floor_plans: { selectResult: () => ({ data: null, error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await deleteFloorPlanAction(deleteForm("floor-77"));
 
@@ -461,7 +476,7 @@ describe("deleteFloorPlanAction", () => {
         }),
       },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
     vi.mocked(removePlanPdf).mockRejectedValue(new Error("Object not found"));
 
     const res = await deleteFloorPlanAction(deleteForm("f1"));
@@ -500,7 +515,7 @@ describe("deleteFloorPlanAction", () => {
         }),
       },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    useDb(db);
 
     const res = await deleteFloorPlanAction(deleteForm("f1"));
 

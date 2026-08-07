@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { withEditor } from "@/features/auth/withMember";
+import type { Member } from "@/features/auth/members";
 import { validateCode, normaliseCode } from "./validation";
 import { geocodeAddress } from "./geocode";
 import { ROOM_TYPES, type RoomType } from "@/domain/hierarchy";
@@ -104,7 +106,7 @@ export const createClientAction = withEditor("client.create", async (member, for
   const codeError = validateCode(code, "client");
   if (codeError) return { ok: false, error: codeError };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await createClient(db, { code, name, orgId: member.orgId });
   } catch (e) {
@@ -114,7 +116,7 @@ export const createClientAction = withEditor("client.create", async (member, for
   return { ok: true };
 });
 
-export const renameClientAction = withEditor("client.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameClientAction = withEditor("client.rename", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -122,7 +124,7 @@ export const renameClientAction = withEditor("client.rename", async (_member, fo
   const codeError = validateCode(code, "client");
   if (codeError) return { ok: false, error: codeError };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await renameClient(db, id, { code, name });
   } catch (e) {
@@ -132,10 +134,10 @@ export const renameClientAction = withEditor("client.rename", async (_member, fo
   return { ok: true };
 });
 
-export const deleteClientAction = withEditor("client.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteClientAction = withEditor("client.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await deleteClient(db, id);
   } catch (e) {
@@ -145,7 +147,7 @@ export const deleteClientAction = withEditor("client.delete", async (_member, fo
   return { ok: true };
 });
 
-export const createSiteAction = withEditor("site.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createSiteAction = withEditor("site.create", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const clientId = String(formData.get("clientId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -154,7 +156,7 @@ export const createSiteAction = withEditor("site.create", async (_member, formDa
   const codeError = validateCode(code, "site");
   if (codeError) return { ok: false, error: codeError };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   let siteId: string;
   try {
     const site = await createSiteForClient(db, { clientId, code, name, address: address ? String(address) : null });
@@ -176,7 +178,7 @@ export const createSiteAction = withEditor("site.create", async (_member, formDa
   return { ok: true };
 });
 
-export const renameSiteAction = withEditor("site.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameSiteAction = withEditor("site.rename", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -187,7 +189,7 @@ export const renameSiteAction = withEditor("site.rename", async (_member, formDa
 
   const newAddress = address ? String(address) : null;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
 
   // This read exists SOLELY to capture the previous address for geocode bookkeeping (below), so
   // it must have its own try/catch, ahead of — and separate from — the write's try/catch. If this
@@ -236,10 +238,10 @@ export const renameSiteAction = withEditor("site.rename", async (_member, formDa
   return { ok: true };
 });
 
-export const deleteSiteAction = withEditor("site.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteSiteAction = withEditor("site.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await deleteSite(db, id);
   } catch (e) {
@@ -249,10 +251,10 @@ export const deleteSiteAction = withEditor("site.delete", async (_member, formDa
   return { ok: true };
 });
 
-export const locateSiteAction = withEditor("site.locate", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const locateSiteAction = withEditor("site.locate", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const site = await getSiteById(db, siteId);
     if (!site) return { ok: false, error: "Site not found" };
@@ -265,10 +267,10 @@ export const locateSiteAction = withEditor("site.locate", async (_member, formDa
   return { ok: true };
 });
 
-export const deleteRackAction = withEditor("rack.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteRackAction = withEditor("rack.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const rackId = String(formData.get("rackId") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const { error } = await db.from("racks").delete().eq("id", rackId);
     if (error) throw new Error(`deleteRackAction: ${error.message}`);
@@ -279,7 +281,7 @@ export const deleteRackAction = withEditor("rack.delete", async (_member, formDa
   return { ok: true };
 });
 
-export const createFloorAction = withEditor("floor.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createFloorAction = withEditor("floor.create", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -287,7 +289,7 @@ export const createFloorAction = withEditor("floor.create", async (_member, form
   const codeError = validateCode(code, "floor");
   if (codeError) return { ok: false, error: codeError };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const floors = await listFloorsForSite(db, siteId);
     const sortOrder = Math.max(-1, ...floors.map((f) => f.sort_order)) + 1;
@@ -299,7 +301,7 @@ export const createFloorAction = withEditor("floor.create", async (_member, form
   return { ok: true };
 });
 
-export const renameFloorAction = withEditor("floor.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameFloorAction = withEditor("floor.rename", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -307,7 +309,7 @@ export const renameFloorAction = withEditor("floor.rename", async (_member, form
   const codeError = validateCode(code, "floor");
   if (codeError) return { ok: false, error: codeError };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await renameFloor(db, id, { code, name });
   } catch (e) {
@@ -317,10 +319,10 @@ export const renameFloorAction = withEditor("floor.rename", async (_member, form
   return { ok: true };
 });
 
-export const deleteFloorAction = withEditor("floor.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorAction = withEditor("floor.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await deleteFloor(db, id);
   } catch (e) {
@@ -337,11 +339,12 @@ export const deleteFloorAction = withEditor("floor.delete", async (_member, form
 // the archive page, because one operation changes what each of them shows.
 
 async function archiveOrRestore(
+  member: Member,
   id: string,
-  run: (db: ReturnType<typeof createServiceClient>, id: string) => Promise<void>,
+  run: (db: ReturnType<typeof createTenantClient>, id: string) => Promise<void>,
   kind: "client" | "site" | "floor"
 ): Promise<{ ok: boolean; error?: string }> {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await run(db, id);
   } catch (e) {
@@ -352,32 +355,32 @@ async function archiveOrRestore(
   return { ok: true };
 }
 
-export const archiveClientAction = withEditor("client.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), archiveClient, "client");
+export const archiveClientAction = withEditor("client.archive", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), archiveClient, "client");
 });
 
-export const restoreClientAction = withEditor("client.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), restoreClient, "client");
+export const restoreClientAction = withEditor("client.restore", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), restoreClient, "client");
 });
 
-export const archiveSiteAction = withEditor("site.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), archiveSite, "site");
+export const archiveSiteAction = withEditor("site.archive", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), archiveSite, "site");
 });
 
-export const restoreSiteAction = withEditor("site.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), restoreSite, "site");
+export const restoreSiteAction = withEditor("site.restore", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), restoreSite, "site");
 });
 
-export const archiveFloorAction = withEditor("floor.archive", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), archiveFloor, "floor");
+export const archiveFloorAction = withEditor("floor.archive", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), archiveFloor, "floor");
 });
 
-export const restoreFloorAction = withEditor("floor.restore", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
-  return archiveOrRestore(String(formData.get("id") ?? ""), restoreFloor, "floor");
+export const restoreFloorAction = withEditor("floor.restore", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+  return archiveOrRestore(member, String(formData.get("id") ?? ""), restoreFloor, "floor");
 });
 
 export const createRoomAction = withEditor("room.create", async (
-  _member,
+  member,
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; id?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
@@ -393,7 +396,7 @@ export const createRoomAction = withEditor("room.create", async (
   }
   const type = rawType as RoomType;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   let room;
   try {
     room = await createRoom(db, { floorId, code: normaliseCode(code), name, type });
@@ -405,7 +408,7 @@ export const createRoomAction = withEditor("room.create", async (
   return { ok: true, id: room.id };
 });
 
-export const renameRoomAction = withEditor("room.rename", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const renameRoomAction = withEditor("room.rename", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
@@ -419,7 +422,7 @@ export const renameRoomAction = withEditor("room.rename", async (_member, formDa
   }
   const type = rawType as RoomType;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await renameRoom(db, id, { code, name, type });
   } catch (e) {
@@ -429,10 +432,10 @@ export const renameRoomAction = withEditor("room.rename", async (_member, formDa
   return { ok: true };
 });
 
-export const deleteRoomAction = withEditor("room.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteRoomAction = withEditor("room.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await deleteRoom(db, id);
   } catch (e) {
@@ -443,7 +446,7 @@ export const deleteRoomAction = withEditor("room.delete", async (_member, formDa
 });
 
 export const createFloorDeviceAction = withEditor("floorDevice.create", async (
-  _member,
+  member,
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; id?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
@@ -462,7 +465,7 @@ export const createFloorDeviceAction = withEditor("floorDevice.create", async (
   }
   const status = rawStatus as FloorDeviceStatus;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   let device;
   try {
     device = await createFloorDevice(db, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
@@ -474,7 +477,7 @@ export const createFloorDeviceAction = withEditor("floorDevice.create", async (
   return { ok: true, id: device.id };
 });
 
-export const updateFloorDeviceAction = withEditor("floorDevice.update", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const updateFloorDeviceAction = withEditor("floorDevice.update", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const floorId = String(formData.get("floorId") ?? "");
   const roomIdRaw = String(formData.get("roomId") ?? "");
@@ -492,7 +495,7 @@ export const updateFloorDeviceAction = withEditor("floorDevice.update", async (_
   }
   const status = rawStatus as FloorDeviceStatus;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await updateFloorDevice(db, id, { floorId, roomId, deviceTypeId, code: normaliseCode(code), name, status });
   } catch (e) {
@@ -502,10 +505,10 @@ export const updateFloorDeviceAction = withEditor("floorDevice.update", async (_
   return { ok: true };
 });
 
-export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await deleteFloorDevice(db, id);
   } catch (e) {
@@ -528,7 +531,7 @@ export const deleteFloorDeviceAction = withEditor("floorDevice.delete", async (_
  *  separately: on a PDF failure the row is still upserted (with `pdf_storage_path: null`) and this
  *  action still returns `{ok: true}`, because a plan without geometry is exactly Slice C's working
  *  behaviour — a PDF hiccup must never lose, block, or roll back a successful PNG upload. */
-export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
   const file = formData.get("file");
   const rawSource = String(formData.get("source") ?? "image");
@@ -543,7 +546,11 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
   if (!PLAN_SOURCES.includes(rawSource as PlanSource)) return { ok: false, error: "Invalid plan source" };
   const source = rawSource as PlanSource;
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
+  // app_tenant has no grant on the storage schema ("permission denied for schema storage",
+  // verified against the local stack — see serviceRoleAllowlist.test.ts). Narrow, service-client
+  // ONLY for the two storage.upload calls below; every DB read/write in this action uses `db`.
+  const storageDb = createServiceClient();
 
   // Floor lookup: derives BOTH the organisation and the site for the storage path. NEVER trust a
   // client-supplied siteId, and this also doubles as "does this floor exist" — an unknown floor
@@ -587,13 +594,13 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
   let pdfStoragePath: string | null = null;
 
   try {
-    await uploadPlanObject(db, path, bytes);
+    await uploadPlanObject(storageDb, path, bytes);
 
     if (isBlobLike(pdfFile)) {
       const pdfPath = planPathFor(orgId, siteId, floorId, "pdf");
       try {
         const pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
-        await uploadPlanPdf(db, pdfPath, pdfBytes);
+        await uploadPlanPdf(storageDb, pdfPath, pdfBytes);
         pdfStoragePath = pdfPath;
       } catch {
         // Swallow — see the doc comment above. The PNG already landed; a PDF hiccup must not
@@ -602,7 +609,15 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
       }
     }
 
-    await upsertFloorPlan(db, {
+    // RE-MINT before the write, for the same reason discoverActions.ts re-mints after its Gemini
+    // call. `db`'s token was minted at the top of this action and is valid 60 seconds plus
+    // PostgREST's 30 seconds of leeway — 90 in total. Everything since is UNBOUNDED: reading a file
+    // of up to MAX_PLAN_BYTES, uploading the PNG, then optionally uploading the PDF, all over the
+    // network. A slow client or a slow storage backend can exceed 90 seconds, and when it does
+    // PGRST303 lands on THIS WRITE ONLY — after both objects are already in storage. That leaves
+    // orphaned objects with no floor_plans row pointing at them, and surfaces to the user as an
+    // opaque JWT error out of the catch below. One extra HMAC closes it.
+    await upsertFloorPlan(createTenantClient(member), {
       floorId,
       storagePath: path,
       widthPx: dims.width,
@@ -620,10 +635,13 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (_memb
   return { ok: true };
 });
 
-export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const floorId = String(formData.get("floorId") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
+  // app_tenant has no grant on the storage schema — narrow, service-client ONLY for the two
+  // storage.remove calls below (see the comment in uploadFloorPlanAction above).
+  const storageDb = createServiceClient();
 
   // Best-effort object removal: a missing (or already-removed) storage object must never block
   // the row + placement cleanup below, so any failure here — including the lookup itself — is
@@ -632,7 +650,7 @@ export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (_memb
   let plan: FloorPlanRow | null = null;
   try {
     plan = await getFloorPlan(db, floorId);
-    if (plan) await removePlanObject(db, plan.storage_path);
+    if (plan) await removePlanObject(storageDb, plan.storage_path);
   } catch {
     // swallow — see comment above.
   }
@@ -640,7 +658,7 @@ export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (_memb
   // PDF removal gets its OWN try/catch, exactly like the PNG above: a missing/already-removed PDF
   // object (or a plan that never had one) must never block row/placement cleanup.
   try {
-    if (plan?.pdf_storage_path) await removePlanPdf(db, plan.pdf_storage_path);
+    if (plan?.pdf_storage_path) await removePlanPdf(storageDb, plan.pdf_storage_path);
   } catch {
     // swallow — see comment above.
   }
@@ -658,12 +676,12 @@ export const deleteFloorPlanAction = withEditor("floorPlan.delete", async (_memb
 /** `Number(String(...))` on a missing/blank field yields NaN, and NaN fails `isNorm`'s
  *  `Number.isFinite` check inside `placeFloorDevice` — a missing field rejects rather than
  *  placing a pin at NaN. */
-export const placeFloorDeviceAction = withEditor("floorDevice.place", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const placeFloorDeviceAction = withEditor("floorDevice.place", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await placeFloorDevice(db, id, { x, y });
   } catch (e) {
@@ -673,10 +691,10 @@ export const placeFloorDeviceAction = withEditor("floorDevice.place", async (_me
   return { ok: true };
 });
 
-export const clearFloorDevicePlacementAction = withEditor("floorDevice.clearPlacement", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearFloorDevicePlacementAction = withEditor("floorDevice.clearPlacement", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await clearFloorDevicePlacement(db, id);
   } catch (e) {
@@ -686,12 +704,12 @@ export const clearFloorDevicePlacementAction = withEditor("floorDevice.clearPlac
   return { ok: true };
 });
 
-export const placeRackAction = withEditor("rack.place", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const placeRackAction = withEditor("rack.place", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
   const x = Number(String(formData.get("x")));
   const y = Number(String(formData.get("y")));
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await placeRack(db, id, { x, y });
   } catch (e) {
@@ -701,10 +719,10 @@ export const placeRackAction = withEditor("rack.place", async (_member, formData
   return { ok: true };
 });
 
-export const clearRackPlacementAction = withEditor("rack.clearPlacement", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearRackPlacementAction = withEditor("rack.clearPlacement", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const id = String(formData.get("id") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await clearRackPlacement(db, id);
   } catch (e) {
@@ -717,7 +735,7 @@ export const clearRackPlacementAction = withEditor("rack.clearPlacement", async 
 /** `JSON.parse` gets its OWN try/catch, separate from the repository call below — a malformed
  *  JSON string must reject with {ok:false} exactly like an invalid (but well-formed) polygon
  *  shape, never throw out of this action. */
-export const setRoomPolygonAction = withEditor("room.polygon.set", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const setRoomPolygonAction = withEditor("room.polygon.set", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
   const raw = String(formData.get("polygon") ?? "");
 
@@ -728,7 +746,7 @@ export const setRoomPolygonAction = withEditor("room.polygon.set", async (_membe
     return { ok: false, error: "Invalid polygon data" };
   }
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await setRoomPolygon(db, roomId, parsed as NormPoint[]);
   } catch (e) {
@@ -738,10 +756,10 @@ export const setRoomPolygonAction = withEditor("room.polygon.set", async (_membe
   return { ok: true };
 });
 
-export const clearRoomPolygonAction = withEditor("room.polygon.clear", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const clearRoomPolygonAction = withEditor("room.polygon.clear", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const roomId = String(formData.get("roomId") ?? "");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await clearRoomPolygon(db, roomId);
   } catch (e) {

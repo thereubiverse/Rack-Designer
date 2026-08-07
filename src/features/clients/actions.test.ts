@@ -4,10 +4,10 @@ import type { SiteRow } from "@/lib/supabase/types";
 import type { GeocodeResult } from "./geocodeOps";
 
 // DB-free by construction: no real Supabase client, no real network call, no real cache
-// invalidation. `createServiceClient` is swapped for a hand-rolled fake query builder (below)
+// invalidation. `createTenantClient` is swapped for a hand-rolled fake query builder (below)
 // that records every call it receives so assertions can check real arguments, not just call
 // counts. `geocodeAddress` and `revalidatePath` are plain vi.fn()s configured per test.
-vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn() }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn() }));
 vi.mock("./geocode", () => ({ geocodeAddress: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/features/auth/withMember", () => ({
@@ -21,7 +21,7 @@ vi.mock("@/features/auth/withMember", () => ({
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { geocodeAddress } from "./geocode";
 import { setSiteGeocode } from "./repository";
 import { createClientAction, createSiteAction, renameSiteAction } from "./actions";
@@ -151,7 +151,7 @@ describe("friendly duplicate-code messages point at Settings → Archive", () =>
     const { db } = makeFakeDb({
       insert: () => ({ data: null, error: new Error("duplicate key value violates unique constraint") }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createClientAction(createClientForm());
 
@@ -166,7 +166,7 @@ describe("friendly duplicate-code messages point at Settings → Archive", () =>
     const { db } = makeFakeDb({
       insert: () => ({ data: null, error: new Error("duplicate key value violates unique constraint") }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createSiteAction(createSiteForm());
 
@@ -181,7 +181,7 @@ describe("friendly duplicate-code messages point at Settings → Archive", () =>
 describe("createSiteAction — geocoding must never fail a write", () => {
   it("returns ok:true even when geocodeAddress REJECTS", async () => {
     const { db } = makeFakeDb({ insert: () => ({ data: { id: "site-1" }, error: null }) });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockRejectedValueOnce(new Error("geocoder unreachable"));
 
     const res = await createSiteAction(createSiteForm());
@@ -196,7 +196,7 @@ describe("createSiteAction — geocoding must never fail a write", () => {
       // failure on that specific call, not merely an { error } result.
       update: (obj) => ("geocoded_at" in obj ? Promise.reject(new Error("db unreachable")) : { error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockResolvedValueOnce({ status: "ok", lat: 1, lng: 2 });
 
     const res = await createSiteAction(createSiteForm());
@@ -209,7 +209,7 @@ describe("createSiteAction — geocoding must never fail a write", () => {
 
   it("still returns ok:true (with an error) when the initial insert itself fails — sanity check that ok:false is reachable at all", async () => {
     const { db } = makeFakeDb({ insert: () => ({ data: null, error: new Error("duplicate key") }) });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createSiteAction(createSiteForm());
 
@@ -222,7 +222,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
     const { db } = makeFakeDb({
       select: () => ({ data: siteRow({ address: "123 Main St" }), error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockRejectedValueOnce(new Error("timeout"));
 
     // address in the form ("456 Elm St") differs from previousAddress ("123 Main St"), so the
@@ -237,7 +237,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
       select: () => ({ data: siteRow({ address: "123 Main St" }), error: null }),
       update: (obj) => ("geocoded_at" in obj ? Promise.reject(new Error("db unreachable")) : { error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockResolvedValueOnce({ status: "ok", lat: 1, lng: 2 });
 
     const res = await renameSiteAction(renameSiteForm());
@@ -250,7 +250,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
     const { db } = makeFakeDb({
       select: () => ({ data: siteRow({ address: "456 Elm St" }), error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await renameSiteAction(renameSiteForm({ address: "456 Elm St" }));
 
@@ -262,7 +262,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
     const { db } = makeFakeDb({
       select: () => ({ data: siteRow({ address: "123 Main St" }), error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockResolvedValueOnce({ status: "not_found" });
 
     const res = await renameSiteAction(renameSiteForm({ address: "456 Elm St" }));
@@ -276,7 +276,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
     const { db } = makeFakeDb({
       select: () => Promise.reject(new Error("read failed")),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockResolvedValueOnce({ status: "not_found" });
 
     const res = await renameSiteAction(renameSiteForm({ address: "789 Oak St" }));
@@ -288,7 +288,7 @@ describe("renameSiteAction — geocoding must never fail a write", () => {
     const { db, updateCalls } = makeFakeDb({
       select: () => ({ data: siteRow({ address: "123 Main St" }), error: null }),
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
     vi.mocked(geocodeAddress).mockResolvedValueOnce({ status: "ok", lat: 5, lng: 6 });
 
     await renameSiteAction(renameSiteForm({ address: "456 Elm St" }));

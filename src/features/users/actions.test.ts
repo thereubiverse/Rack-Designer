@@ -14,7 +14,7 @@ vi.mock("@/features/auth/withMember", () => ({
   withEditor: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
 }));
 const db = {};
-vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => db }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: () => db }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 const inviteUserByEmail = vi.fn();
 vi.mock("@/features/users/invite", () => ({ inviteUserByEmail: (...a: unknown[]) => inviteUserByEmail(...a) }));

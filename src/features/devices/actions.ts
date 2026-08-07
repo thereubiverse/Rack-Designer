@@ -13,7 +13,7 @@ import {
   cooldownRemainingMs,
 } from "./deviceRules";
 import {
-  findDeviceByHash, insertPendingDevice, approveDevice, listDevicesForMember,
+  findDeviceByHash, findDeviceInOrg, insertPendingDevice, approveDevice, listDevicesForMember,
   deleteDevice, writeChallenge, clearChallenge, consumeDeviceAttempt,
   countPendingDevicesForMember, mostRecentChallengeForMember,
   type TrustedDevice,
@@ -187,20 +187,44 @@ export const revokeMyDeviceAction = withMember("device.revoke", async (member, f
   return { ok: true as const };
 });
 
-export const adminApproveDeviceAction = withAdmin("device.adminApprove", async (_admin, formData: FormData) => {
+/** ONE refusal for both admin actions, covering "no such device" AND "a device belonging to another
+ *  organisation" — same reasoning as NO_DEVICE and NOT_A_MEMBER. Telling those apart would confirm
+ *  to an admin probing ids which ones are real somewhere else on the system. */
+const NOT_IN_YOUR_ORG = "That device is no longer listed.";
+
+/** THE ORGANISATION CHECK BELOW IS NOT REDUNDANT WITH ROW-LEVEL SECURITY, AND CANNOT BE.
+ *
+ *  `trusted_devices` is deliberately NOT granted to `app_tenant` (migrations 0042/0043) — it holds
+ *  device token hashes, and the decision was that reaching it from a tenant token should fail loudly
+ *  rather than quietly work. So these two actions run on `createServiceClient()`, which carries
+ *  `bypassrls`: no policy is evaluated on this table for this path, and nothing under the
+ *  application will catch a missing filter. `findDeviceInOrg` IS the wall here.
+ *
+ *  Without it, `id` is taken at face value from a submitted form: an admin of organisation A could
+ *  read a pending device id belonging to organisation B and approve it — making B's untrusted
+ *  browser trusted — or revoke B's devices and lock B's staff out. Same reasoning as
+ *  `revokeMyDeviceAction` reading the caller's own devices from the database rather than trusting
+ *  the posted id, and as `setMemberRoleAction` re-reading the target member. */
+export const adminApproveDeviceAction = withAdmin("device.adminApprove", async (admin, formData: FormData) => {
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "No device specified." };
   const db = createServiceClient();
-  await approveDevice(db, id);
+  const device = await findDeviceInOrg(db, id, admin.orgId);
+  if (!device) return { ok: false, error: NOT_IN_YOUR_ORG };
+  await approveDevice(db, device.id);
   revalidatePath("/devices");
   return { ok: true as const };
 });
 
-export const adminRevokeDeviceAction = withAdmin("device.adminRevoke", async (_admin, formData: FormData) => {
+/** Scoped for the same reason, and by the same call, as adminApproveDeviceAction above — see the
+ *  comment there. Row-level security is not underneath this either. */
+export const adminRevokeDeviceAction = withAdmin("device.adminRevoke", async (admin, formData: FormData) => {
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "No device specified." };
   const db = createServiceClient();
-  await deleteDevice(db, id);
+  const device = await findDeviceInOrg(db, id, admin.orgId);
+  if (!device) return { ok: false, error: NOT_IN_YOUR_ORG };
+  await deleteDevice(db, device.id);
   revalidatePath("/devices");
   return { ok: true as const };
 });

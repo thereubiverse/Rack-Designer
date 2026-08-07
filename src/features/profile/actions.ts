@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createSessionClient } from "@/lib/supabase/auth";
 import { withMember } from "@/features/auth/withMember";
 import { cleanProfileFields, checkAvatar, checkNewPassword } from "./profileRules";
@@ -28,7 +29,7 @@ export const updateProfileAction = withMember("profile.update", async (member, f
     position: formData.get("position"),
     address: formData.get("address"),
   });
-  const db = createServiceClient();
+  const db = createTenantClient(member);
 
   // Read BEFORE writing: this is the only chance to see whether the number is actually changing.
   // Reading after writeProfile would already show the new value, and the comparison below would
@@ -40,7 +41,10 @@ export const updateProfileAction = withMember("profile.update", async (member, f
   // reformatting the same number does not cost the member their verification.
   if (before && !sameNumber(before.phone, fields.phone)) {
     await clearPhoneVerified(db, member.id);
-    await clearPendingVerification(db, member.id);
+    // app_tenant has no grant on phone_verifications (verified against the local stack, same as
+    // trusted_devices/device_challenges) — narrow, service-client ONLY for this one table.
+    const verificationDb = createServiceClient();
+    await clearPendingVerification(verificationDb, member.id);
   }
 
   revalidatePath("/profile");
@@ -56,7 +60,9 @@ export const uploadAvatarAction = withMember("profile.avatar.upload", async (mem
   const problem = checkAvatar({ size: file.size, type: file.type });
   if (problem) return { ok: false, error: problem };
 
-  const db = createServiceClient();
+  // app_tenant has no grant on the storage schema (verified against the local stack) — narrow,
+  // service-client ONLY for the object upload below.
+  const storageDb = createServiceClient();
   // The only other storage path built in this codebase, and — unlike the floor-plan path, which had
   // to stop using `member.orgId` — this one has a single source by construction: the row being
   // written IS `members[member.id]`, and `member.orgId` was read from that same row by
@@ -65,7 +71,8 @@ export const uploadAvatarAction = withMember("profile.avatar.upload", async (mem
   const bytes = new Uint8Array(await file.arrayBuffer());
   // Object first, then the row. The reverse order can leave a row pointing at a file that was
   // never written, which renders as a broken picture with no way to retry except re-uploading.
-  await uploadAvatarObject(db, path, bytes, file.type);
+  await uploadAvatarObject(storageDb, path, bytes, file.type);
+  const db = createTenantClient(member);
   await writeAvatarPath(db, member.id, path);
   revalidatePath("/profile");
   revalidatePath("/", "layout");
@@ -73,13 +80,16 @@ export const uploadAvatarAction = withMember("profile.avatar.upload", async (mem
 });
 
 export const removeAvatarAction = withMember("profile.avatar.remove", async (member, _formData: FormData) => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const profile = await readProfile(db, member.id);
   // No picture is not an error — the button simply had nothing to do.
   if (profile?.avatarPath) {
     // Object first again: if removal fails, the row still names the file and the action can be
     // retried. Clearing the column first would strand the object with nothing naming it.
-    await removeAvatarObject(db, profile.avatarPath);
+    // app_tenant has no grant on the storage schema (verified against the local stack) — narrow,
+    // service-client ONLY for the object removal below.
+    const storageDb = createServiceClient();
+    await removeAvatarObject(storageDb, profile.avatarPath);
     await writeAvatarPath(db, member.id, null);
   }
   revalidatePath("/profile");
@@ -116,9 +126,13 @@ export const sendPhoneCodeAction = withMember("phone.sendCode", async (member) =
   if (!smsConfigured()) {
     return { ok: false, error: "Text confirmation isn't set up yet. Ask an administrator." };
   }
-  const db = createServiceClient();
-  const profile = await readProfile(db, member.id);
+  const profile = await readProfile(createTenantClient(member), member.id);
   if (!profile?.phone) return { ok: false, error: "Add a phone number first." };
+
+  // Everything below reads/writes phone_verifications, which app_tenant has no grant on (verified
+  // against the local stack, same as trusted_devices/device_challenges) — narrow, service-client
+  // ONLY for this table.
+  const db = createServiceClient();
 
   // Nothing to prove on a number that's already verified, and every send costs money. The UI
   // hides the Verify button once verified, but this is a plain POST action — the check has to live
@@ -174,7 +188,10 @@ export const sendPhoneCodeAction = withMember("phone.sendCode", async (member) =
 
 export const confirmPhoneCodeAction = withMember("phone.confirm", async (member, formData: FormData) => {
   const entered = String(formData.get("code") ?? "").trim();
+  // app_tenant has no grant on phone_verifications (verified against the local stack, same as
+  // trusted_devices/device_challenges) — narrow, service-client ONLY for this table.
   const db = createServiceClient();
+  const tenantDb = createTenantClient(member);
 
   const pending = await readPendingVerification(db, member.id);
   if (!pending) return { ok: false, error: "Ask for a code first." };
@@ -193,7 +210,7 @@ export const confirmPhoneCodeAction = withMember("phone.confirm", async (member,
 
   // The code proves control of the number it was SENT to. If the profile now holds a different
   // number, confirming would mark an unrelated number verified.
-  const profile = await readProfile(db, member.id);
+  const profile = await readProfile(tenantDb, member.id);
   if (!profile || !sameNumber(profile.phone, pending.phone)) {
     await clearPendingVerification(db, member.id);
     return { ok: false, error: "That number changed since the code was sent. Ask for a new one." };
@@ -212,7 +229,7 @@ export const confirmPhoneCodeAction = withMember("phone.confirm", async (member,
   // member TYPED ("(718) 555-0142"), while `pending.phone` holds the E.164 form the code was sent
   // to ("+17185550142") — comparing against pending.phone would never match the column and this
   // update would always report false.
-  const verified = await markPhoneVerified(db, member.id, new Date().toISOString(), profile.phone);
+  const verified = await markPhoneVerified(tenantDb, member.id, new Date().toISOString(), profile.phone);
   await clearPendingVerification(db, member.id);
   if (!verified) {
     return { ok: false, error: "That number changed while the code was being confirmed. Ask for a new one." };

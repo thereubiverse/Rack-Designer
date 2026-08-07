@@ -23,6 +23,10 @@ export default async function VerifyDevicePage() {
   const jar = await cookies();
   const token = jar.get(DEVICE_COOKIE)?.value;
   if (token) {
+    // NOT createTenantClient: trusted_devices carries no grant for app_tenant at all — deliberately,
+    // per migration 0042/0043 — and this page's only query touches it, so it stays on the service
+    // client entirely. Confirmed directly: a select through the tenant client returns
+    // "permission denied for table trusted_devices" (42501), not empty rows.
     const db = createServiceClient();
     const device = await findDeviceByHash(db, hashDeviceToken(token));
     // Ownership check against the DATABASE, not the cookie alone: a cookie that happens to hash to

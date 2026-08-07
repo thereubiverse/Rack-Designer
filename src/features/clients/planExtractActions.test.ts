@@ -9,6 +9,7 @@ vi.mock("@/features/auth/withMember", () => ({
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn(() => ({})) }));
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn(() => ({})) }));
 vi.mock("@/features/locations/repository", () => ({
   getFloorPlan: vi.fn(),

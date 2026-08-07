@@ -11,10 +11,16 @@ expensive with every feature added and cannot be retrofitted cheaply later.
 
 ## The gate this slice leaves behind
 
-> The schema now permits a second organisation. **The application is not yet safe to have one.**
-> Every server action still queries without an organisation filter and with full service-role
-> privileges — enforcement is slice 2. **Do not create a second organisation, or open registration,
-> until slice 2 lands.**
+> The schema now permits a second organisation. **Slice 2 has landed and the wall holds for every
+> tenant table** — Postgres refuses a cross-organisation read or write, proven with two organisations
+> and two tokens. **But do not create a second organisation yet.** Fourteen files still hold
+> service-role calls, four permanently and ten narrowly for `trusted_devices`,
+> `phone_verifications` and storage, and the service role bypasses row-level security entirely.
+> Those paths are safe only if each one checks ownership itself. One of them did not: the admin
+> device-approval actions took a device id straight from the form and acted on it unscoped, so an
+> admin of one organisation could have approved another's browser or locked its staff out. That is
+> fixed — but it was found by looking, not by a guard, and the remaining service-role call sites have
+> not all been audited for the same shape. **Do that audit before creating a second organisation.**
 
 This is not caution about an abstract risk. The consequences are already readable in the code, and
 they are the reason the gate is written here rather than assumed:

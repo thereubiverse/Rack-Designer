@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const ME = { id: "member-me", email: "me@example.com", name: "Me", authUserId: "au-1", disabledAt: null };
+const ME = {
+  id: "member-me", email: "me@example.com", name: "Me", authUserId: "au-1", disabledAt: null,
+  orgId: "00000000-0000-0000-0000-000000000001",
+};
 
 // withMember is replaced by a transparent wrapper that injects OUR member — the guard itself is
 // tested in withMember.test.ts; here we are testing what the actions do with the member they get.
@@ -8,8 +11,13 @@ vi.mock("@/features/auth/withMember", () => ({
   withMember: (_key: string, fn: (m: typeof ME, ...a: never[]) => unknown) => (...a: never[]) => fn(ME, ...a),
 }));
 
+// members-table operations go through the tenant client; storage and phone_verifications (neither
+// granted to app_tenant — see serviceRoleAllowlist.test.ts) keep the narrow service client. Both
+// point at the SAME fake db — these tests only assert what repository functions were called with,
+// not which client minted the connection.
 const serviceClient = { auth: {} };
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: () => serviceClient }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: () => serviceClient }));
 
 const signInWithPassword = vi.fn();
 const updateUser = vi.fn();

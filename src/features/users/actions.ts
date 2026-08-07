@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { withAdmin } from "@/features/auth/withMember";
 import { normaliseEmail } from "@/features/auth/members";
 import {
@@ -21,7 +21,7 @@ export const inviteMemberAction: (
   if (!email) return { ok: false, error: "Enter an email address." };
   if (!isRole(role)) return { ok: false, error: "Choose a role." };
 
-  const db = createServiceClient();
+  const db = createTenantClient(admin);
   try {
     await insertMember(db, email, name, role, admin.orgId);
   } catch {
@@ -48,7 +48,7 @@ export const setMemberRoleAction: (
   // one — the last admin demoting themselves — is unrecoverable without psql.
   if (id === admin.id) return { ok: false, error: CANNOT_CHANGE_OWN_ROLE };
 
-  const db = createServiceClient();
+  const db = createTenantClient(admin);
   const target = await findMemberById(db, id);
   if (!target) return { ok: false, error: "That person is no longer in the list." };
 
@@ -72,7 +72,7 @@ export const setMemberActiveAction: (
   const active = String(formData.get("active") ?? "") !== "false";
   if (id === admin.id) return { ok: false, error: CANNOT_REVOKE_SELF };
 
-  const db = createServiceClient();
+  const db = createTenantClient(admin);
   const target = await findMemberById(db, id);
   if (!target) return { ok: false, error: "That person is no longer in the list." };
 

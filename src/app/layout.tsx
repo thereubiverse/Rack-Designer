@@ -48,6 +48,11 @@ export default async function RootLayout({
   let memberAvatarUrl: string | null = null;
   if (member?.avatarPath) {
     try {
+      // NOT createTenantClient: storage.objects carries no grant for app_tenant at all (the
+      // design doc defers storage-level RLS as "genuinely defence in depth" and never wires the
+      // grant), so a signed-URL call through the tenant client fails outright with "permission
+      // denied for schema storage" — proven directly against the local stack, not assumed. This
+      // is the one operation in this file, so the whole file stays on the service client.
       memberAvatarUrl = await createAvatarSignedUrl(createServiceClient(), member.avatarPath);
     } catch (e) {
       console.error("RootLayout: could not sign the member avatar", e);

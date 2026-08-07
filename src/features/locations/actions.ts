@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { withEditor } from "@/features/auth/withMember";
 import { isValidCode, isValidRackHeight, type RoomType } from "@/domain/hierarchy";
 import { normaliseCode } from "@/features/clients/validation";
@@ -52,7 +52,7 @@ async function findOrCreateRoom(
  * the directory treats them as implicit, born when a rack needs them.
  */
 export const createRackInSiteAction = withEditor("rack.create", async (
-  _member,
+  member,
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> => {
   const siteId = String(formData.get("siteId") ?? "");
@@ -68,7 +68,7 @@ export const createRackInSiteAction = withEditor("rack.create", async (
   }
   if (!isValidRackHeight(heightU)) return { ok: false, error: "Invalid rack height" };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const floor = await findOrCreateFloor(db, siteId, floorCode);
     const room = await findOrCreateRoom(db, floor.id, roomCode, roomType);

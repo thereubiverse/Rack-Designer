@@ -1,7 +1,9 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { withEditor } from "@/features/auth/withMember";
+import type { Member } from "@/features/auth/members";
 import { getFloorPlan, listRoomsForFloor } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { geminiPlanBackend } from "./ai/planVisionBackend";
@@ -29,14 +31,17 @@ const friendly = (detail: string) =>
 // Returns either the ready-to-send image payload or a caller-facing error. NOTE: getFloorPlan and
 // downloadPlanObject can both throw on unexpected DB/storage errors — callers MUST await this
 // inside their own try/catch so those propagate as `{ ok: false, error }`, never as a rejection.
-async function prepare(floorId: string, orgId: string):
+async function prepare(member: Member, floorId: string):
   Promise<{ ok: true; imageBase64: string; mimeType: string; apiKey: string; widthPx: number; heightPx: number } | { ok: false; error: string }> {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const plan = await getFloorPlan(db, floorId);
   if (!plan) return { ok: false, error: "Upload a plan first." };
-  const apiKey = await resolveGeminiKey(dbSettingsStore, orgId);
+  const apiKey = await resolveGeminiKey(dbSettingsStore, member.orgId);
   if (!apiKey) return { ok: false, error: "no-key" };
-  const bytes = await downloadPlanObject(db, plan.storage_path);
+  // app_tenant has no grant on the storage schema (verified against the local stack) — narrow,
+  // service-client ONLY for this download.
+  const storageDb = createServiceClient();
+  const bytes = await downloadPlanObject(storageDb, plan.storage_path);
   const imageBase64 = Buffer.from(bytes).toString("base64");
   return { ok: true, imageBase64, mimeType: "image/png", apiKey, widthPx: plan.width_px, heightPx: plan.height_px };
 }
@@ -67,7 +72,7 @@ async function cropToDrawing(
 
 export const discoverRoomsAction = withEditor("ai.discoverRooms", async (member, floorId: string): Promise<DiscoverRoomsResult> => {
   try {
-    const ready = await prepare(floorId, member.orgId);
+    const ready = await prepare(member, floorId);
     if (!ready.ok) return ready;
     const { mimeType, apiKey, widthPx, heightPx } = ready;
     // Locate + crop first: the model gets far more pixels per room once the title block is gone.
@@ -79,7 +84,11 @@ export const discoverRoomsAction = withEditor("ai.discoverRooms", async (member,
       polygon: p.polygon.map((pt) => cropPointToFull(pt, crop)),
     }));
     // Rooms the user has already outlined are finished work — re-proposing them every run is noise.
-    const rooms = await listRoomsForFloor(createServiceClient(), floorId);
+    // A FRESH tenant client, not `prepare`'s: a token lives 90 seconds (60 plus PostgREST's leeway)
+    // and two Gemini round trips have happened since that one was minted, with no bound on how long
+    // they take. Re-minting is one HMAC. clients/actions.ts and planExtractActions.ts do the same
+    // before their final writes, for the same reason.
+    const rooms = await listRoomsForFloor(createTenantClient(member), floorId);
     return { ok: true, proposals: filterAlreadyTraced(proposals, rooms) };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
@@ -90,7 +99,7 @@ export const discoverRoomsAction = withEditor("ai.discoverRooms", async (member,
 
 export const discoverDevicesAction = withEditor("ai.discoverDevices", async (member, floorId: string): Promise<DiscoverDevicesResult> => {
   try {
-    const ready = await prepare(floorId, member.orgId);
+    const ready = await prepare(member, floorId);
     if (!ready.ok) return ready;
     const { imageBase64, mimeType, apiKey } = ready;
     const raw = await geminiPlanBackend.discoverDevices({ imageBase64, mimeType, apiKey });

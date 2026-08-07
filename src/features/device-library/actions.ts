@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import {
   createDeviceTemplate, updateDeviceTemplate, getDeviceTemplate,
   toEditableTemplate, deleteDeviceTemplate, duplicateDeviceTemplate, createBrand, deleteBrand,
@@ -14,9 +14,9 @@ import { withMember, withEditor } from "@/features/auth/withMember";
 /** The rack builder's "Add device" picker refreshes one type's templates after a custom device is
  *  created inline (so the new template appears and can be inserted) without a full page reload. */
 export const listTemplatesForTypeAction = withMember("deviceTemplate.list", async (
-  _member, deviceTypeId: string,
+  member, deviceTypeId: string,
 ): Promise<{ ok: boolean; templates?: PickerTemplate[]; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     return { ok: true, templates: await listTemplatesForType(db, deviceTypeId) };
   } catch (e) {
@@ -27,11 +27,11 @@ export const listTemplatesForTypeAction = withMember("deviceTemplate.list", asyn
 );
 
 export const saveNewDeviceTemplateAction = withEditor("deviceTemplate.create", async (
-  _member, input: DeviceTemplateInput,
+  member, input: DeviceTemplateInput,
 ): Promise<{ ok: boolean; id?: string; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
   if (err) return { ok: false, error: err };
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const row = await createDeviceTemplate(db, {
       name: input.name.trim(), deviceTypeId: input.deviceTypeId,
@@ -47,11 +47,11 @@ export const saveNewDeviceTemplateAction = withEditor("deviceTemplate.create", a
 });
 
 export const saveDeviceTemplateAction = withEditor("deviceTemplate.update", async (
-  _member, id: string, input: DeviceTemplateInput,
+  member, id: string, input: DeviceTemplateInput,
 ): Promise<{ ok: boolean; error?: string }> => {
   const err = validateDeviceTemplateInput(input);
   if (err) return { ok: false, error: err };
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     await updateDeviceTemplate(db, id, {
       name: input.name.trim(), deviceTypeId: input.deviceTypeId,
@@ -67,9 +67,9 @@ export const saveDeviceTemplateAction = withEditor("deviceTemplate.update", asyn
 });
 
 export const getDeviceTemplateAction = withMember("deviceTemplate.get", async (
-  _member, id: string,
+  member, id: string,
 ): Promise<{ ok: boolean; template?: EditableTemplate; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const row = await getDeviceTemplate(db, id);
     if (!row) return { ok: false, error: "Template not found" };
@@ -82,11 +82,11 @@ export const getDeviceTemplateAction = withMember("deviceTemplate.get", async (
 );
 
 export const createBrandAction = withEditor("brand.create", async (
-  _member, name: string,
+  member, name: string,
 ): Promise<{ ok: boolean; brand?: BrandRow; error?: string }> => {
   const trimmed = name.trim();
   if (!trimmed) return { ok: false, error: "Brand name is required" };
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const brand = await createBrand(db, { name: trimmed });
     revalidatePath("/device-library");
@@ -96,8 +96,8 @@ export const createBrandAction = withEditor("brand.create", async (
   }
 });
 
-export const deleteBrandAction = withEditor("brand.delete", async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+export const deleteBrandAction = withEditor("brand.delete", async (member, id: string): Promise<{ ok: boolean; error?: string }> => {
+  const db = createTenantClient(member);
   try {
     await deleteBrand(db, id);
     revalidatePath("/device-library");
@@ -114,8 +114,8 @@ export const deleteBrandAction = withEditor("brand.delete", async (_member, id: 
 // rejecting"). Left as a throw, the caller's catch would simply never fire and a failed delete would
 // look like a silent success. Converted to the same `{ ok, error }` shape every sibling action here
 // already uses, with the caller updated to check `res.ok` instead of try/catch.
-export const deleteDeviceTemplateAction = withEditor("deviceTemplate.delete", async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+export const deleteDeviceTemplateAction = withEditor("deviceTemplate.delete", async (member, id: string): Promise<{ ok: boolean; error?: string }> => {
+  const db = createTenantClient(member);
   try {
     await deleteDeviceTemplate(db, id);
   } catch (e) {
@@ -129,8 +129,8 @@ export const deleteDeviceTemplateAction = withEditor("deviceTemplate.delete", as
   return { ok: true };
 });
 
-export const duplicateDeviceTemplateAction = withEditor("deviceTemplate.duplicate", async (_member, id: string): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+export const duplicateDeviceTemplateAction = withEditor("deviceTemplate.duplicate", async (member, id: string): Promise<{ ok: boolean; error?: string }> => {
+  const db = createTenantClient(member);
   try {
     await duplicateDeviceTemplate(db, id);
   } catch (e) {

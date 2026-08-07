@@ -205,6 +205,11 @@ services:
       NEXT_PUBLIC_SUPABASE_URL: https://${APP_HOSTNAME}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      # Slice 2: the app mints short-lived app_tenant tokens with this, which is how row-level
+      # security learns which organisation a query belongs to. The app already holds
+      # SUPABASE_SERVICE_ROLE_KEY, so this grants it no new power — but it does mean this container
+      # can mint any role, which is worth knowing before deciding the service-role key can be removed.
+      SUPABASE_JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       NEXT_PUBLIC_SITE_URL: https://${APP_HOSTNAME}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       SMTP_HOST: ${SMTP_HOST}
