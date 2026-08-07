@@ -147,3 +147,47 @@ application uses — so policies would govern only the direct-REST path, which `
 RLS becomes the right tool if the browser ever queries Supabase directly, or if a role must be
 genuinely unable to read something independently of application code. Neither is true today, and
 nothing here makes it harder later.
+
+## Every table is scoped to an organisation
+
+This is not optional decoration on top of the schema; it is the mechanism that keeps one
+organisation's data from being visible to, or colliding with, another's. If you add table 21, it
+needs all four of the following, or it is silently unscoped:
+
+1. **`org_id uuid not null references organisations(id)`.** Every row belongs to exactly one
+   organisation. `not null` matters — a nullable `org_id` on an application table means some rows
+   answer to no organisation at all, which is a hole, not an edge case. (The three library tables —
+   `brands`, `device_templates`, `device_types` — are the deliberate exception: `NULL` there means
+   "standard, shared by every organisation," a distinct and intentional meaning, not an omission.)
+
+2. **`unique (org_id, id)`.** This is what makes the table usable as the parent in a composite
+   foreign key from a child table — see point 3. Without it, nothing downstream can reference this
+   table's rows scoped to their organisation.
+
+3. **An inheritance trigger, if the table has an org-scoped parent.** A child row's `org_id` must
+   come from its parent, not from whatever the caller happens to pass — copy the pattern from
+   `0035_org_id_triggers.sql`. And the foreign key to that parent must be a **composite** key,
+   `(org_id, parent_id) references parent(org_id, id)`, not a single-column `parent_id` reference —
+   a single-column FK lets a row point at a parent in a *different* organisation, which is exactly
+   the cross-tenant link this whole design exists to prevent.
+
+4. **`org_id` in every unique constraint that isn't already covered by an org-scoped parent.** A
+   plain `unique (code)` rejects a second organisation's perfectly ordinary data — two organisations
+   both having a client coded `ACME` is normal, not a conflict. Scope it: `unique (org_id, code)`.
+   If the column's meaning allows a row to be shared across every organisation (as with the three
+   library tables above), use `unique nulls not distinct (org_id, code)` instead of plain `unique` —
+   plain `unique` treats every `NULL org_id` as distinct from every other, so two shared rows with
+   the same name would both be silently accepted and the constraint would stop protecting the exact
+   rows it exists for. This requires Postgres 15+ (this stack runs 17.6).
+
+   Not every unique constraint needs this. If the table already hangs off an org-scoped parent —
+   e.g. `sites(client_id, code)`, `racks(room_id, code)` — the parent's own `org_id` scoping already
+   makes the row unreachable across organisations, so the child's constraint needs no `org_id` of
+   its own. And two constraints are deliberately left global: `members.email` (one auth account,
+   one member row) and `trusted_devices.token_hash` (a secret, where cross-org collision would be a
+   real collision). See `0041_org_scoped_unique_constraints.sql` for the reasoning on both.
+
+`src/lib/supabase/tenancy.test.ts` checks all of this against the live schema — every table has
+`org_id`, every table has `unique (org_id, id)`, every foreign key to an org-scoped table is
+composite, and every unique constraint is either org-scoped or on the short, explicit exception
+list. Skip any of the four steps above and that test fails.
