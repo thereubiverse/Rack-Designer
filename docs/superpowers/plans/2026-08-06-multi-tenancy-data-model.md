@@ -52,8 +52,9 @@
 **Create:**
 - `supabase/migrations/0034_organisations_and_org_id.sql` — the table, the columns, the backfill
 - `supabase/migrations/0035_org_id_triggers.sql` — inheritance triggers and the update guard
-- `supabase/migrations/0036_org_id_not_null_and_composite_fks.sql` — the enforcement
-- `supabase/migrations/0037_org_scoped_unique_constraints.sql` — uniques that were global
+- `supabase/migrations/0036_app_settings_org_key.sql` — the settings key, needed by Task 3's upsert
+- `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql` — the enforcement
+- `supabase/migrations/0038_org_scoped_unique_constraints.sql` — uniques that were global
 - `src/lib/supabase/tenancy.test.ts` — the live schema guard
 - `scripts/migrate-storage-to-org-paths.ts` — the one-off object move
 
@@ -494,18 +495,27 @@ admin's details (Step 2 of the script already prompts for hostname, email and na
 ```sql
 with org as (
   insert into organisations (name) values (:'orgname')
-  on conflict do nothing
   returning id
 )
 insert into members (email, name, role, auth_user_id, org_id)
-values (:'email', :'name', 'admin', :'authid'::uuid,
-        coalesce((select id from org), (select id from organisations order by created_at limit 1)))
-on conflict (email) do nothing;
+values (:'email', :'name', 'admin', :'authid'::uuid, (select id from org))
+on conflict (email) do update set auth_user_id = excluded.auth_user_id
+returning id;
 ```
 
-The `coalesce` keeps the installer's re-run promise intact: a second run finds the organisation
-already there and reuses it rather than failing. Add an `ORG_NAME` prompt next to the admin name,
-defaulting to the admin's email domain if left blank.
+**Keep the existing `on conflict (email) do update … returning` — do NOT change it to `do nothing`.**
+An earlier draft of this plan said `do nothing`; that is wrong, and review proved it twice over. The
+comment block above that statement documents the relink as a fix for a real bug (a `members` row
+surviving a GoTrue user recreation and left pointing at a dead `auth_user_id`), naming `do nothing`
+as the cause. And the script's next line refuses to continue on an empty `RETURNING` — under
+`do nothing` a conflicting re-run returns no rows, so the installer would die on the exact
+safe-to-re-run path its own header advertises. The outer `do update` never touches `org_id`, so a
+re-run cannot reassign an existing member's organisation.
+
+Look the organisation up by name BEFORE inserting, rather than relying on `on conflict do nothing` —
+`organisations` has no unique constraint on `name`, so that clause never fires and every re-run would
+leave an orphan organisation behind. Add an `ORG_NAME` prompt next to the admin name, defaulting to
+the admin's email domain if left blank.
 
 - [ ] **Step 7: Fix every caller the compiler names**
 
@@ -536,7 +546,7 @@ git commit -m "Carry the organisation on Member and supply it at the three roots
 ### Task 4: `not null`, and composite foreign keys
 
 **Files:**
-- Create: `supabase/migrations/0036_org_id_not_null_and_composite_fks.sql`
+- Create: `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql`
 
 **Interfaces:**
 - Consumes: populated `org_id` everywhere (Task 1), triggers (Task 2), application writes (Task 3).
@@ -662,7 +672,7 @@ Compare against the `drop constraint` names above. If any differs, correct the m
 - [ ] **Step 3: Apply it**
 
 ```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0036_org_id_not_null_and_composite_fks.sql
+docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0037_org_id_not_null_and_composite_fks.sql
 ```
 
 Expected: a long run of `ALTER TABLE` with no `ERROR`.
@@ -692,7 +702,7 @@ Expected: `ERROR: insert or update on table "sites" violates foreign key constra
 
 ```bash
 ./node_modules/.bin/tsc --noEmit
-git add supabase/migrations/0036_org_id_not_null_and_composite_fks.sql
+git add supabase/migrations/0037_org_id_not_null_and_composite_fks.sql
 git commit -m "Make a cross-organisation row impossible in the database"
 ```
 
@@ -701,7 +711,7 @@ git commit -m "Make a cross-organisation row impossible in the database"
 ### Task 5: Unique constraints that were global
 
 **Files:**
-- Create: `supabase/migrations/0037_org_scoped_unique_constraints.sql`
+- Create: `supabase/migrations/0038_org_scoped_unique_constraints.sql`
 - Modify: `supabase/migrations/README.md`
 
 **Interfaces:**
@@ -737,10 +747,10 @@ alter table device_types drop constraint device_types_category_name_key;
 alter table device_types add constraint device_types_org_category_name_key
   unique nulls not distinct (org_id, category, name);
 
--- app_settings is keyed by name alone today, so one organisation storing its Gemini key would
--- overwrite another's.
-alter table app_settings drop constraint app_settings_pkey;
-alter table app_settings add primary key (org_id, key);
+-- app_settings' primary key is NOT here — it moved to Task 3, migration 0036. Task 3's settings
+-- upsert names `onConflict: "org_id,key"`, and Postgres rejects an ON CONFLICT target with no
+-- matching unique index (42P10), so leaving the key change until now meant every settings save
+-- failed for the two tasks in between. Found in review.
 
 -- UNCHANGED, DELIBERATELY:
 --   members.email stays globally unique. auth.users permits one account per address and members
@@ -757,7 +767,7 @@ alter table app_settings add primary key (org_id, key);
 - [ ] **Step 2: Apply it**
 
 ```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0037_org_scoped_unique_constraints.sql
+docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0038_org_scoped_unique_constraints.sql
 ```
 
 Expected: `ALTER TABLE` throughout, no `ERROR`. If a `drop constraint` fails on a name, list the real names with the query in Task 4 Step 2 and correct it.
@@ -798,7 +808,7 @@ Append a section to `supabase/migrations/README.md` stating: every new table get
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/0037_org_scoped_unique_constraints.sql supabase/migrations/README.md
+git add supabase/migrations/0038_org_scoped_unique_constraints.sql supabase/migrations/README.md
 git commit -m "Scope the global unique constraints to the organisation"
 ```
 
