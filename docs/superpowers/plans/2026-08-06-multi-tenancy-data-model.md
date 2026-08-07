@@ -54,7 +54,7 @@
 - `supabase/migrations/0035_org_id_triggers.sql` — inheritance triggers and the update guard
 - `supabase/migrations/0036_app_settings_org_key.sql` — the settings key, needed by Task 3's upsert
 - `supabase/migrations/0037_org_id_not_null_and_composite_fks.sql` — the enforcement
-- `supabase/migrations/0038_org_scoped_unique_constraints.sql` — uniques that were global
+- `supabase/migrations/0041_org_scoped_unique_constraints.sql` — uniques that were global
 - `src/lib/supabase/tenancy.test.ts` — the live schema guard
 - `scripts/migrate-storage-to-org-paths.ts` — the one-off object move
 
@@ -711,7 +711,7 @@ git commit -m "Make a cross-organisation row impossible in the database"
 ### Task 5: Unique constraints that were global
 
 **Files:**
-- Create: `supabase/migrations/0038_org_scoped_unique_constraints.sql`
+- Create: `supabase/migrations/0041_org_scoped_unique_constraints.sql`
 - Modify: `supabase/migrations/README.md`
 
 **Interfaces:**
@@ -767,7 +767,7 @@ alter table device_types add constraint device_types_org_category_name_key
 - [ ] **Step 2: Apply it**
 
 ```bash
-docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0038_org_scoped_unique_constraints.sql
+docker exec -i supabase_db_network-doc-platform psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/0041_org_scoped_unique_constraints.sql
 ```
 
 Expected: `ALTER TABLE` throughout, no `ERROR`. If a `drop constraint` fails on a name, list the real names with the query in Task 4 Step 2 and correct it.
@@ -808,7 +808,7 @@ Append a section to `supabase/migrations/README.md` stating: every new table get
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/0038_org_scoped_unique_constraints.sql supabase/migrations/README.md
+git add supabase/migrations/0041_org_scoped_unique_constraints.sql supabase/migrations/README.md
 git commit -m "Scope the global unique constraints to the organisation"
 ```
 
