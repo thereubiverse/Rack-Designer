@@ -106,3 +106,10 @@ alter table device_challenges add constraint device_challenges_device_fk
 -- shared, so nothing can point across a wall. SLICE 4, which lets an organisation create its own
 -- device types, must close this: at that point a rack_device could reference another organisation's
 -- private template. It is recorded here rather than left to be rediscovered.
+--
+-- CORRECTION (added by 0039): the paragraph above is not a complete list of what this migration
+-- left single-column — it only covers the deliberate library exceptions. This migration also
+-- missed seven foreign keys into ordinary org-scoped parents (connections.a_rack_device_id,
+-- connections.b_rack_device_id, port_endpoints.rack_device_id, port_endpoints.target_rack_device_id,
+-- port_endpoints.target_rack_id, floor_devices.floor_id, floor_devices.room_id) that had no
+-- excuse to stay single-column and were a live cross-tenant hole until 0039 converted them.
