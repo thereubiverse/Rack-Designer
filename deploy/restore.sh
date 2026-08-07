@@ -205,7 +205,28 @@ for excluded in "${excluded_tables[@]}"; do
   excluded_sql_array+="'$excluded'"
 done
 
+# Mode-aware, the same way install.sh is. This script only `exec`s, `stop`s and `start`s, so today
+# the single -f publishes nothing and breaks nothing — but a compose invocation missing
+# docker-compose.tunnel.yml does not KNOW about the `cloudflared` service, and the first
+# `--remove-orphans` added here (or to a wrapper) would delete it mid-restore, taking the site off the
+# internet at the exact moment someone is recovering it. The mode comes from the same deploy/.env
+# install.sh wrote it to.
+DEPLOY_MODE=""
+if [[ -f "$ENV_FILE" ]]; then
+  # `|| true` — under `set -o pipefail` a grep that matches nothing fails the pipeline, and with
+  # `set -e` that would abort a restore against any stack whose .env predates DEPLOY_MODE.
+  DEPLOY_MODE="$(command grep -E '^DEPLOY_MODE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- || true)"
+fi
+
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
+if [[ "$DEPLOY_MODE" == "tunnel" ]]; then
+  # Alongside whatever --compose-file was given, so a stack installed elsewhere resolves its own
+  # override rather than this checkout's.
+  TUNNEL_COMPOSE_FILE="$(dirname -- "$COMPOSE_FILE")/docker-compose.tunnel.yml"
+  [[ -f "$TUNNEL_COMPOSE_FILE" ]] ||
+    die "$ENV_FILE says DEPLOY_MODE=tunnel but $TUNNEL_COMPOSE_FILE is missing — that is the file defining the cloudflared service"
+  COMPOSE+=(-f "$TUNNEL_COMPOSE_FILE")
+fi
 [[ -f "$ENV_FILE" ]] && COMPOSE+=(--env-file "$ENV_FILE")
 
 DB_CID="$("${COMPOSE[@]}" ps -q db)"

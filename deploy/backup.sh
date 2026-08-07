@@ -142,7 +142,28 @@ command -v docker >/dev/null 2>&1 || die "docker is required"
 docker compose version >/dev/null 2>&1 || die "docker compose (the v2 plugin) is required"
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
 
+# Mode-aware, the same way install.sh is. This script only ever `exec`s into running containers and
+# never brings anything up, so today the single -f is harmless — but a compose invocation that is
+# missing docker-compose.tunnel.yml does not KNOW about the `cloudflared` service, and the first time
+# anyone adds a `--remove-orphans` here (or to a wrapper around it) that container would be deleted
+# out from under a live deployment, taking the whole site off the internet during a backup. The mode
+# is read from the same deploy/.env install.sh wrote it to.
+DEPLOY_MODE=""
+if [[ -f "$ENV_FILE" ]]; then
+  # `|| true` — under `set -o pipefail` a grep that matches nothing fails the whole pipeline, and
+  # with `set -e` that would abort the backup of any stack whose .env predates DEPLOY_MODE.
+  DEPLOY_MODE="$(command grep -E '^DEPLOY_MODE=' "$ENV_FILE" | tail -n1 | cut -d= -f2- || true)"
+fi
+
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
+if [[ "$DEPLOY_MODE" == "tunnel" ]]; then
+  # Alongside whatever --compose-file was given, so a stack installed somewhere else still resolves
+  # its own override rather than this checkout's.
+  TUNNEL_COMPOSE_FILE="$(dirname -- "$COMPOSE_FILE")/docker-compose.tunnel.yml"
+  [[ -f "$TUNNEL_COMPOSE_FILE" ]] ||
+    die "$ENV_FILE says DEPLOY_MODE=tunnel but $TUNNEL_COMPOSE_FILE is missing — that is the file defining the cloudflared service"
+  COMPOSE+=(-f "$TUNNEL_COMPOSE_FILE")
+fi
 [[ -f "$ENV_FILE" ]] && COMPOSE+=(--env-file "$ENV_FILE")
 
 # Canonicalise before it ever reaches `docker run -v`: a relative path there (e.g. the

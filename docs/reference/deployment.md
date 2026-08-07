@@ -237,6 +237,29 @@ mount keeps that `uid 0` on the host — so an operator in the `docker` group ca
 `ls` above will say `Permission denied` even though the certificate is perfectly present. Use
 `docker compose … exec caddy ls -l /data/caddy/pki/authorities/local/root.crt` instead, or `sudo`.
 
+### If sign-in breaks after the root CA is regenerated
+
+Symptom: `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` in the app logs and nobody can sign in, while
+`ls -l` on the host shows a perfectly good `root.crt`. Reading the file **inside the app container**
+fails:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml \
+  exec app cat /etc/ssl/caddy-internal-root.crt      # fails, though the host file is fine
+```
+
+Cause: that certificate is a single-**file** bind mount, and a file mount is bound to the inode, not
+the path. Anything that replaces the file by rename — deleting `deploy/caddy_data` and letting Caddy
+reissue, or a future Caddy rotating its root — leaves the running app container holding the old,
+now-unlinked inode. The host and the container genuinely disagree, which is what makes this expensive
+to diagnose. The root is valid for ten years, so it is rare.
+
+Recovery is one line, and it touches nothing but the app container:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml up -d --force-recreate app
+```
+
 ## Upgrading an existing deployment
 
 Pull the new code and re-run `deploy/install.sh`. It is safe to re-run (see above): secrets are not
@@ -298,6 +321,11 @@ control of the email address. Treat it like a password until it is gone.
 `deploy/backup.sh` and `deploy/restore.sh` back up and restore this stack. Both take `--compose-file`
 and `--env-file` so they work against whichever stack you point them at, and `restore.sh` refuses to
 run without an explicit `--yes-overwrite`, because a restore replaces whatever is currently there.
+
+Both read `DEPLOY_MODE` from the `--env-file` and add `docker-compose.tunnel.yml` themselves when it
+is `tunnel`, so you do **not** pass the second `-f` to them by hand. Neither script publishes
+anything, so a single `-f` would appear to work — but a compose invocation missing the override file
+does not know the `cloudflared` service exists, and would treat it as an orphan.
 
 A backup directory holds six files. The database is split along **schema versus data**, not by schema
 name, because `postgres` on the `supabase/postgres` image is **not a superuser** and does not own the
