@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { getCurrentMember } from "@/features/auth/members";
 import { listEntries, listActors, type ActivityFilter } from "@/features/activity/repository";
 import { ActivityFeed, type ActivityFilterState } from "@/features/activity/ActivityFeed";
@@ -72,7 +72,7 @@ export default async function ActivityPage({
     limit: PAGE_SIZE,
   };
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const [{ entries, total }, actors] = await Promise.all([
     listEntries(db, queryFilter),
     listActors(db),

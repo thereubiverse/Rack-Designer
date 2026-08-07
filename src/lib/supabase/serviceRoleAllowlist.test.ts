@@ -16,19 +16,28 @@ const PERMANENT = [
   "src/features/devices/actions.ts",      // the device flow runs before device trust exists
 ];
 
-/** Still to move. Every deletion from here is progress; nothing should ever be added. */
+/** Still to move. Every deletion from here is progress; nothing should ever be added.
+ *
+ *  Five of Task 7's thirteen page components are listed here still, not because they were skipped,
+ *  but because each one's ONLY remaining service-client use touches something app_tenant has no
+ *  grant on at all — proven directly against the local stack, not assumed:
+ *
+ *    - storage.objects (the whole storage schema): "permission denied for schema storage".
+ *      layout.tsx and profile/page.tsx (avatar signed URLs), and
+ *      clients/[clientCode]/[siteCode]/page.tsx (floor-plan signed URLs).
+ *    - trusted_devices, deliberately ungranted per migration 0042/0043's own comment ("fails
+ *      loudly instead of quietly working"): "permission denied for table trusted_devices".
+ *      profile/page.tsx and users/page.tsx (listing a member's devices), and
+ *      verify-device/page.tsx (looking up the current device by hash).
+ *
+ *  Every other query in these five files already moved to createTenantClient — see task-7-report.md
+ *  for the file-by-file split. Fully removing them needs either a storage RLS policy for app_tenant
+ *  (the design doc defers this explicitly) or a trusted_devices grant, neither of which is a page
+ *  change. */
 const REMAINING: string[] = [
-  "src/app/activity/page.tsx",
   "src/app/clients/[clientCode]/[siteCode]/page.tsx",
-  "src/app/clients/[clientCode]/page.tsx",
-  "src/app/clients/page.tsx",
-  "src/app/device-library/page.tsx",
-  "src/app/device-library/types/page.tsx",
   "src/app/layout.tsx",
-  "src/app/page.tsx",
   "src/app/profile/page.tsx",
-  "src/app/racks/[id]/page.tsx",
-  "src/app/settings/archive/page.tsx",
   "src/app/users/page.tsx",
   "src/app/verify-device/page.tsx",
   "src/features/auth/withMember.ts",

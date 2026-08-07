@@ -1,5 +1,7 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/features/auth/members";
 import { getClientByCode, getSiteByCode, listRacksForSite } from "@/features/clients/repository";
 import {
   listFloorsForSite,
@@ -14,8 +16,13 @@ import { SiteDetail } from "@/features/clients/SiteDetail";
 export const dynamic = "force-dynamic";
 
 export default async function SitePage({ params }: { params: Promise<{ clientCode: string; siteCode: string }> }) {
+  const member = await getCurrentMember();
+  // Middleware already redirects an unauthenticated visitor; this covers the gap where a session
+  // exists but membership was revoked between the middleware check and this render.
+  if (!member) redirect("/login");
+
   const { clientCode, siteCode } = await params;
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const client = await getClientByCode(db, clientCode);
   if (!client) notFound();
   const site = await getSiteByCode(db, client.id, siteCode);
@@ -39,15 +46,18 @@ export default async function SitePage({ params }: { params: Promise<{ clientCod
   // entry here. Same floor_id keying, same short-lived-URL rule.
   const planUrls: Record<string, string> = {};
   const planPdfUrls: Record<string, string> = {};
+  // NOT the tenant client: storage.objects carries no grant for app_tenant at all — confirmed
+  // directly against the local stack ("permission denied for schema storage"), not assumed.
+  const storage = createServiceClient();
   await Promise.all(
     plans.map(async (plan) => {
       const [url, pdfUrl] = await Promise.all([
-        createPlanSignedUrl(db, plan.storage_path),
+        createPlanSignedUrl(storage, plan.storage_path),
         // Swallowed, unlike the PNG's: a plan row whose retained PDF was deleted from storage
         // would otherwise reject this Promise.all and 500 the whole site page. The vector layer
         // exists to degrade to the PNG, so a missing PDF must degrade, not fail.
         plan.pdf_storage_path
-          ? createPlanSignedUrl(db, plan.pdf_storage_path).catch(() => null)
+          ? createPlanSignedUrl(storage, plan.pdf_storage_path).catch(() => null)
           : null,
       ]);
       if (url) planUrls[plan.floor_id] = url;

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { getCurrentMember } from "@/features/auth/members";
 import { getRack, listRackDevices } from "@/features/racks/repository";
 import { listConnections } from "@/features/racks/connectionsRepository";
@@ -17,7 +17,7 @@ export default async function RackBuilderPage({ params }: { params: Promise<{ id
   const member = await getCurrentMember();
   if (!member) redirect("/login");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const [rack, devices, types, connections, endpoints, siteScope, brands, wizard, breadcrumb] = await Promise.all([
     getRack(db, id), listRackDevices(db, id), listDeviceTypes(db), listConnections(db, id),
     listPortEndpoints(db, id), listSiteScope(db, id), listBrands(db), getDeviceWizardSettings(member.orgId),

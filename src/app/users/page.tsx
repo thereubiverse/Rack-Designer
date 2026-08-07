@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/features/auth/members";
 import { listMembers } from "@/features/users/repository";
@@ -17,7 +18,7 @@ export default async function UsersPage() {
   // needs to see — this is a real server-side gate, not a UI nicety that a direct link would bypass.
   if (member.role !== "admin") redirect("/");
 
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   const members = await listMembers(db);
 
   // Grouped by member id here, in the server component, rather than handing the client a flat
@@ -25,7 +26,9 @@ export default async function UsersPage() {
   // these devices, so there is no reason for the hash to leave this layer at all, same reasoning
   // as ProfileForm's DeviceView.
   const pendingDevicesByMember: Record<string, PendingDeviceView[]> = {};
-  for (const d of await listPendingDevices(db)) {
+  // NOT the tenant client: trusted_devices carries no grant for app_tenant at all, deliberately,
+  // per migration 0042/0043 — confirmed directly ("permission denied for table trusted_devices").
+  for (const d of await listPendingDevices(createServiceClient())) {
     (pendingDevicesByMember[d.memberId] ??= []).push({ id: d.id, label: d.label, createdAt: d.createdAt });
   }
 
