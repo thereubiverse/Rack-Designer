@@ -227,13 +227,30 @@ describe("the tenant wall", () => {
       `).filter((line) => !TAGS.has(line));
 
     const members = sql(`select email from members order by 1`);
-    expect(members.length).toBeGreaterThan(1); // otherwise "cannot see the other one" proves nothing
 
-    // Each member sees exactly their own row, and therefore NOT the other member's — which is
-    // strictly narrower than before RLS, when this grant exposed every row to any session at all.
-    for (const email of members) expect(visible(email)).toEqual([email]);
+    if (members.length > 1) {
+      // THE STRICT CASE: two or more members on this stack (the developer database always has at
+      // least two). Each member sees exactly their own row, and therefore NOT the other member's —
+      // which is strictly narrower than before RLS, when this grant exposed every row to any
+      // session at all. "Cannot see the other one" only proves something because there IS another
+      // one; this branch is what actually exercises that.
+      for (const email of members) expect(visible(email)).toEqual([email]);
+    } else {
+      // SINGLE-MEMBER STACK — e.g. a fresh install: deploy/install.sh provisions exactly one admin
+      // and nobody else, so there is no second member to prove exclusion against here.
+      // Deliberate fallback, not a silent skip: assert everything a lone member CAN prove — that
+      // they see exactly their own row (the positive half of narrower-than-before-RLS). The other
+      // half, the fail-closed negative for a valid session that names nobody in `members` at all,
+      // is asserted unconditionally below and does not need a second member. The member-A-cannot-
+      // see-member-B case above is what still needs one, and runs automatically the moment this
+      // stack gains a second member.
+      expect(members.length).toBe(1);
+      expect(visible(members[0])).toEqual([members[0]]);
+    }
 
-    // A valid session for somebody who is not a member sees nothing.
+    // A valid session for somebody who is not a member sees nothing — the fail-closed negative,
+    // which is what actually demonstrates the policy filters rather than admitting everything, and
+    // which needs no second member to be meaningful.
     expect(visible("stranger@example.com")).toEqual(["(none)"]);
   });
 
