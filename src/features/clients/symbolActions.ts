@@ -1,6 +1,7 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { getFloorPlan } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { renderPlanGrey } from "./planRaster";
@@ -161,18 +162,21 @@ async function structuralProposals(
  * matchSymbol can all throw, so every one of them is awaited INSIDE this single try/catch. An
  * earlier slice shipped exactly that bug by awaiting a helper outside it.
  */
-export const discoverSymbolsAction = withEditor("ai.discoverSymbols", async (_member, input: {
+export const discoverSymbolsAction = withEditor("ai.discoverSymbols", async (member, input: {
   floorId: string;
   box: { x: number; y: number; w: number; h: number };
   typeCode: string;
 }): Promise<DiscoverSymbolsResult> => {
   try {
-    const db = createServiceClient();
+    const db = createTenantClient(member);
     const plan = await getFloorPlan(db, input.floorId);
     if (!plan) return { ok: false, error: "Upload a plan first." };
     if (plan.pdf_storage_path == null) return { ok: false, error: "This plan has no source PDF." };
 
-    const bytes = await downloadPlanObject(db, plan.pdf_storage_path);
+    // app_tenant has no grant on the storage schema — narrow, service-client ONLY for this
+    // download.
+    const storageDb = createServiceClient();
+    const bytes = await downloadPlanObject(storageDb, plan.pdf_storage_path);
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
     const page = plan.pdf_page ?? 0;
     // A COPY per consumer: pdf.js transfers the buffer to its worker, so the second reader of the
@@ -455,12 +459,12 @@ function pickSymbolGroup(
  * NOTHING may escape as a rejection: getFloorPlan, downloadPlanObject and decodePlanPage can all
  * throw, so every one of them is awaited INSIDE this single try/catch.
  */
-export const pickSymbolAction = withEditor("ai.pickSymbol", async (_member, input: {
+export const pickSymbolAction = withEditor("ai.pickSymbol", async (member, input: {
   floorId: string;
   point: { x: number; y: number };
 }): Promise<PickSymbolResult> => {
   try {
-    const db = createServiceClient();
+    const db = createTenantClient(member);
     const plan = await getFloorPlan(db, input.floorId);
     if (!plan) return { ok: false, error: "Upload a plan first." };
     if (plan.pdf_storage_path == null) return { ok: false, error: "This plan has no source PDF." };
@@ -469,7 +473,10 @@ export const pickSymbolAction = withEditor("ai.pickSymbol", async (_member, inpu
     const ny = clamp01(input.point?.y);
     if (nx == null || ny == null) return { ok: false, error: NO_SYMBOL_THERE };
 
-    const bytes = await downloadPlanObject(db, plan.pdf_storage_path);
+    // app_tenant has no grant on the storage schema — narrow, service-client ONLY for this
+    // download.
+    const storageDb = createServiceClient();
+    const bytes = await downloadPlanObject(storageDb, plan.pdf_storage_path);
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
     const page = await decodePlanPage(bytes, plan.pdf_page ?? 0);
 

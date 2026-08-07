@@ -2,7 +2,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { getRack, replaceRackDevices, listRackDevices, templateHeights, updateRack, type RackDeviceInput } from "./repository";
 import { canPlace, validateDeviceCode, minRackHeight, type PlacementLike } from "./rackOps";
 import { replaceConnections } from "./connectionsRepository";
@@ -26,9 +26,9 @@ function toPlacementLike(rows: { id: string; device_template_id?: string; device
 /** Reconcile the whole layout. Validates codes + occupancy against FRESH template heights so a
  *  racing template edit or stale client can't produce an overlapping rack. */
 export const saveRackLayoutAction = withEditor("rack.layout.save", async (
-  _member, rackId: string, devices: RackDeviceInput[],
+  member, rackId: string, devices: RackDeviceInput[],
 ): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const [rack, ru] = await Promise.all([getRack(db, rackId), templateHeights(db)]);
     const seen = new Set<string>();
@@ -57,9 +57,9 @@ export const saveRackLayoutAction = withEditor("rack.layout.save", async (
 /** Reconcile the rack's patch cables. Re-validates every edge against FRESH device snapshots so a
  *  stale client can't create a cable on a vanished port or double-book a port. */
 export const saveConnectionsAction = withEditor("rack.connections.save", async (
-  _member, rackId: string, conns: Connection[],
+  member, rackId: string, conns: Connection[],
 ): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const devices = await listRackDevices(db, rackId);
     // Build the valid-port index per device from the snapshot faces (fallback to empty).
@@ -85,9 +85,9 @@ export const saveConnectionsAction = withEditor("rack.connections.save", async (
 });
 
 export const updateRackAction = withEditor("rack.update", async (
-  _member, rackId: string, patch: { name?: string | null; heightU?: number },
+  member, rackId: string, patch: { name?: string | null; heightU?: number },
 ): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     if (patch.heightU !== undefined) {
       if (!Number.isInteger(patch.heightU) || patch.heightU < 1 || patch.heightU > 60) {
@@ -112,9 +112,9 @@ export const updateRackAction = withEditor("rack.update", async (
  *  snapshots, floor types and site scope so a stale client can't attach a far end to a vanished
  *  port, use a non-floor type, or point at a rack/switch off this site. */
 export const saveEndpointsAction = withEditor("rack.endpoints.save", async (
-  _member, rackId: string, eps: PortEndpoint[],
+  member, rackId: string, eps: PortEndpoint[],
 ): Promise<{ ok: boolean; error?: string }> => {
-  const db = createServiceClient();
+  const db = createTenantClient(member);
   try {
     const [devices, types, scope] = await Promise.all([
       listRackDevices(db, rackId), listDeviceTypes(db), listSiteScope(db, rackId),

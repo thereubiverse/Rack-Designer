@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // DB-free by construction: no real Supabase client, no real cache invalidation.
-vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn() }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/features/auth/withMember", () => ({
   // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
@@ -15,7 +15,7 @@ vi.mock("@/features/auth/withMember", () => ({
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { createRackInSiteAction } from "./actions";
 
 type Row = Record<string, unknown>;
@@ -90,7 +90,7 @@ describe("createRackInSiteAction — findOrCreateFloor must skip archived floors
     const { db, insertCalls } = makeFakeDb({
       floors: [{ id: "floor-archived", site_id: "site-1", code: "GF", archived_at: "2026-01-01T00:00:00Z" }],
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createRackInSiteAction(createRackForm());
 
@@ -114,7 +114,7 @@ describe("createRackInSiteAction — findOrCreateFloor must skip archived floors
     const { db, insertCalls } = makeFakeDb({
       floors: [{ id: "floor-live", site_id: "site-1", code: "GF", archived_at: null }],
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createRackInSiteAction(createRackForm());
 

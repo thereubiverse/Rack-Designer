@@ -8,6 +8,7 @@ vi.mock("@/features/auth/withMember", () => ({
   withAdmin: (_key: string, fn: (...a: unknown[]) => unknown) => (...args: unknown[]) =>
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn(() => ({})) }));
 vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn(() => ({})) }));
 vi.mock("@/features/locations/repository", () => ({ getFloorPlan: vi.fn(), listRoomsForFloor: vi.fn(async () => []) }));
 vi.mock("./planStorage", () => ({ downloadPlanObject: vi.fn(async () => new Uint8Array([1, 2, 3])) }));

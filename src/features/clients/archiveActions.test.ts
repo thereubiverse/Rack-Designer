@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // DB-free: the repository is mocked outright, so these tests assert which repository function the
 // action reaches for — the property that matters here is that archiving never reaches a delete.
-vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn(() => ({})) }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn(() => ({})) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("./repository", () => ({
   archiveClient: vi.fn(),

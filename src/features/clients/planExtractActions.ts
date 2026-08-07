@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import { getFloorPlan, saveFloorPlanGeometry } from "@/features/locations/repository";
 import { downloadPlanObject } from "./planStorage";
 import { extractPlanGeometry } from "./planExtract";
@@ -17,14 +18,17 @@ export type ExtractResult =
  *  PDF) — every one of them lives inside this single try/catch so nothing escapes as an
  *  unhandled rejection. Early-outs (no row, no PDF) return before their side effect
  *  (downloadPlanObject) runs. */
-export const extractPlanGeometryAction = withEditor("ai.extractGeometry", async (_member, floorId: string): Promise<ExtractResult> => {
+export const extractPlanGeometryAction = withEditor("ai.extractGeometry", async (member, floorId: string): Promise<ExtractResult> => {
   try {
-    const db = createServiceClient();
+    const db = createTenantClient(member);
     const plan = await getFloorPlan(db, floorId);
     if (!plan) return { ok: false, error: "Upload a plan first." };
     if (plan.pdf_storage_path == null) return { ok: false, error: "This plan has no source PDF." };
 
-    const bytes = await downloadPlanObject(db, plan.pdf_storage_path);
+    // app_tenant has no grant on the storage schema — narrow, service-client ONLY for this
+    // download; the DB read/write above and below both use `db`.
+    const storageDb = createServiceClient();
+    const bytes = await downloadPlanObject(storageDb, plan.pdf_storage_path);
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
     const { walls, labels } = await extractPlanGeometry(bytes, plan.pdf_page ?? 0);
     await saveFloorPlanGeometry(db, floorId, { walls, labels });

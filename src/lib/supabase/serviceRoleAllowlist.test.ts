@@ -47,9 +47,7 @@ const REMAINING: string[] = [
   "src/features/clients/symbolActions.ts",
   "src/features/device-library/actions.ts",
   "src/features/device-library/typeActions.ts",
-  "src/features/locations/actions.ts",
   "src/features/profile/actions.ts",
-  "src/features/racks/actions.ts",
   "src/features/settings/store.ts",
   "src/features/users/actions.ts",
 ];

@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // DB-free by construction: no real Supabase client, no real cache invalidation.
-// `createServiceClient` is swapped for a hand-rolled, TABLE-AWARE fake query builder (below) that
+// `createTenantClient` is swapped for a hand-rolled, TABLE-AWARE fake query builder (below) that
 // records every insert/update/delete it receives — including which table and which filters were
 // applied — so assertions can check real recorded arguments rather than just call counts.
-vi.mock("@/lib/supabase/server", () => ({ createServiceClient: vi.fn() }));
+vi.mock("@/lib/supabase/tenant", () => ({ createTenantClient: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/features/auth/withMember", () => ({
   // The guard is tested on its own in withMember.test.ts. Here it must be transparent, or every
@@ -18,7 +18,7 @@ vi.mock("@/features/auth/withMember", () => ({
     fn({ id: "m1", email: "test@example.com", name: "Test", authUserId: "au1", disabledAt: null }, ...args),
 }));
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createTenantClient } from "@/lib/supabase/tenant";
 import {
   createFloorAction,
   renameFloorAction,
@@ -167,7 +167,7 @@ describe("createFloorAction", () => {
         }),
       },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createFloorAction(createFloorForm());
 
@@ -180,7 +180,7 @@ describe("createFloorAction", () => {
     const { db, insertCalls } = makeFakeDb({
       floors: { selectResult: () => ({ data: [], error: null }) },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createFloorAction(createFloorForm({ code: "gf" }));
 
@@ -196,7 +196,7 @@ describe("createFloorAction", () => {
         insertResult: () => ({ data: null, error: new Error("duplicate key value violates unique constraint") }),
       },
     });
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createFloorAction(createFloorForm());
 
@@ -211,7 +211,7 @@ describe("createFloorAction", () => {
 describe("createRoomAction", () => {
   it("rejects an invalid room type before touching the db", async () => {
     const { db, insertCalls } = makeFakeDb();
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await createRoomAction(createRoomForm({ type: "closet" }));
 
@@ -223,7 +223,7 @@ describe("createRoomAction", () => {
 describe("deleteRoomAction", () => {
   it("deletes exactly one row, on table rooms, filtered by id — proves a room delete never touches floor_devices", async () => {
     const { db, deleteCalls } = makeFakeDb();
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await deleteRoomAction(deleteRoomForm({ id: "room-9" }));
 
@@ -236,7 +236,7 @@ describe("deleteRoomAction", () => {
 describe("renameFloorAction", () => {
   it("rejects an empty code before touching the db", async () => {
     const { db, updateCalls } = makeFakeDb();
-    vi.mocked(createServiceClient).mockReturnValue(db);
+    vi.mocked(createTenantClient).mockReturnValue(db);
 
     const res = await renameFloorAction(renameFloorForm({ code: "" }));
 
