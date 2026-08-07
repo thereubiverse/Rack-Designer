@@ -42,7 +42,7 @@ const g = (id: string): PortGroup => ({
 const faceWith = (gid: string): Face => ({ portGroups: [g(gid)], elements: [] });
 
 beforeAll(async () => {
-  const client = await createClient(db, { code: "T-EP-CLI", name: "endpoints test" });
+  const client = await createClient(db, { code: "T-EP-CLI", name: "endpoints test", orgId: "00000000-0000-0000-0000-000000000001" });
   ids.client = client.id;
   const site = (await db.from("sites")
     .insert({ client_id: client.id, code: "T-EP", name: "endpoints test" })

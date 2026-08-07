@@ -38,7 +38,7 @@ describe("rack repository (integration)", () => {
   });
 
   it("reconciles a same-statement code swap between two kept devices", async () => {
-    const client = await createClientRecord(db, { code: CLIENT_CODE, name: "rack repo test" });
+    const client = await createClientRecord(db, { code: CLIENT_CODE, name: "rack repo test", orgId: "00000000-0000-0000-0000-000000000001" });
     expect(client.id).toBeTruthy();
 
     const site = await createSite(db, { clientId: client.id, code: "HQ", name: "Headquarters" });

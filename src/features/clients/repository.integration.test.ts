@@ -45,7 +45,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("creates a client and lists it with derived site/rack counts", async () => {
-    const client = await createClientRow(db, { code: "t-cli-a", name: "Client A" });
+    const client = await createClientRow(db, { code: "t-cli-a", name: "Client A", orgId: "00000000-0000-0000-0000-000000000001" });
     expect(client.code).toBe("T-CLI-A");
 
     const site = await createSiteForClient(db, {
@@ -63,7 +63,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("looks up a client by code case-insensitively", async () => {
-    await createClientRow(db, { code: "T-CLI-B", name: "Client B" });
+    await createClientRow(db, { code: "T-CLI-B", name: "Client B", orgId: "00000000-0000-0000-0000-000000000001" });
     const found = await getClientByCode(db, "t-cli-b");
     expect(found).not.toBeNull();
     expect(found!.code).toBe("T-CLI-B");
@@ -75,14 +75,14 @@ describe("clients repository (integration)", () => {
   });
 
   it("rejects a duplicate client code", async () => {
-    await createClientRow(db, { code: "T-CLI-C", name: "Client C" });
-    await expect(createClientRow(db, { code: "t-cli-c", name: "Client C dup" })).rejects.toThrow(
+    await createClientRow(db, { code: "T-CLI-C", name: "Client C", orgId: "00000000-0000-0000-0000-000000000001" });
+    await expect(createClientRow(db, { code: "t-cli-c", name: "Client C dup", orgId: "00000000-0000-0000-0000-000000000001" })).rejects.toThrow(
       /createClient/
     );
   });
 
   it("renames and deletes a client", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-D", name: "Client D" });
+    const client = await createClientRow(db, { code: "T-CLI-D", name: "Client D", orgId: "00000000-0000-0000-0000-000000000001" });
     await renameClient(db, client.id, { code: "T-CLI-D2", name: "Client D Renamed" });
     const renamed = await getClientByCode(db, "T-CLI-D2");
     expect(renamed).not.toBeNull();
@@ -94,7 +94,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("lists, looks up, renames, and deletes sites for a client", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-E", name: "Client E" });
+    const client = await createClientRow(db, { code: "T-CLI-E", name: "Client E", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, {
       clientId: client.id,
       code: "site1",
@@ -124,7 +124,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("lists racks for a site with floor/room/type/device counts", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-F", name: "Client F" });
+    const client = await createClientRow(db, { code: "T-CLI-F", name: "Client F", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
 
     const { data: floor, error: floorErr } = await db
@@ -164,7 +164,7 @@ describe("clients repository (integration)", () => {
   // seeds one rack with a real, non-zero device count and a sibling rack in the same site with
   // none, and asserts both exact numbers.
   it("reports the exact non-zero device count per rack, and 0 for a rack with none", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-L", name: "Client L" });
+    const client = await createClientRow(db, { code: "T-CLI-L", name: "Client L", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
     const { data: floor } = await db
       .from("floors")
@@ -204,7 +204,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("counts the full cascade under a client and a site", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-G", name: "Client G" });
+    const client = await createClientRow(db, { code: "T-CLI-G", name: "Client G", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
 
     const { data: floor } = await db
@@ -256,7 +256,7 @@ describe("clients repository (integration)", () => {
   it("counts floor devices even when the site owns NO racks at all", async () => {
     // The case every early return in the cascade counters used to miss: plans traced, outlets
     // placed, not a rack in sight — and the delete dialog claiming zero devices.
-    const client = await createClientRow(db, { code: "T-CLI-H", name: "Client H" });
+    const client = await createClientRow(db, { code: "T-CLI-H", name: "Client H", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
     const { data: floor } = await db
       .from("floors")
@@ -283,7 +283,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("cascades sites away when a client is deleted", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-H", name: "Client H" });
+    const client = await createClientRow(db, { code: "T-CLI-H", name: "Client H", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
 
     await deleteClient(db, client.id);
@@ -301,10 +301,10 @@ describe("clients repository (integration)", () => {
   // only itself, and a segment containing `_` must never wildcard-match a different client whose
   // code happens to share every other character.
   it("resolves a code containing a literal underscore to itself only, not as a wildcard", async () => {
-    const underscored = await createClientRow(db, { code: "T-CLI-A_ME", name: "Underscore client" });
+    const underscored = await createClientRow(db, { code: "T-CLI-A_ME", name: "Underscore client", orgId: "00000000-0000-0000-0000-000000000001" });
     // Same shape but with a real character where the underscore is — an ilike pattern built from
     // "T-CLI-A_ME" would match this row too via the `_` wildcard.
-    const lookalike = await createClientRow(db, { code: "T-CLI-AXME", name: "Lookalike client" });
+    const lookalike = await createClientRow(db, { code: "T-CLI-AXME", name: "Lookalike client", orgId: "00000000-0000-0000-0000-000000000001" });
 
     const found = await getClientByCode(db, "t-cli-a_me"); // lowercase, exercising case-insensitivity too
     expect(found).not.toBeNull();
@@ -316,13 +316,13 @@ describe("clients repository (integration)", () => {
   it("does not let an underscore segment wildcard-match a code without a literal underscore", async () => {
     // Mirrors the review's ACME / A_ME example: no client literally named "T-CLI-A_ME" exists here,
     // only "T-CLI-ACME" — an ilike pattern would still match it via the `_` wildcard; exact match must not.
-    await createClientRow(db, { code: "T-CLI-ACME", name: "Acme-like client" });
+    await createClientRow(db, { code: "T-CLI-ACME", name: "Acme-like client", orgId: "00000000-0000-0000-0000-000000000001" });
     const found = await getClientByCode(db, "T-CLI-A_ME");
     expect(found).toBeNull();
   });
 
   it("resolves a site code containing a literal underscore to itself only, not as a wildcard", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I" });
+    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I", orgId: "00000000-0000-0000-0000-000000000001" });
     const underscored = await createSiteForClient(db, { clientId: client.id, code: "S_TE", name: "Site underscore" });
     const lookalike = await createSiteForClient(db, { clientId: client.id, code: "SXTE", name: "Site lookalike" });
 
@@ -333,14 +333,14 @@ describe("clients repository (integration)", () => {
   });
 
   it("does not let a site underscore segment wildcard-match a lookalike code", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J" });
+    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J", orgId: "00000000-0000-0000-0000-000000000001" });
     await createSiteForClient(db, { clientId: client.id, code: "SATE", name: "Site A" });
     const found = await getSiteByCode(db, client.id, "S_TE");
     expect(found).toBeNull();
   });
 
   it("resolves a rack's breadcrumb up through room, floor and site to its client", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-K", name: "Client K" });
+    const client = await createClientRow(db, { code: "T-CLI-K", name: "Client K", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site One" });
     const { data: floor } = await db
       .from("floors")
@@ -374,7 +374,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("hides archived rows from the lists but keeps them countable and fetchable by id", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I" });
+    const client = await createClientRow(db, { code: "T-CLI-I", name: "Client I", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
 
     expect((await listClients(db)).some((c) => c.id === client.id)).toBe(true);
@@ -394,7 +394,7 @@ describe("clients repository (integration)", () => {
   });
 
   it("archives a site and a floor without touching anything beneath them", async () => {
-    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J" });
+    const client = await createClientRow(db, { code: "T-CLI-J", name: "Client J", orgId: "00000000-0000-0000-0000-000000000001" });
     const site = await createSiteForClient(db, { clientId: client.id, code: "S1", name: "Site 1" });
     const { data: floor } = await db
       .from("floors")

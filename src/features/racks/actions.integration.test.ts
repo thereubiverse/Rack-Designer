@@ -46,7 +46,7 @@ const faceWith = (gid: string): Face => ({ portGroups: [g(gid)], elements: [] })
 beforeAll(async () => {
   // Same hierarchy shape as connectionsRepository.integration.test.ts: client (seeded)
   // → site → floor → room → rack → 2 rack_devices with snapshot faces carrying real port groups.
-  const client = await createClient(db, { code: "T-ACT-CLI", name: "actions test" });
+  const client = await createClient(db, { code: "T-ACT-CLI", name: "actions test", orgId: "00000000-0000-0000-0000-000000000001" });
   ids.client = client.id;
   const site = (await db.from("sites")
     .insert({ client_id: client.id, code: "T-ACT", name: "actions test" })

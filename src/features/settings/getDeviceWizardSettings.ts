@@ -10,6 +10,6 @@ import { readDeviceWizardSettings, type DeviceWizardSettings } from "./deviceWiz
  *  remotely invocable Next.js endpoint — there is nothing here for an unauthenticated `Next-Action`
  *  POST to hit. Do NOT add that directive to this file, or add it back next to this export in
  *  actions.ts — see the branch review that split this out. */
-export async function getDeviceWizardSettings(): Promise<DeviceWizardSettings> {
-  return readDeviceWizardSettings(dbSettingsStore);
+export async function getDeviceWizardSettings(orgId: string): Promise<DeviceWizardSettings> {
+  return readDeviceWizardSettings(dbSettingsStore, orgId);
 }

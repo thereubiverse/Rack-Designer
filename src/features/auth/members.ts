@@ -20,6 +20,10 @@ export interface Member {
    *  without it here the layout has to select the same row a second time on every navigation. */
   avatarPath: string | null;
   role: Role;
+  /** The organisation this member belongs to. Every action reaches it through the Member that
+   *  withMember already hands them, which is why adding tenancy here changes no wrapper signature
+   *  and no call site. */
+  orgId: string;
 }
 
 export type MemberDecision = { allowed: true; member: Member } | { allowed: false };
@@ -58,7 +62,7 @@ export async function getCurrentMember(): Promise<Member | null> {
   const db = createServiceClient();
   const { data, error } = await db
     .from("members")
-    .select("id, email, name, auth_user_id, disabled_at, avatar_path, role")
+    .select("id, email, name, auth_user_id, disabled_at, avatar_path, role, org_id")
     .eq("email", normaliseEmail(email))
     .maybeSingle();
   // A query failure (outage, bad credentials, misconfiguration) also leaves `data` null, which is
@@ -77,6 +81,7 @@ export async function getCurrentMember(): Promise<Member | null> {
         disabledAt: data.disabled_at === null ? null : String(data.disabled_at),
         avatarPath: data.avatar_path == null ? null : String(data.avatar_path),
         role: isRole(data.role) ? data.role : "viewer",
+        orgId: String(data.org_id),
       }
     : null;
   const decision = memberDecision(row);

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const ME = {
   id: "me", email: "me@example.com", name: "Me",
   authUserId: "au-me", disabledAt: null, avatarPath: null, role: "admin" as const,
+  orgId: "00000000-0000-0000-0000-000000000001",
 };
 
 // withAdmin is replaced by a transparent wrapper injecting OUR member. The guard itself is tested in
@@ -57,7 +58,7 @@ describe("inviteMemberAction", () => {
   it("stores the email normalised, so a capitalised invite still matches at sign-in", async () => {
     const res = await inviteMemberAction(form({ email: "  New.Person@Example.COM ", name: "New", role: "editor" }));
     expect(res.ok).toBe(true);
-    expect(insertMember).toHaveBeenCalledWith(db, "new.person@example.com", "New", "editor");
+    expect(insertMember).toHaveBeenCalledWith(db, "new.person@example.com", "New", "editor", ME.orgId);
   });
 
   it("refuses a role that is not one of the three", async () => {

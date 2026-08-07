@@ -29,12 +29,12 @@ const friendly = (detail: string) =>
 // Returns either the ready-to-send image payload or a caller-facing error. NOTE: getFloorPlan and
 // downloadPlanObject can both throw on unexpected DB/storage errors — callers MUST await this
 // inside their own try/catch so those propagate as `{ ok: false, error }`, never as a rejection.
-async function prepare(floorId: string):
+async function prepare(floorId: string, orgId: string):
   Promise<{ ok: true; imageBase64: string; mimeType: string; apiKey: string; widthPx: number; heightPx: number } | { ok: false; error: string }> {
   const db = createServiceClient();
   const plan = await getFloorPlan(db, floorId);
   if (!plan) return { ok: false, error: "Upload a plan first." };
-  const apiKey = await resolveGeminiKey(dbSettingsStore);
+  const apiKey = await resolveGeminiKey(dbSettingsStore, orgId);
   if (!apiKey) return { ok: false, error: "no-key" };
   const bytes = await downloadPlanObject(db, plan.storage_path);
   const imageBase64 = Buffer.from(bytes).toString("base64");
@@ -65,9 +65,9 @@ async function cropToDrawing(
   }
 }
 
-export const discoverRoomsAction = withEditor("ai.discoverRooms", async (_member, floorId: string): Promise<DiscoverRoomsResult> => {
+export const discoverRoomsAction = withEditor("ai.discoverRooms", async (member, floorId: string): Promise<DiscoverRoomsResult> => {
   try {
-    const ready = await prepare(floorId);
+    const ready = await prepare(floorId, member.orgId);
     if (!ready.ok) return ready;
     const { mimeType, apiKey, widthPx, heightPx } = ready;
     // Locate + crop first: the model gets far more pixels per room once the title block is gone.
@@ -88,9 +88,9 @@ export const discoverRoomsAction = withEditor("ai.discoverRooms", async (_member
   }
 });
 
-export const discoverDevicesAction = withEditor("ai.discoverDevices", async (_member, floorId: string): Promise<DiscoverDevicesResult> => {
+export const discoverDevicesAction = withEditor("ai.discoverDevices", async (member, floorId: string): Promise<DiscoverDevicesResult> => {
   try {
-    const ready = await prepare(floorId);
+    const ready = await prepare(floorId, member.orgId);
     if (!ready.ok) return ready;
     const { imageBase64, mimeType, apiKey } = ready;
     const raw = await geminiPlanBackend.discoverDevices({ imageBase64, mimeType, apiKey });

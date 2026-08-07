@@ -97,7 +97,7 @@ function friendly(e: unknown, kind: "client" | "site" | "floor" | "room" | "devi
   return msg;
 }
 
-export const createClientAction = withEditor("client.create", async (_member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
+export const createClientAction = withEditor("client.create", async (member, formData: FormData): Promise<{ ok: boolean; error?: string }> => {
   const code = String(formData.get("code") ?? "");
   const name = String(formData.get("name") ?? "");
 
@@ -106,7 +106,7 @@ export const createClientAction = withEditor("client.create", async (_member, fo
 
   const db = createServiceClient();
   try {
-    await createClient(db, { code, name });
+    await createClient(db, { code, name, orgId: member.orgId });
   } catch (e) {
     return { ok: false, error: friendly(e, "client") };
   }

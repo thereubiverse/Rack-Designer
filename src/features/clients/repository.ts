@@ -205,11 +205,11 @@ async function countDevicesPerRack(db: SupabaseClient, rackIds: string[]): Promi
 
 export async function createClient(
   db: SupabaseClient,
-  input: { code: string; name: string }
+  input: { code: string; name: string; orgId: string }
 ): Promise<ClientRow> {
   const { data, error } = await db
     .from("clients")
-    .insert({ code: normaliseCode(input.code), name: input.name })
+    .insert({ code: normaliseCode(input.code), name: input.name, org_id: input.orgId })
     .select("*")
     .single();
   if (error) throw new Error(`createClient: ${error.message}`);

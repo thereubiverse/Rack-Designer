@@ -183,6 +183,12 @@ ADMIN_EMAIL="$(EMAIL_TO_NORMALISE="$ADMIN_EMAIL_RAW" node -e 'process.stdout.wri
 read -r -p "First admin's name: " ADMIN_NAME
 [[ -n "$ADMIN_NAME" ]] || die "a name is required"
 
+read -r -p "Organisation name [default: your email domain]: " ORG_NAME
+if [[ -z "$ORG_NAME" ]]; then
+  ORG_NAME="${ADMIN_EMAIL#*@}"
+  [[ -n "$ORG_NAME" ]] || die "could not derive an organisation name from the admin email"
+fi
+
 # -s: never echoed to the terminal, never lands in shell history.
 read -r -s -p "First admin's password: " ADMIN_PASSWORD
 echo
@@ -484,9 +490,15 @@ fi
 # the auth_user_id is the only field this step owns. `returning` reports which branch ran.
 member_state="$(
   "${COMPOSE[@]}" exec -T db psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
-    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -qtA <<'SQL'
-insert into members (email, name, role, auth_user_id)
-values (:'email', :'name', 'admin', :'authid'::uuid)
+    -v email="$ADMIN_EMAIL" -v name="$ADMIN_NAME" -v authid="$auth_user_id" -v orgname="$ORG_NAME" -qtA <<'SQL'
+with org as (
+  insert into organisations (name) values (:'orgname')
+  on conflict do nothing
+  returning id
+)
+insert into members (email, name, role, auth_user_id, org_id)
+values (:'email', :'name', 'admin', :'authid'::uuid,
+        coalesce((select id from org), (select id from organisations order by created_at limit 1)))
 on conflict (email) do update
    set auth_user_id = excluded.auth_user_id
 returning case when xmax = 0 then 'inserted' else 'relinked' end;

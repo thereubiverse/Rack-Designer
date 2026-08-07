@@ -24,7 +24,7 @@ beforeAll(async () => {
   // the real hierarchy migration (0001_location_hierarchy.sql) has no "locations" table — it's
   // sites (client_id, code, name) → floors (site_id, code, sort_order) → rooms (floor_id,
   // code, type-defaulted) → racks (room_id, code, height_u). Adapted seed calls below accordingly.)
-  const client = await createClient(db, { code: "T-CONN-CLI", name: "conn repo test" });
+  const client = await createClient(db, { code: "T-CONN-CLI", name: "conn repo test", orgId: "00000000-0000-0000-0000-000000000001" });
   ids.client = client.id;
   const site = (await db.from("sites")
     .insert({ client_id: client.id, code: "T-CONN", name: "conn repo test" })
