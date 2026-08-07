@@ -152,7 +152,7 @@ nothing here makes it harder later.
 
 This is not optional decoration on top of the schema; it is the mechanism that keeps one
 organisation's data from being visible to, or colliding with, another's. If you add table 21, it
-needs all four of the following, or it is silently unscoped:
+needs all five of the following, or it is silently unscoped:
 
 1. **`org_id uuid not null references organisations(id)`.** Every row belongs to exactly one
    organisation. `not null` matters — a nullable `org_id` on an application table means some rows
@@ -187,7 +187,28 @@ needs all four of the following, or it is silently unscoped:
    one member row) and `trusted_devices.token_hash` (a secret, where cross-org collision would be a
    real collision). See `0041_org_scoped_unique_constraints.sql` for the reasoning on both.
 
+   Uniqueness declared as a bare `create unique index` counts too, and is easy to forget precisely
+   *because* it counts: `pg_constraint` does not list it, so a check that only reads that catalogue
+   will call the table clean while an unscoped index sits right next to it. `connections_edge_uniq`
+   is the one example today, and it needs no `org_id` of its own for the same reason as point 4's
+   parent-scoped constraints — it is already keyed by `rack_id`, an org-scoped parent.
+
+5. **The `freeze_org_id` trigger, on every table from point 1 that carries an `id` column.**
+   Point 1's `not null` and the inheritance trigger from point 3 only govern INSERT. Nothing stops a
+   plain `UPDATE ... SET org_id = <another org>` afterwards, and if it succeeds the row moves to a
+   new owner while every composite foreign key from point 3 still points at the old one — the wall
+   point 3 builds has a door in it. `freeze_org_id` (`0035_org_id_triggers.sql`) is a `BEFORE UPDATE`
+   trigger that raises when `new.org_id is distinct from old.org_id`; wire it up the same way the
+   twelve existing `*_freeze_org` triggers do. Skip it and `org_id` is stamped correctly on the way
+   in and free to move on the way out.
+
+   The three library tables and `activity_log` are the deliberate exception, for the same reason
+   they are nullable at point 1: a freeze trigger on `activity_log` would block the
+   `ON DELETE SET NULL` that demotes a deleted member's log rows to platform-level events, and the
+   library tables are not yet org-editable at all.
+
 `src/lib/supabase/tenancy.test.ts` checks all of this against the live schema — every table has
 `org_id`, every table has `unique (org_id, id)`, every foreign key to an org-scoped table is
-composite, and every unique constraint is either org-scoped or on the short, explicit exception
-list. Skip any of the four steps above and that test fails.
+composite, every unique constraint (bare index or named constraint) is either org-scoped or on the
+short, explicit exception list, and every table that can be updated after insert carries
+`freeze_org_id`. Skip any of the five steps above and that test fails.
