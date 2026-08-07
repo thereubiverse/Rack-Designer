@@ -1,0 +1,87 @@
+# Cloudflare Tunnel mode — an OVERRIDE, never used on its own:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml ...
+#
+# deploy/install.sh adds this second -f automatically when DEPLOY_MODE=tunnel in deploy/.env. Direct
+# (port-forwarding) mode is the base file alone and is completely unaffected by anything here.
+#
+# What this mode is for: a machine behind a router, with no public IP, no port forwarding and nothing
+# exposed inbound. cloudflared makes an OUTBOUND connection to Cloudflare and requests arrive back
+# down it. The public TLS certificate is Cloudflare's, on Cloudflare's edge.
+#
+# Three changes, and all three are load-bearing:
+#
+#   1. Caddy publishes nothing. That is the entire point of the mode — see `ports: !reset` below.
+#   2. Caddy serves the site on plain HTTP as well, for cloudflared to reach (Caddyfile.tunnel).
+#   3. The app container is taught to TRUST Caddy's internal CA, so its server-side Supabase calls to
+#      https://${APP_HOSTNAME} stay on the compose bridge instead of going out through Cloudflare and
+#      back. Without this the app dies with UNABLE_TO_GET_ISSUER_CERT_LOCALLY and nobody can sign in
+#      — measured, not theorised.
+
+services:
+  caddy:
+    # `!reset` empties the base file's ports list rather than adding to it. A plain `ports: []` would
+    # MERGE with the base and leave 80 and 443 published, which is the one thing this mode exists to
+    # avoid: on a machine behind a router those bindings do nothing useful, and on a machine that is
+    # partly exposed they are an inbound surface the operator explicitly chose not to have.
+    ports: !reset []
+    volumes:
+      # Service `volumes` merge by TARGET path, so this replaces the base file's Caddyfile mount
+      # rather than adding a second mount at the same place. ./caddy_data and ./caddy_config are
+      # inherited from the base file untouched — the internal CA below lives in the first of them.
+      - ./Caddyfile.tunnel:/etc/caddy/Caddyfile:ro
+
+  app:
+    environment:
+      # Node reads this at startup and ADDS the file's certificates to its trust store (it does not
+      # replace the bundled roots, so publicly-trusted TLS elsewhere — Gemini, Twilio, SMTP — keeps
+      # working). This is what makes https://${APP_HOSTNAME} verifiable from inside the bridge.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/caddy-internal-root.crt
+    volumes:
+      # Caddy's `tls internal` root, mounted as a FILE.
+      #
+      # THE ORDERING TRAP: Caddy generates this on its first boot. If the app container is started
+      # while the path does not yet exist, Docker helpfully creates a DIRECTORY there — the mount
+      # then succeeds, NODE_EXTRA_CA_CERTS points at a directory, Node silently ignores it, and the
+      # failure is indistinguishable from never having configured trust at all. deploy/install.sh
+      # therefore starts caddy on its own (`up -d --no-deps caddy`), waits for this file to exist as
+      # a file, and only then starts everything else. If you bring the stack up by hand in tunnel
+      # mode, do the same, or check `ls -l deploy/caddy_data/caddy/pki/authorities/local/root.crt`
+      # first.
+      #
+      # THE SECOND TRAP, which shows up only if this certificate is ever REGENERATED (delete
+      # caddy_data, or a future Caddy rotating its root): a single-FILE bind mount is bound to the
+      # inode, not to the path. A rename-replace on the host therefore leaves this container holding
+      # the old, now-unlinked inode — `cat /etc/ssl/caddy-internal-root.crt` fails INSIDE the app
+      # while `ls -l deploy/caddy_data/caddy/pki/authorities/local/root.crt` on the host shows a
+      # perfect certificate. It presents as UNABLE_TO_GET_ISSUER_CERT_LOCALLY and nobody can sign in,
+      # i.e. identical to the trap above, and no amount of looking at the host filesystem explains it.
+      # The root is valid for ten years, so this is rare — but it is expensive to diagnose and the
+      # recovery is one line, touching nothing but the app container:
+      #
+      #   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml up -d --force-recreate app
+      - ./caddy_data/caddy/pki/authorities/local/root.crt:/etc/ssl/caddy-internal-root.crt:ro
+
+  cloudflared:
+    # Pinned like every other image in this stack. `latest` means a routine `docker compose pull`
+    # can swap the tunnel daemon underneath a running deployment.
+    image: cloudflare/cloudflared:2026.7.3
+    restart: unless-stopped
+    depends_on:
+      caddy:
+        condition: service_started
+    # The token is read from the environment, NOT passed as an argument: `cloudflared tunnel run
+    # --token <secret>` puts it in argv, where any local user's `ps auxww` can read it. It is a
+    # bearer credential for the tunnel.
+    #
+    # `:?` rather than a default, so an empty token fails at `docker compose config` time with this
+    # message instead of starting a container that crash-loops on an authentication error every ten
+    # seconds forever.
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN is required in tunnel mode — create a tunnel at one.dash.cloudflare.com > Networks > Tunnels, copy its token, and put it in deploy/.env}
+    # --no-autoupdate: the version is pinned above; a daemon that updates itself in place makes the
+    # pin a fiction.
+    command: tunnel --no-autoupdate run
+    # No `ports:` entry, deliberately, and there must never be one. cloudflared dials OUT to
+    # Cloudflare; nothing needs to reach it.
+    networks: [internal]

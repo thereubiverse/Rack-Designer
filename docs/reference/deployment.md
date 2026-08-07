@@ -16,6 +16,12 @@ Supabase's usual services are deliberately absent, is
 on the compose network. Postgres in particular has no `ports:` entry at all, and it must never gain
 one: publishing it would put the database on the internet with a password as the only control.
 
+There are **two ways the outside world reaches the stack**, and the installer asks which one you want
+before anything else. *Direct* is the above: this machine has a public IP, 80 and 443 reach it, and
+Caddy gets its own Let's Encrypt certificate. *Tunnel* publishes nothing at all and opens no inbound
+port — see "Cloudflare Tunnel mode" below. Direct is the default and is unchanged by the existence of
+the other; tunnel mode is a second `-f` on top of the same base file.
+
 Caddy routes `/auth/v1/*`, `/rest/v1/*` and `/storage/v1/*` to Kong and everything else to the app.
 Those three API paths genuinely have to face the internet, because the browser fetches signed storage
 URLs directly — every avatar and every floor plan is a URL built from this same origin. That is safe
@@ -27,12 +33,16 @@ column grant, and `src/lib/supabase/grants.test.ts` is what keeps it true.
 I can prepare configuration and prove the stack comes up; I cannot create accounts or enter
 credentials on your behalf. These are yours, and the first one has to come first.
 
-**1. A domain, with DNS pointing at the server.** Caddy requests and renews a TLS certificate for
-`APP_HOSTNAME` automatically, and it does that by answering a challenge on port 80 at the address the
-name resolves to. So the record has to exist and resolve *before* the first `docker compose up`, not
-after. If DNS is not ready, certificate issuance fails and the symptom is the site simply not
-loading. This is also not merely a niceness: see the first entry under "Things that will bite" — an
-internal-CA certificate breaks the app container outright.
+**1. A domain, with DNS pointing at the server.** In **direct** mode Caddy requests and renews a TLS
+certificate for `APP_HOSTNAME` automatically, and it does that by answering a challenge on port 80 at
+the address the name resolves to. So the record has to exist and resolve *before* the first
+`docker compose up`, not after. If DNS is not ready, certificate issuance fails and the symptom is
+the site simply not loading. This is also not merely a niceness: see the first entry under "Things
+that will bite" — an internal-CA certificate breaks the app container outright.
+
+In **tunnel** mode you still need a domain, but on Cloudflare rather than pointed here: you create
+the tunnel, route a public hostname to it, and Cloudflare answers for that name with its own
+certificate. Nothing has to resolve to this machine, and nothing has to be forwarded to it.
 
 **2. The optional integrations**, none of which block the install. Each stays visibly inert until its
 credentials exist, by design, so a missing one explains itself rather than failing obscurely. All of
@@ -69,9 +79,14 @@ On the server, with Docker (and the Compose v2 plugin) and Node 18 or newer inst
 ./deploy/install.sh
 ```
 
-It prompts for four things: the hostname this server will be reached at, and the first admin's email,
-name and password. The password is read with `read -s`, so it is never echoed and never reaches shell
-history.
+It asks first **how this server is reached from the internet** — `1) direct` or `2) tunnel` — and
+then for the hostname this server will be reached at, the first admin's email, name and password, and
+in tunnel mode the Cloudflare Tunnel token. The password and the token are both read with `read -s`,
+so neither is echoed and neither reaches shell history.
+
+The mode is recorded as `DEPLOY_MODE` in `deploy/.env` and **is not asked again on a re-run**. That is
+deliberate: switching a live tunnel deployment to direct by hitting Enter would take the site off the
+internet in a way that looks like a network fault.
 
 Everything else it generates. This is the part worth understanding, because it is the step people get
 wrong by hand: **self-hosted Supabase has no "API key"**. It has a `JWT_SECRET`, and the anon and
@@ -99,6 +114,151 @@ the link between them — and the bootstrap device below is minted only when the
 device at all. That last one matters: keying it off `deploy/first-device-token.txt`, a file this page
 tells you to delete, meant a later re-run silently minted a **second** permanent approved device and a
 fresh break-glass token. Deleting the file, as instructed, is safe.
+
+## Cloudflare Tunnel mode
+
+**Choose it when this machine cannot be reached from the internet, or you do not want it to be** — a
+server in an office or a house behind a router, an ISP that hands out a changing IP or blocks 80 and
+443, or a network where opening a port needs a conversation with someone who will say no. In tunnel
+mode a `cloudflared` container makes an **outbound** connection to Cloudflare and requests arrive back
+down it. Nothing is published to the host, no port is forwarded, and there is no inbound listener to
+find.
+
+**Choose direct otherwise.** It is one fewer moving part, one fewer account, and no third party in the
+request path.
+
+Tunnel mode is an override file, not a fork: `deploy/docker-compose.tunnel.yml` on top of the same
+`deploy/docker-compose.yml`. The installer adds it automatically when `DEPLOY_MODE=tunnel`, and every
+`docker compose` command you run by hand afterwards needs **both files, in this order**:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml ps
+```
+
+Leaving the second one off starts a stack that publishes 80 and 443 and has no tunnel — which on a
+machine behind a router is simply a site nobody can reach.
+
+### What you do on Cloudflare
+
+At `one.dash.cloudflare.com` → **Networks** → **Tunnels** → **Create a tunnel** → **Cloudflared**,
+name the tunnel, then route a **public hostname** on a domain you have on Cloudflare to the service
+`http://caddy:80`. Cloudflare shows an install command containing `--token eyJ…`; that value is the
+token the installer asks for. Set `APP_HOSTNAME` to that same public hostname.
+
+The token is a **secret** — it is a bearer credential for the tunnel, and anyone holding it can attach
+a connector of their own. It lives in `deploy/.env` (mode 600, gitignored) and nowhere else. It is
+never passed on a command line, so it does not appear in `ps`, and the compose file reads it from the
+environment for the same reason. This repository is public.
+
+If `CLOUDFLARE_TUNNEL_TOKEN` is empty, compose refuses to start at all rather than launching a
+container that crash-loops on an authentication error:
+
+```
+error while interpolating services.cloudflared.environment.TUNNEL_TOKEN: required variable
+CLOUDFLARE_TUNNEL_TOKEN is missing a value: CLOUDFLARE_TUNNEL_TOKEN is required in tunnel mode …
+```
+
+### Why Caddy still terminates TLS, on the inside
+
+This is the part worth reading, because it is not obvious and getting it wrong breaks sign-in
+completely.
+
+`NEXT_PUBLIC_SUPABASE_URL` is `https://${APP_HOSTNAME}` and it **must stay the public origin**:
+`createPlanSignedUrl` and `createAvatarSignedUrl` build signed storage URLs from it and the browser
+fetches those directly. So in tunnel mode one hostname has two consumers with different needs — the
+browser, which arrives through Cloudflare's edge on Cloudflare's public certificate, and the app
+container, which has to reach the same name from inside the compose bridge.
+
+The app container could just resolve the name publicly. It would work, and every server-side query
+would then leave the building, cross Cloudflare's edge and come back down the tunnel — a full round
+trip per query, several per page. So instead:
+
+- `deploy/Caddyfile.tunnel` serves the same routes **twice**, from one imported snippet: plain HTTP on
+  `:80`, which is what `cloudflared` forwards to, and HTTPS on `:443` with `tls internal`.
+- Caddy already carries `APP_HOSTNAME` as a **network alias** (see the base compose file), so inside
+  the network that name resolves straight to Caddy.
+- The app container is given Caddy's internal root CA to trust, via `NODE_EXTRA_CA_CERTS` pointed at
+  `/etc/ssl/caddy-internal-root.crt` — a file mount of
+  `deploy/caddy_data/caddy/pki/authorities/local/root.crt`. `NODE_EXTRA_CA_CERTS` **adds** to Node's
+  trust store rather than replacing it, so publicly-trusted TLS everywhere else (Gemini, Twilio, SMTP)
+  is unaffected.
+
+Without that last piece the app fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` and nobody can sign in.
+That is measured, not predicted — it is the same failure described in the first entry under "Things
+that will bite", and tunnel mode is where the escape hatch mentioned there is actually wired up.
+
+Public TLS therefore stays entirely Cloudflare's, with a real publicly-trusted certificate, while the
+origin hop uses a certificate that never leaves the machine.
+
+### Plain HTTP is refused in tunnel mode too
+
+In direct mode Caddy owns the public certificate, so its automatic HTTPS answers `http://` with a 308
+to `https://` and there is nothing to decide. In tunnel mode the public TLS is Cloudflare's, and the
+only evidence of which scheme the browser actually used is the `X-Forwarded-Proto` header
+`cloudflared` sends. `deploy/Caddyfile.tunnel` therefore does two things in its `:80` block:
+
+- **Trusts `cloudflared` as a proxy** (`servers { trusted_proxies static private_ranges }`). Without
+  it Caddy rewrites that header to `http` — the scheme of the hop it can see — and the origin loses
+  the only fact it needed.
+- **Redirects anything that did not arrive over HTTPS**, with a 308, and sets
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains` so the browser stops trying plain
+  HTTP after its first visit.
+
+Cloudflare's **Always Use HTTPS** setting would close the same hole, but it is **off by default**, so
+it is not what this depends on. Without the redirect, `http://APP_HOSTNAME/login` served the login
+page in the clear — including the Supabase session cookie, which `@supabase/ssr` sets with neither
+`Secure` nor `httpOnly`. Turning **Always Use HTTPS** on as well is still worth doing: it stops the
+cleartext request at Cloudflare's edge instead of at your origin.
+
+### The ordering trap the installer handles for you
+
+Caddy generates its internal root CA **on first boot**. The app container mounts that file. If the app
+starts first, Docker finds no such path and creates a **directory** there — the mount succeeds,
+`NODE_EXTRA_CA_CERTS` points at a directory, Node ignores it silently, and the app fails in exactly
+the way it fails when the trust was never configured at all. There is nothing in the logs
+distinguishing the two.
+
+So `install.sh` in tunnel mode starts Caddy **alone** (`up -d --no-deps caddy`, because `caddy`
+`depends_on` `app` and would otherwise drag it up), waits for `root.crt` to exist as a regular
+non-empty file, and only then starts everything else. It also `rmdir`s an empty directory left at that
+path by an earlier run that got it wrong — `rmdir`, never `rm -rf`, so anything unexpected there stops
+the install instead of being deleted.
+
+If you ever bring the stack up by hand in tunnel mode on a fresh `deploy/caddy_data`, do the same, or
+at least check:
+
+```bash
+ls -l deploy/caddy_data/caddy/pki/authorities/local/root.crt   # must be a file, not a directory
+```
+
+Note that the installer asks the **caddy container** whether that file is there, not the host. Caddy
+writes `/data/caddy/pki` and its two child directories `drwx------ root root`, and on Linux a bind
+mount keeps that `uid 0` on the host — so an operator in the `docker` group cannot traverse them, and
+`ls` above will say `Permission denied` even though the certificate is perfectly present. Use
+`docker compose … exec caddy ls -l /data/caddy/pki/authorities/local/root.crt` instead, or `sudo`.
+
+### If sign-in breaks after the root CA is regenerated
+
+Symptom: `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` in the app logs and nobody can sign in, while
+`ls -l` on the host shows a perfectly good `root.crt`. Reading the file **inside the app container**
+fails:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml \
+  exec app cat /etc/ssl/caddy-internal-root.crt      # fails, though the host file is fine
+```
+
+Cause: that certificate is a single-**file** bind mount, and a file mount is bound to the inode, not
+the path. Anything that replaces the file by rename — deleting `deploy/caddy_data` and letting Caddy
+reissue, or a future Caddy rotating its root — leaves the running app container holding the old,
+now-unlinked inode. The host and the container genuinely disagree, which is what makes this expensive
+to diagnose. The root is valid for ten years, so it is rare.
+
+Recovery is one line, and it touches nothing but the app container:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.tunnel.yml up -d --force-recreate app
+```
 
 ## Upgrading an existing deployment
 
@@ -161,6 +321,11 @@ control of the email address. Treat it like a password until it is gone.
 `deploy/backup.sh` and `deploy/restore.sh` back up and restore this stack. Both take `--compose-file`
 and `--env-file` so they work against whichever stack you point them at, and `restore.sh` refuses to
 run without an explicit `--yes-overwrite`, because a restore replaces whatever is currently there.
+
+Both read `DEPLOY_MODE` from the `--env-file` and add `docker-compose.tunnel.yml` themselves when it
+is `tunnel`, so you do **not** pass the second `-f` to them by hand. Neither script publishes
+anything, so a single `-f` would appear to work — but a compose invocation missing the override file
+does not know the `cloudflared` service exists, and would treat it as an orphan.
 
 A backup directory holds six files. The database is split along **schema versus data**, not by schema
 name, because `postgres` on the `supabase/postgres` image is **not a superuser** and does not own the
