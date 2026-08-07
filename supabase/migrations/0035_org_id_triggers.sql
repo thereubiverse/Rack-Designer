@@ -8,12 +8,28 @@
 -- Generic rather than thirteen near-identical functions: the parent table and the local foreign-key
 -- column arrive as trigger arguments. `format(%I)` quotes them as identifiers, so they cannot be
 -- injected through — and they are written by this migration, not by a user, in any case.
+--
+-- Both functions below are SECURITY DEFINER with `set search_path = public, pg_temp`. `pg_temp` is
+-- named explicitly, and last, because Postgres otherwise searches a session's temp schema BEFORE
+-- public regardless of what search_path says — an unqualified `set search_path = public` does not
+-- stop that. This was demonstrated, not theorised: inside a rolled-back transaction,
+-- `create temp table clients(id uuid, org_id uuid)` seeded with a real client id but a foreign org_id
+-- caused inherit_org_id to stamp a new site with that foreign org, reading straight through the real
+-- `clients` table underneath. Only a foreign-key constraint stopped the row from landing, and that
+-- was luck, not a defence — a temp row pointing at a genuine second organisation would have passed
+-- the FK too. Because these functions run SECURITY DEFINER, this is a privilege-escalation path for
+-- any role that can create a temp table, not merely an edge case: it lets an unprivileged session
+-- pick which tenant a row lands in. Naming `pg_temp` last in search_path is the documented mitigation
+-- (fixes it being searched first); the dynamic `select ... from %I` below is additionally
+-- schema-qualified to `public.%I` so the parent lookup cannot resolve to a temp table even if
+-- search_path were ever changed back.
 create or replace function inherit_org_id() returns trigger
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   parent_table constant text := tg_argv[0];
   fk_column    constant text := tg_argv[1];
   fk_value     uuid;
+  parent_found boolean;
   parent_org   uuid;
 begin
   execute format('select ($1).%I', fk_column) into fk_value using new;
@@ -24,8 +40,19 @@ begin
     return new;
   end if;
 
-  execute format('select org_id from %I where id = $1', parent_table)
-    into parent_org using fk_value;
+  -- A plain `into parent_org` leaves parent_org null in two different situations: no row matched
+  -- (fk_value doesn't exist in parent_table at all), or a row matched and its org_id itself is
+  -- null — and `found` does not reliably separate them here: measured against this build, `execute
+  -- ... into ... using` does not set `found` the way a static `select into` does, even when a row
+  -- was returned. A `true` sentinel selected alongside org_id does: it comes back null when zero
+  -- rows match (nothing to bind it to) and `true` when a row matched, org_id or no.
+  execute format('select true, org_id from public.%I where id = $1', parent_table)
+    into parent_found, parent_org using fk_value;
+
+  if parent_found is not true then
+    raise exception 'inherit_org_id: % row references %.% = %, but no such row exists',
+      tg_table_name, parent_table, fk_column, fk_value;
+  end if;
 
   if parent_org is null then
     raise exception 'inherit_org_id: % row references %.% = %, which has no org_id',
@@ -49,7 +76,7 @@ revoke all on function inherit_org_id() from public;
 -- changed org_id would move a row across the wall while every composite foreign key still pointed
 -- at the old owner.
 create or replace function freeze_org_id() returns trigger
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if new.org_id is distinct from old.org_id then
     raise exception 'freeze_org_id: % row % cannot change organisation (% -> %)',
