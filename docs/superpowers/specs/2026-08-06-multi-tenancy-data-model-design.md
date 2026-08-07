@@ -52,10 +52,17 @@ The alternative is deriving ownership by joining up the chain — `connections` 
 policy tomorrow: a policy containing a five-table join is both slow on every row and easy to get
 subtly wrong. Slice 2's policies must be one-liners, and that requires the column to be present.
 
-- **`org_id uuid not null`** on the 16 tenant tables: `clients`, `sites`, `floors`, `rooms`,
+- **`org_id uuid not null`** on 15 tenant tables: `clients`, `sites`, `floors`, `rooms`,
   `racks`, `rack_devices`, `connections`, `port_endpoints`, `floor_devices`, `floor_plans`,
-  `members`, `activity_log`, `trusted_devices`, `phone_verifications`, `device_challenges`,
-  `app_settings`.
+  `members`, `trusted_devices`, `phone_verifications`, `device_challenges`, `app_settings`.
+- **`org_id uuid null` on `activity_log`**, which was originally in the list above and should not
+  have been. `activity_log.member_id` is nullable and `src/features/activity/authLog.ts` passes
+  `memberId ?? null`, because **a refused sign-in from an address belonging to nobody has no
+  member — and therefore no organisation.** Forcing not null would make that insert fail and
+  silently destroy the sign-in-refusal audit trail, which is one of the reasons this table exists.
+  NULL here means "a platform-level event belonging to no organisation"; slice 2's policies leave
+  those rows invisible to every tenant, which is correct — they are the operator's business, not a
+  customer's. Found by review, after the first draft of this spec asserted otherwise.
 - **`org_id uuid null`** on the 3 library tables: `brands`, `device_types`, `device_templates`.
   **NULL means "standard, shared by every organisation"**; a value means "created by, and private
   to, that organisation". All 24 existing `device_types` (`is_standard = true`), 4 brands and 6

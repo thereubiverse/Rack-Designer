@@ -39,7 +39,7 @@
 | `port_endpoints` | not null | trigger ← `racks` via `rack_id` |
 | `floor_devices` | not null | trigger ← `sites` via `site_id` |
 | `floor_plans` | not null | trigger ← `floors` via `floor_id` |
-| `activity_log` | not null | trigger ← `members` via `member_id` |
+| `activity_log` | **nullable** | trigger ← `members` via `member_id`; NULL = platform event with no org (a refused sign-in from an unknown address) |
 | `trusted_devices` | not null | trigger ← `members` via `member_id` |
 | `phone_verifications` | not null | trigger ← `members` via `member_id` |
 | `device_challenges` | not null | trigger ← `trusted_devices` via `device_id` |
@@ -575,7 +575,13 @@ alter table connections         alter column org_id set not null;
 alter table port_endpoints      alter column org_id set not null;
 alter table floor_devices       alter column org_id set not null;
 alter table floor_plans         alter column org_id set not null;
-alter table activity_log        alter column org_id set not null;
+-- activity_log is DELIBERATELY ABSENT from this list. `member_id` is nullable and
+-- src/features/activity/authLog.ts passes `memberId ?? null`, because a REFUSED SIGN-IN FROM AN
+-- UNKNOWN ADDRESS has no member — and therefore no organisation. Making this not null would make
+-- that insert fail and silently destroy the sign-in-refusal audit trail, which is one of the
+-- reasons the activity log exists. NULL here means "a platform-level event belonging to no
+-- organisation", and slice 2's policies leave those rows invisible to every tenant, which is
+-- correct: they are the platform operator's business, not a customer's.
 alter table trusted_devices     alter column org_id set not null;
 alter table phone_verifications alter column org_id set not null;
 alter table device_challenges   alter column org_id set not null;
@@ -832,8 +838,16 @@ function sql(query: string): string[] {
   return out.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-/** NULL org_id means "standard, shared by every organisation". Only these three may be nullable. */
-const LIBRARY_TABLES = ["brands", "device_types", "device_templates"];
+/** Tables where a NULL org_id is legitimate, and why — sorted, because the assertion compares
+ *  against a sorted list.
+ *
+ *  The three library tables: NULL means "standard, shared by every organisation".
+ *
+ *  activity_log: NULL means "a platform-level event belonging to no organisation". A refused
+ *  sign-in from an address that belongs to nobody has no member and therefore no org, and
+ *  authLog.ts records exactly that. Forcing not null there would make the insert fail and take the
+ *  sign-in-refusal audit trail with it. */
+const NULLABLE_ORG_TABLES = ["activity_log", "brands", "device_templates", "device_types"];
 
 describe("every row has an owning organisation", () => {
   it("gives every table in public an org_id", () => {
@@ -853,7 +867,7 @@ describe("every row has an owning organisation", () => {
     expect(missing).toEqual([]);
   });
 
-  it("makes org_id not null everywhere except the shared library", () => {
+  it("makes org_id not null everywhere a null would be meaningless", () => {
     const nullable = sql(`
       select c.relname
       from pg_class c
@@ -862,7 +876,9 @@ describe("every row has an owning organisation", () => {
       where n.nspname = 'public' and c.relkind = 'r' and not a.attnotnull
       order by 1
     `);
-    expect(nullable).toEqual(LIBRARY_TABLES.slice().sort());
+    // Exact equality both ways: a new nullable table fails here, and so does one of these four
+    // quietly being tightened, which would break the sign-in-refusal log or the shared library.
+    expect(nullable).toEqual(NULLABLE_ORG_TABLES);
   });
 
   it("carries org_id through every foreign key between two org-scoped tables", () => {
