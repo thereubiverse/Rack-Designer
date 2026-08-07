@@ -14,20 +14,31 @@ export interface MemberRow {
 }
 
 /** `auth.users` is not exposed through the REST schema, so its `last_sign_in_at` cannot be
- *  selected with a PostgREST join. The Admin API is the only way to reach it, and that API takes
- *  one id at a time — there is no "get these N users" call — so this fires one lookup per distinct
- *  `auth_user_id` collected from the first query, in parallel, rather than N+1 sequential round
- *  trips. A lookup that errors (or a user since deleted from auth) resolves to `null` rather than
- *  failing the whole list: a missing last-sign-in time is not a reason to hide someone from the
- *  member list. */
+ *  selected with a PostgREST join. The GoTrue Admin API is the only way to reach it, and that API
+ *  takes one id at a time — there is no "get these N users" call — so this fires one lookup per
+ *  distinct `auth_user_id` collected from the first query, in parallel, rather than N+1 sequential
+ *  round trips. A lookup that errors (or a user since deleted from auth) resolves to `null` rather
+ *  than failing the whole list: a missing last-sign-in time is not a reason to hide someone from
+ *  the member list.
+ *
+ *  `adminDb` IS A SEPARATE PARAMETER, AND IT MUST BE THE SERVICE CLIENT. This is the one call in
+ *  this file that is not a PostgREST query, and a tenant token cannot make it: GoTrue answers a
+ *  token whose role is `app_tenant` with 403 `{"error_code":"not_admin"}` — measured against the
+ *  local stack, not assumed. Passing the tenant client here does not error, it just makes every
+ *  timestamp null (the catch above swallows it) and spends a wasted 403 round trip per member per
+ *  render, which is precisely how the /users column sat permanently blank without anyone noticing.
+ *
+ *  Nothing else moves off the tenant client for this: the members rows themselves are still read
+ *  through `db`, so the set of `authUserIds` reaching this function is already organisation-scoped
+ *  by policy. The service role only ever sees ids that RLS already agreed to hand over. */
 async function lastSignInTimes(
-  db: SupabaseClient, authUserIds: string[]
+  adminDb: SupabaseClient, authUserIds: string[]
 ): Promise<Map<string, string | null>> {
   const ids = [...new Set(authUserIds)];
   const entries = await Promise.all(
     ids.map(async (id): Promise<[string, string | null]> => {
       try {
-        const { data, error } = await db.auth.admin.getUserById(id);
+        const { data, error } = await adminDb.auth.admin.getUserById(id);
         if (error || !data.user) return [id, null];
         return [id, data.user.last_sign_in_at ?? null];
       } catch {
@@ -39,8 +50,14 @@ async function lastSignInTimes(
 }
 
 /** Sorted by name then email, so the invite list reads the way a person would scan it — not by
- *  insertion order, which is invite order and puts nobody where a reader expects them. */
-export async function listMembers(db: SupabaseClient): Promise<MemberRow[]> {
+ *  insertion order, which is invite order and puts nobody where a reader expects them.
+ *
+ *  `db` is the TENANT client and stays that way — the members query below is the whole reason this
+ *  function exists and it must be scoped by policy. `adminDb` is the service client, used for
+ *  exactly one thing (see lastSignInTimes) and nothing else. Two clients rather than one because
+ *  they reach two different services with two different notions of authority, not because this
+ *  function needs extra privilege on `members`. */
+export async function listMembers(db: SupabaseClient, adminDb: SupabaseClient): Promise<MemberRow[]> {
   const { data, error } = await db
     .from("members")
     .select("id, email, name, role, disabled_at, auth_user_id, invited_at");
@@ -50,7 +67,7 @@ export async function listMembers(db: SupabaseClient): Promise<MemberRow[]> {
   const authUserIds = rows
     .map((r) => (r.auth_user_id === null ? null : String(r.auth_user_id)))
     .filter((id): id is string => id !== null);
-  const signIns = await lastSignInTimes(db, authUserIds);
+  const signIns = await lastSignInTimes(adminDb, authUserIds);
 
   return rows
     .map((r): MemberRow => {
@@ -109,6 +126,12 @@ export async function setMemberDisabled(
   if (error) throw new Error(`setMemberDisabled: ${error.message}`);
 }
 
+/** `lastSignInAt` is ALWAYS null here, deliberately. Both callers (setMemberRoleAction and
+ *  setMemberDisabledAction in ./actions.ts) read this row to re-check the target's role and
+ *  disabled state at write time; neither looks at the sign-in time. Firing the GoTrue admin lookup
+ *  for it would need the service client threaded through a purely tenant-scoped write path to
+ *  populate a field nobody reads — and on the tenant client it was buying a 403 per call and a null
+ *  anyway. The /users page, which is the only screen that renders the column, uses listMembers. */
 export async function findMemberById(db: SupabaseClient, id: string): Promise<MemberRow | null> {
   const { data, error } = await db
     .from("members")
@@ -118,7 +141,6 @@ export async function findMemberById(db: SupabaseClient, id: string): Promise<Me
   if (error) throw new Error(`findMemberById: ${error.message}`);
   if (!data) return null;
   const authUserId = data.auth_user_id === null ? null : String(data.auth_user_id);
-  const signIns = await lastSignInTimes(db, authUserId ? [authUserId] : []);
   return {
     id: String(data.id),
     email: String(data.email),
@@ -127,6 +149,6 @@ export async function findMemberById(db: SupabaseClient, id: string): Promise<Me
     disabledAt: data.disabled_at === null ? null : String(data.disabled_at),
     authUserId,
     invitedAt: String(data.invited_at),
-    lastSignInAt: authUserId ? signIns.get(authUserId) ?? null : null,
+    lastSignInAt: null,
   };
 }

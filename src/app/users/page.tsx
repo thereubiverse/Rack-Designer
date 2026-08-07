@@ -19,7 +19,13 @@ export default async function UsersPage() {
   if (member.role !== "admin") redirect("/");
 
   const db = createTenantClient(member);
-  const members = await listMembers(db);
+  // Every members-table query in here runs on the tenant client. The service client is passed
+  // ALONGSIDE it for one narrow purpose: `last_sign_in_at` lives in `auth.users`, which is not in
+  // the REST schema, so it can only be read through the GoTrue admin API — and GoTrue answers an
+  // `app_tenant` token with 403 `{"error_code":"not_admin"}`. On the tenant client that fails
+  // silently into null, which is why this column rendered blank on every row while costing a
+  // wasted 403 per member per render. See listMembers.
+  const members = await listMembers(db, createServiceClient());
 
   // Grouped by member id here, in the server component, rather than handing the client a flat
   // list to re-group on every render. `tokenHash` is dropped: nobody viewing this screen holds

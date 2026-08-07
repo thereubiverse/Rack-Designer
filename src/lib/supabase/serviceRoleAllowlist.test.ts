@@ -51,7 +51,17 @@ const PERMANENT = [
  *  whose ONLY remaining blocker was storage — layout.tsx, clients/[clientCode]/[siteCode]/page.tsx,
  *  clients/actions.ts, discoverActions.ts, planExtractActions.ts and symbolActions.ts — can now move.
  *  profile/page.tsx and users/page.tsx and verify-device/page.tsx still cannot: trusted_devices is
- *  ungranted ON PURPOSE and 0046 did not touch it. profile/actions.ts still cannot either: its
+ *  ungranted ON PURPOSE and 0046 did not touch it.
+ *
+ *  users/page.tsx has a SECOND, independent reason now, and it is not a grant at all: the "Last
+ *  sign-in" column reads `auth.users.last_sign_in_at`, which is not in the REST schema and is only
+ *  reachable through the GoTrue admin API. GoTrue refuses an `app_tenant` token with 403
+ *  `{"error_code":"not_admin"}` — measured, not assumed. No migration can fix that, because no
+ *  Postgres grant is involved. So that page passes BOTH clients to listMembers: the tenant client
+ *  for the members query, the service client for that one admin call. This file could not be
+ *  removed from the list even if trusted_devices were granted tomorrow.
+ *
+ *  profile/actions.ts still cannot either: its
  *  avatar calls are now reachable, but its phone verification is phone_verifications, ungranted for
  *  the same deliberate reason.
  *
