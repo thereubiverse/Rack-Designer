@@ -11,16 +11,19 @@ expensive with every feature added and cannot be retrofitted cheaply later.
 
 ## The gate this slice leaves behind
 
-> The schema now permits a second organisation. **Slice 2 has landed and the wall holds for every
-> tenant table** — Postgres refuses a cross-organisation read or write, proven with two organisations
-> and two tokens. **But do not create a second organisation yet.** Fourteen files still hold
-> service-role calls, four permanently and ten narrowly for `trusted_devices`,
-> `phone_verifications` and storage, and the service role bypasses row-level security entirely.
-> Those paths are safe only if each one checks ownership itself. One of them did not: the admin
-> device-approval actions took a device id straight from the form and acted on it unscoped, so an
-> admin of one organisation could have approved another's browser or locked its staff out. That is
-> fixed — but it was found by looking, not by a guard, and the remaining service-role call sites have
-> not all been audited for the same shape. **Do that audit before creating a second organisation.**
+> **The gate is lifted.** Slice 2 landed, and the ownership audit it required is done: all 28
+> service-role call sites across 14 files were checked, and every one keys on a session-derived
+> identifier or on a path built from a row already read through the tenant client. Postgres refuses
+> cross-organisation reads and writes for every tenant table and for storage. **A second
+> organisation may now be created.**
+>
+> What that does not mean. Three residuals remain, none reachable through the application but each
+> resting on a code invariant rather than a database one: `floor_plans` constrains `org_id` but not
+> `storage_path`, so the single server-built writer is what keeps a row from pointing at another
+> organisation's object; `members` is scoped by organisation only, so a same-organisation colleague's
+> phone and address have no database backstop; and `createAvatarSignedUrl` will sign any path handed
+> to it. Registration is still slice 3, and still needs working email before a self-registered admin
+> can get in at all.
 
 This is not caution about an abstract risk. The consequences are already readable in the code, and
 they are the reason the gate is written here rather than assumed:
