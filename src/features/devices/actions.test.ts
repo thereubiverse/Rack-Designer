@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const MY_ORG = "org-mine";
+
 const ME = {
   id: "me", email: "me@example.com", name: "Me",
   authUserId: "au-me", disabledAt: null, avatarPath: null, role: "viewer" as const,
+  orgId: MY_ORG,
 };
 
 // Transparent wrappers injecting OUR member, exactly like users/actions.test.ts and
@@ -52,6 +55,7 @@ vi.mock("next/headers", () => ({
 
 vi.mock("./repository", () => ({
   findDeviceByHash: vi.fn(),
+  findDeviceInOrg: vi.fn(),
   insertPendingDevice: vi.fn(),
   approveDevice: vi.fn(),
   listDevicesForMember: vi.fn(),
@@ -66,7 +70,7 @@ vi.mock("./repository", () => ({
 
 import { emailConfigured, sendEmail } from "@/lib/email";
 import {
-  findDeviceByHash, insertPendingDevice, approveDevice, listDevicesForMember,
+  findDeviceByHash, findDeviceInOrg, insertPendingDevice, approveDevice, listDevicesForMember,
   deleteDevice, writeChallenge, clearChallenge, consumeDeviceAttempt,
   countPendingDevicesForMember, mostRecentChallengeForMember,
   type TrustedDevice, type ConsumedAttempt,
@@ -407,29 +411,53 @@ describe("revokeMyDeviceAction", () => {
 });
 
 describe("adminApproveDeviceAction", () => {
-  it("approves a device by id", async () => {
+  it("approves a device in the admin's own organisation", async () => {
+    vi.mocked(findDeviceInOrg).mockResolvedValue(myDevice({ id: "device-9" }));
     const res = await adminApproveDeviceAction(form({ id: "device-9" }));
     expect(res.ok).toBe(true);
+    expect(findDeviceInOrg).toHaveBeenCalledWith(db, "device-9", MY_ORG);
     expect(approveDevice).toHaveBeenCalledWith(db, "device-9");
+  });
+
+  // The scenario the whole slice gates on: an admin of one organisation posting a device id read
+  // out of another organisation's row. findDeviceInOrg resolves null (the id exists, but not in
+  // MY_ORG) and NOTHING must be approved — there is no row-level security under this path to catch
+  // it, because trusted_devices is ungranted to app_tenant on purpose.
+  it("refuses a device belonging to another organisation", async () => {
+    vi.mocked(findDeviceInOrg).mockResolvedValue(null);
+    const res = await adminApproveDeviceAction(form({ id: "other-orgs-device" }));
+    expect(res.ok).toBe(false);
+    expect(approveDevice).not.toHaveBeenCalled();
   });
 
   it("refuses without an id", async () => {
     const res = await adminApproveDeviceAction(form({}));
     expect(res.ok).toBe(false);
+    expect(findDeviceInOrg).not.toHaveBeenCalled();
     expect(approveDevice).not.toHaveBeenCalled();
   });
 });
 
 describe("adminRevokeDeviceAction", () => {
-  it("revokes any device by id", async () => {
+  it("revokes a device in the admin's own organisation", async () => {
+    vi.mocked(findDeviceInOrg).mockResolvedValue(myDevice({ id: "device-9" }));
     const res = await adminRevokeDeviceAction(form({ id: "device-9" }));
     expect(res.ok).toBe(true);
+    expect(findDeviceInOrg).toHaveBeenCalledWith(db, "device-9", MY_ORG);
     expect(deleteDevice).toHaveBeenCalledWith(db, "device-9");
+  });
+
+  it("refuses a device belonging to another organisation", async () => {
+    vi.mocked(findDeviceInOrg).mockResolvedValue(null);
+    const res = await adminRevokeDeviceAction(form({ id: "other-orgs-device" }));
+    expect(res.ok).toBe(false);
+    expect(deleteDevice).not.toHaveBeenCalled();
   });
 
   it("refuses without an id", async () => {
     const res = await adminRevokeDeviceAction(form({}));
     expect(res.ok).toBe(false);
+    expect(findDeviceInOrg).not.toHaveBeenCalled();
     expect(deleteDevice).not.toHaveBeenCalled();
   });
 });

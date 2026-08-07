@@ -88,16 +88,46 @@ export async function listDevicesForMember(db: SupabaseClient, memberId: string)
   return (data ?? []).map(toDevice);
 }
 
-/** Every device across every member still waiting on approval — the admin queue, not a single
- *  member's list. Oldest first: the longest-waiting request is the one that most wants attention. */
-export async function listPendingDevices(db: SupabaseClient): Promise<TrustedDevice[]> {
+/** Every device in ONE organisation still waiting on approval — the admin queue, not a single
+ *  member's list. Oldest first: the longest-waiting request is the one that most wants attention.
+ *
+ *  `orgId` is not optional and there is no unscoped variant, deliberately. Callers reach this table
+ *  through the SERVICE client (see findDeviceInOrg below for why), so row-level security is not
+ *  underneath this query to catch a missing filter. Without the `org_id` predicate this returned
+ *  every organisation's pending device ids, member ids and labels — and /users hands that map
+ *  straight to a client component, so they landed in any admin's RSC payload. */
+export async function listPendingDevices(db: SupabaseClient, orgId: string): Promise<TrustedDevice[]> {
   const { data, error } = await db
     .from("trusted_devices")
     .select("id, member_id, token_hash, label, approved_at, last_seen_at, created_at")
+    .eq("org_id", orgId)
     .is("approved_at", null)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`listPendingDevices: ${error.message}`);
   return (data ?? []).map(toDevice);
+}
+
+/** Resolves a device by id ONLY if it belongs to `orgId`, for the two admin actions that take a
+ *  device id from a submitted form. Returning null covers both "no such device" and "another
+ *  organisation's device", which the caller must refuse identically — telling those apart would
+ *  confirm to a prober that an id they guessed or read is real.
+ *
+ *  This is a hand-written organisation check standing in for a policy. `trusted_devices` is
+ *  DELIBERATELY not granted to `app_tenant` (migrations 0042/0043) because it holds device token
+ *  hashes, so every caller here is on `createServiceClient()`, which carries `bypassrls`. The tenant
+ *  wall does NOT cover this table: the `org_id` predicate below is the only thing that scopes it. */
+export async function findDeviceInOrg(
+  db: SupabaseClient, deviceId: string, orgId: string
+): Promise<TrustedDevice | null> {
+  const { data, error } = await db
+    .from("trusted_devices")
+    .select("id, member_id, token_hash, label, approved_at, last_seen_at, created_at")
+    .eq("id", deviceId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) throw new Error(`findDeviceInOrg: ${error.message}`);
+  if (!data) return null;
+  return toDevice(data);
 }
 
 /** Deletes a device outright. `device_challenges` cascades (FK `on delete cascade`), so there is

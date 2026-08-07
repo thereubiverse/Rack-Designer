@@ -28,7 +28,12 @@ export default async function UsersPage() {
   const pendingDevicesByMember: Record<string, PendingDeviceView[]> = {};
   // NOT the tenant client: trusted_devices carries no grant for app_tenant at all, deliberately,
   // per migration 0042/0043 — confirmed directly ("permission denied for table trusted_devices").
-  for (const d of await listPendingDevices(createServiceClient())) {
+  // Which is exactly why `member.orgId` is passed EXPLICITLY: the service client bypasses row-level
+  // security, so no policy scopes this read. Unfiltered, it handed every organisation's pending
+  // device ids, member ids and labels to a "use client" component — i.e. into the RSC payload of
+  // any admin's browser, which is where an attacker would read another organisation's device id
+  // before posting it to adminApproveDeviceAction.
+  for (const d of await listPendingDevices(createServiceClient(), member.orgId)) {
     (pendingDevicesByMember[d.memberId] ??= []).push({ id: d.id, label: d.label, createdAt: d.createdAt });
   }
 

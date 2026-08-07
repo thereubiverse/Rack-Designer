@@ -13,7 +13,15 @@ const PERMANENT = [
   "src/features/activity/authLog.ts",     // sign-in refusals for addresses belonging to nobody
   "src/features/auth/authActions.ts",     // sign-in and sign-out, either side of a session
   "src/features/auth/members.ts",         // resolves the member, so cannot already have an org
-  "src/features/devices/actions.ts",      // the device flow runs before device trust exists
+  // Two separate reasons, and only the first is "before an organisation exists":
+  //   - the member-facing flow (start/resend/confirm/revoke-my) runs before the device is trusted,
+  //     and consume_device_attempt is security definer and service-role-only;
+  //   - the two ADMIN actions run for an authenticated admin who DOES have an organisation in hand.
+  //     They stay here anyway because `trusted_devices` is deliberately ungranted to `app_tenant`
+  //     (0042/0043 — it holds device token hashes). Row-level security therefore does not cover
+  //     them, so each one checks the organisation itself via findDeviceInOrg. That is a hand-written
+  //     wall, not a policy, and it is load-bearing.
+  "src/features/devices/actions.ts",
 ];
 
 /** Still to move. Every deletion from here is progress; nothing should ever be added.
