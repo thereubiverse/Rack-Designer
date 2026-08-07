@@ -45,9 +45,13 @@ alter table floor_devices drop constraint floor_devices_floor_id_fkey;
 alter table floor_devices add constraint floor_devices_floor_fk
   foreign key (org_id, floor_id) references floors (org_id, id) on delete cascade;
 
--- room_id is nullable (a device can be placed on a floor without an assigned room) and this
--- constraint carried ON DELETE SET NULL live, so a room delete un-assigns the device instead of
--- removing it. Preserved as-is.
+-- room_id is nullable (a device can be placed on a floor without an assigned room). The
+-- single-column form previously let a room delete un-assign the device. Making the key composite
+-- (org_id, room_id) with a plain `on delete set null` changed that: on a multi-column key, SET
+-- NULL without a named column list nulls every column in the key, including org_id, which the
+-- freeze_org_id trigger then rejects, turning every room delete with an assigned device into a
+-- hard failure. NOT preserved as-is — fixed in 0040 by naming the child column:
+-- `on delete set null (room_id)`.
 alter table floor_devices drop constraint floor_devices_room_id_fkey;
 alter table floor_devices add constraint floor_devices_room_fk
   foreign key (org_id, room_id) references rooms (org_id, id) on delete set null;
