@@ -218,6 +218,35 @@ describe("every row has an owning organisation", () => {
     ]);
   });
 
+  it("keeps floor_plans' storage paths org-prefixed, pinned by name and definition", () => {
+    // RLS scopes floor_plans by org_id, but nothing stopped storage_path or pdf_storage_path from
+    // pointing at another organisation's object — an ownership audit proved it with a rolled-back
+    // `UPDATE 1` that succeeded. Not reachable through the application today, because
+    // upsertFloorPlan is the only writer and it builds the path server-side from the floor's own
+    // organisation, but that made the isolation a property of code being right rather than the
+    // database refusing it. 0047 adds two check constraints requiring storage_path, and
+    // pdf_storage_path when not null, to start with the row's own org_id followed by '/'.
+    //
+    // Pinned by full definition, not just name, for the same reason as the FK and unique checks
+    // above: dropping or redefining floor_plans_storage_path_org_prefixed would still leave a
+    // constraint of that name behind if it were re-created looser, and a name-only check would miss
+    // it.
+    const rows = sql(`
+      select con.conrelid::regclass::text || '.' || con.conname || ' :: ' || pg_get_constraintdef(con.oid)
+      from pg_constraint con
+      where con.conrelid = 'floor_plans'::regclass and con.contype = 'c'
+      order by 1
+    `);
+    expect(rows).toEqual([
+      "floor_plans.floor_plans_height_px_check :: CHECK ((height_px > 0))",
+      "floor_plans.floor_plans_pdf_page_check :: CHECK (((pdf_page IS NULL) OR (pdf_page >= 0)))",
+      "floor_plans.floor_plans_pdf_storage_path_org_prefixed :: CHECK (((pdf_storage_path IS NULL) OR starts_with(pdf_storage_path, ((org_id)::text || '/'::text))))",
+      "floor_plans.floor_plans_source_check :: CHECK ((source = ANY (ARRAY['image'::text, 'pdf'::text])))",
+      "floor_plans.floor_plans_storage_path_org_prefixed :: CHECK (starts_with(storage_path, ((org_id)::text || '/'::text)))",
+      "floor_plans.floor_plans_width_px_check :: CHECK ((width_px > 0))",
+    ]);
+  });
+
   it("has no bare unique index hiding from the constraint-based check above", () => {
     // The previous assertion only sees uniqueness declared as a PRIMARY KEY or UNIQUE CONSTRAINT
     // (pg_constraint). connections' own uniqueness — connections_edge_uniq — is a bare
