@@ -1,0 +1,67 @@
+# Caddyfile.tunnel — the tunnel-mode Caddyfile. Used ONLY with deploy/docker-compose.tunnel.yml;
+# direct mode keeps using ../Caddyfile unchanged.
+#
+# Same three-route site as ../Caddyfile (read the comment block there for WHY /auth/v1, /rest/v1 and
+# /storage/v1 have to be publicly reachable — signed storage URLs are built from this origin and the
+# browser fetches them directly). The difference is that in tunnel mode the site has to be served
+# TWICE, because two very different callers need it:
+#
+#   * cloudflared, over plain HTTP on :80. It is the only thing that can reach that port — in tunnel
+#     mode Caddy publishes nothing to the host at all — and it has already terminated the public TLS
+#     at Cloudflare's edge with a real, publicly-trusted certificate. Terminating a second time
+#     between two containers on the same bridge buys nothing.
+#
+#   * the app container, over HTTPS on :443. This one is not optional. Every server-side Supabase
+#     call goes to NEXT_PUBLIC_SUPABASE_URL, which is https://APP_HOSTNAME — it must stay the public
+#     origin, because that same value is baked into the signed URLs the browser fetches. The compose
+#     file gives Caddy a network alias of APP_HOSTNAME, so that name resolves to Caddy on the bridge;
+#     `tls internal` is what makes the https:// half of it answer. The app trusts the resulting
+#     certificate via NODE_EXTRA_CA_CERTS (see docker-compose.tunnel.yml).
+#
+# Without the HTTPS half, the app would have to resolve APP_HOSTNAME publicly and every server-side
+# query would leave the building, cross Cloudflare's edge and come back through the tunnel — a round
+# trip per query. With it, the origin hop never leaves the bridge.
+
+{
+	# The :80 site below is the tunnel's entry point and must SERVE the app, not bounce cloudflared to
+	# HTTPS. Caddy's automatic HTTPS would otherwise install a redirect on :80 for the hostname the
+	# https:// block names, and cloudflared would forward a 308 to the browser for every request.
+	# Certificate automation itself is untouched — `tls internal` below still issues.
+	auto_https disable_redirects
+}
+
+# Written once, imported by both site blocks. Duplicating it is how the two halves drift apart.
+(ndp_routes) {
+	handle /auth/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle /rest/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle /storage/v1/* {
+		reverse_proxy kong:8000
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}
+
+# For cloudflared. Deliberately `:80` — any Host — rather than `http://{$APP_HOSTNAME}`: cloudflared
+# normally passes the original Host through, but an operator who sets an origin Host override in the
+# Cloudflare dashboard would otherwise get a bare 404 from Caddy with nothing explaining it. Nothing
+# else can reach this port; in tunnel mode it is not published to the host.
+:80 {
+	import ndp_routes
+}
+
+# For the app container, on the compose bridge. `tls internal` uses Caddy's own CA, whose root is
+# written to /data/caddy/pki/authorities/local/root.crt — a bind mount, which is how the app
+# container gets hold of it.
+https://{$APP_HOSTNAME} {
+	tls internal
+
+	import ndp_routes
+}
