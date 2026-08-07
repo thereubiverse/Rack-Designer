@@ -29,6 +29,16 @@ describe("mintTenantToken", () => {
     expect(() => mintTenantToken("")).toThrow(/organisation/i);
   });
 
+  it("refuses to mint an organisation that is not a uuid", () => {
+    // Not fail-closed, unlike the empty case above: current_org_id() casts the claim to uuid, so a
+    // non-uuid raises `invalid input syntax for type uuid` INSIDE the policy and every query comes
+    // back 500 rather than empty — measured against the local stack. That is the same deviation
+    // migration 0045 removed for the defined-but-empty GUC.
+    for (const bad of ["nope", "11111111-1111-1111-1111", "not a uuid at all", "11111111111111111111111111111111"]) {
+      expect(() => mintTenantToken(bad), bad).toThrow(/uuid/i);
+    }
+  });
+
   it("refuses to mint with no secret configured", () => {
     delete process.env.SUPABASE_JWT_SECRET;
     expect(() => mintTenantToken("11111111-1111-1111-1111-111111111111")).toThrow(/SUPABASE_JWT_SECRET/);

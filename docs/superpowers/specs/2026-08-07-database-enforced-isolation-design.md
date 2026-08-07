@@ -60,8 +60,25 @@ fixed a version of this function that had the inner guard missing.)
 
 ### Why this is better here than the conventional pattern
 
-- **`anon` and `authenticated` keep zero privileges.** The public REST surface stays exactly as
-  closed as it is today. Nothing a browser holds can reach the database.
+- **`anon` and `authenticated` gain nothing, and what they already hold reaches no tenant data.**
+  The public REST surface stays exactly as closed as it is today. "Zero privileges" is what this
+  bullet said as first written, and it is not literally true — corrected here rather than left as a
+  claim a reader could check and find false:
+  - `authenticated` holds `select (email, disabled_at) on members`, added by migration `0044` and
+    constrained by the `members_self` policy to rows whose `email` matches the caller's own JWT
+    claim. That grant is what makes signing in work; it is deliberate, it is narrow, and
+    `policies.test.ts` pins both halves — the policy's exact expression, and that it is
+    `SELECT`-only so there is no `with check` half to get wrong.
+  - Both roles hold blanket CRUD on `storage.objects` and `storage.buckets`, from the Supabase
+    image's own defaults rather than from anything in this repository. It is nonetheless
+    fail-closed: RLS is enabled on both, and the only policies on `storage.objects` are the two
+    `app_tenant` ones from migration `0046`, while `storage.buckets` carries no policy at all. A
+    grant with no policy behind it reads nothing. `grants.test.ts` pins the grant list and
+    `policies.test.ts` pins the policy list, so a future default that changed either would fail.
+
+  The accurate general statement is therefore: **nothing a browser holds can read or write tenant
+  data**, because every path to it is governed by a policy naming `app_tenant`, and a browser cannot
+  obtain an `app_tenant` token.
 - **No per-row lookup.** The organisation is a constant in the query, not a subquery against
   `members`.
 - **Revocation is immediate.** The token is minted *after* the membership check, and expires in a
@@ -173,19 +190,37 @@ enforced rather than remembered:
 |---|---|
 | `src/features/auth/members.ts` — `getCurrentMember` | Resolves the member *from* the session email. It is what discovers the organisation, so it cannot already have one. |
 | `src/features/activity/authLog.ts` | Records sign-in refusals for addresses that belong to nobody — no member, no organisation. |
-| `src/features/devices/actions.ts` | The trusted-device flow runs before the device is trusted, and `consume_device_attempt` is already `security definer` and service-role-only. |
+| `src/features/devices/actions.ts` | The member-facing device flow runs before the device is trusted, and `consume_device_attempt` is already `security definer` and service-role-only. Its two *admin* actions are a different case — they run for an authenticated admin who has an organisation — but stay here anyway because `trusted_devices` is deliberately ungranted to `app_tenant`. That means RLS is not underneath them, so each checks the organisation by hand. |
 | `src/features/auth/authActions.ts` | Sign-in and sign-out, either side of a session existing. |
 | `src/lib/supabase/server.ts` | Defines the client. |
 | `deploy/install.sh` | Creates the first member and organisation before anything exists. Outside the app. |
 
-Everything else moves to a tenant-scoped client. Measured: **29 files import
-`createServiceClient` today**, four of them are the allowlist above, so **25 move** — including all
-13 page components.
+Everything else moves to a tenant-scoped client. Measured: **29 files imported
+`createServiceClient` when this slice began**, four of them the allowlist above.
 
 **This is enforced.** A guard test lists the files permitted to import `createServiceClient` and
-fails when any other does. It starts at 29 and shrinks to four. That is the same
-enforce-don't-document approach as `grants.test.ts` and `tenancy.test.ts`, and it is what stops the
-next feature quietly reaching for the service role because it was easier.
+fails when any other does. It starts at 29. That is the same enforce-don't-document approach as
+`grants.test.ts` and `tenancy.test.ts`, and it is what stops the next feature quietly reaching for
+the service role because it was easier.
+
+**It does not shrink to four, and this spec was wrong to predict that it would.** It shrinks to
+**14**: the four above, plus ten files whose *only* remaining service-client call touches something
+no policy can reach. Predicting four assumed every remaining use was a table read waiting for a
+policy. Three kinds turned out not to be:
+
+- **`trusted_devices` and `phone_verifications` are ungranted to `app_tenant` on purpose** —
+  they hold device token hashes and verification codes, and migrations `0042`/`0043` chose to make
+  a tenant-token read of them fail loudly rather than quietly work. That is a decision, not a gap,
+  so no later migration removes it. It keeps `users/page.tsx`, `profile/page.tsx`,
+  `verify-device/page.tsx`, `profile/actions.ts` and `devices/actions.ts` on the list permanently.
+- **`auth.users` is not in the REST schema at all.** `/users` renders a "Last sign-in" column, and
+  `last_sign_in_at` is reachable only through the GoTrue admin API, which answers an `app_tenant`
+  token with 403 `not_admin`. No Postgres grant is involved, so no migration can change it.
+- **Storage was the largest group** and is the one that *did* resolve — see below.
+
+The number is a fact about the design, not a target. What the guard actually buys is that every one
+of the 14 has a written reason next to it and a new one cannot be added silently; a list that
+happened to reach four would not be worth more than that.
 
 ## Storage
 
@@ -195,8 +230,20 @@ buckets are private and every URL is signed server-side.
 Storage policies on `storage.objects` keyed on the leading path segment give the same
 database-enforced property for files that the table policies give for rows. This is worth doing and
 is the reason the namespacing exists — but it is genuinely defence in depth here, because the path is
-derived from a row that RLS already governs. If it proves awkward, it is the part to defer, and the
-spec says so rather than letting it silently drop.
+derived from a row that RLS already governs. It was named as the part to defer if it proved awkward.
+
+**It did not need deferring — it landed, in migration `0046`.** `app_tenant` now holds `usage on
+schema storage`, select/insert/update/delete on `storage.objects` and `select` on `storage.buckets`,
+with two policies (`avatars_tenant`, `floor_plans_tenant`) keyed on the organisation in the first
+path segment. Proven live through storage-api with a real tenant token: sign and download succeed
+for the owning organisation, a second organisation gets 404 on the same path and 403 "new row
+violates row-level security policy" on a write into it. Pinned by `policies.test.ts`, "the tenant
+wall over stored objects".
+
+Note what `0046` does *not* do: it makes the storage callers movable, it does not move them. Those
+files still import the service client and still appear on the allowlist, because moving each one is
+a behaviour change needing its own verification. Only `trusted_devices`, `phone_verifications` and
+`auth.users` remain genuinely unreachable.
 
 ## Proof before anything is built on it
 

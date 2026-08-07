@@ -8,6 +8,10 @@ import type { Member } from "@/features/auth/members";
  *  enough to outlast any single request; short enough that a token in a log is useless. */
 const TOKEN_TTL_SECONDS = 60;
 
+/** Deliberately the shape Postgres itself accepts for a uuid literal, not a version-aware RFC 4122
+ *  matcher: the only question here is whether `current_org_id()`'s `::uuid` cast will raise. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function b64url(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
@@ -25,6 +29,16 @@ export function mintTenantToken(orgId: string, nowSeconds?: number): string {
   // A token with no org_id reads NOTHING, by design. That would surface as an application with no
   // data in it rather than as an error, so refuse here where the cause is still visible.
   if (!orgId) throw new Error("mintTenantToken: refusing to mint without an organisation");
+  // ...and a non-empty org_id that is not a uuid is WORSE than an empty one, because it is not
+  // fail-closed. `current_org_id()` casts the claim to uuid, so `{"org_id":"nope"}` raises
+  // `invalid input syntax for type uuid` inside the policy — measured — and every policied query
+  // comes back a 500 instead of coming back empty. That is precisely the deviation from "the
+  // failure mode is no rows, not an error" that migration 0045 was written to remove for the
+  // defined-but-empty GUC; this closes the other way in. No live path reaches it today
+  // (`members.org_id` is a uuid column), which is exactly why it belongs at the mint rather than in
+  // a caller: the mint is the one place that will still be here when a future caller passes
+  // something hand-built.
+  if (!UUID.test(orgId)) throw new Error("mintTenantToken: organisation must be a uuid");
 
   const now = nowSeconds ?? Math.floor(Date.now() / 1000);
   const header = b64url({ alg: "HS256", typ: "JWT" });

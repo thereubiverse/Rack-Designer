@@ -31,7 +31,16 @@ export const extractPlanGeometryAction = withEditor("ai.extractGeometry", async 
     const bytes = await downloadPlanObject(storageDb, plan.pdf_storage_path);
     // pdf_page of 0 is a real, valid page index — never coerce with `||`, only `??`.
     const { walls, labels } = await extractPlanGeometry(bytes, plan.pdf_page ?? 0);
-    await saveFloorPlanGeometry(db, floorId, { walls, labels });
+
+    // RE-MINT before the write. A tenant token is valid 60 seconds plus PostgREST's 30 seconds of
+    // leeway — 90 in total — and the work between the mint above and this line is UNBOUNDED: a
+    // storage download of an arbitrarily large PDF, then a parse whose cost is set by the file, not
+    // by us. Past 90 seconds the token expires and PGRST303 lands on THE WRITE ONLY: the download
+    // and the parse have both already succeeded, so the failure looks like a broken PDF rather than
+    // an expired token — the catch below reports "Couldn't extract wall geometry from this PDF",
+    // which would be a lie. Minting again is one HMAC and removes the window entirely. Same shape
+    // as discoverActions.ts's post-Gemini re-mint.
+    await saveFloorPlanGeometry(createTenantClient(member), floorId, { walls, labels });
 
     revalidatePath("/clients");
     return { ok: true, walls: walls.length, labels: labels.length };

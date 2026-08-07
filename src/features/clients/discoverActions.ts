@@ -84,6 +84,10 @@ export const discoverRoomsAction = withEditor("ai.discoverRooms", async (member,
       polygon: p.polygon.map((pt) => cropPointToFull(pt, crop)),
     }));
     // Rooms the user has already outlined are finished work — re-proposing them every run is noise.
+    // A FRESH tenant client, not `prepare`'s: a token lives 90 seconds (60 plus PostgREST's leeway)
+    // and two Gemini round trips have happened since that one was minted, with no bound on how long
+    // they take. Re-minting is one HMAC. clients/actions.ts and planExtractActions.ts do the same
+    // before their final writes, for the same reason.
     const rooms = await listRoomsForFloor(createTenantClient(member), floorId);
     return { ok: true, proposals: filterAlreadyTraced(proposals, rooms) };
   } catch (e) {

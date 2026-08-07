@@ -609,7 +609,15 @@ export const uploadFloorPlanAction = withEditor("floorPlan.upload", async (membe
       }
     }
 
-    await upsertFloorPlan(db, {
+    // RE-MINT before the write, for the same reason discoverActions.ts re-mints after its Gemini
+    // call. `db`'s token was minted at the top of this action and is valid 60 seconds plus
+    // PostgREST's 30 seconds of leeway — 90 in total. Everything since is UNBOUNDED: reading a file
+    // of up to MAX_PLAN_BYTES, uploading the PNG, then optionally uploading the PDF, all over the
+    // network. A slow client or a slow storage backend can exceed 90 seconds, and when it does
+    // PGRST303 lands on THIS WRITE ONLY — after both objects are already in storage. That leaves
+    // orphaned objects with no floor_plans row pointing at them, and surfaces to the user as an
+    // opaque JWT error out of the catch below. One extra HMAC closes it.
+    await upsertFloorPlan(createTenantClient(member), {
       floorId,
       storagePath: path,
       widthPx: dims.width,
